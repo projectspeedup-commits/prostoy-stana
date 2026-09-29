@@ -1,6 +1,6 @@
 // Имитация сервера в памяти для проверки страницы без backend.
 // Подключается только из app.js при ?mock=1. Считает на том же ядре, что и сервер.
-import * as core from "/core/core.js";
+import * as core from "./core/core.js";
 
 const refs = {
   reasons: {

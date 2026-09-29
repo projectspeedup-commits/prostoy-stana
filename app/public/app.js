@@ -1,5 +1,5 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
-import * as core from "/core/core.js";
+import * as core from "./core/core.js";
 
 const STORE_KEY = "stan.deviceKey";
 const QUEUE_KEY = "stan.queue";
@@ -36,7 +36,7 @@ async function realApi(path, options = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const r = await fetch(path, {
+    const r = await fetch(path.replace(/^\//, ""), {
       ...options,
       headers: { "Content-Type": "application/json", "X-Device-Key": key || "", ...(options.headers || {}) },
       signal: ctrl.signal,
@@ -893,14 +893,17 @@ takeKeyFromHash();
 key = readStore(STORE_KEY) || null;
 loadCachedRefs();
 
-// Имитация сервера для проверки: только при ?mock=1
-if (new URLSearchParams(location.search).has("mock")) {
-  const m = await import("/mock.js");
+// Демо-режим: имитация сервера в браузере. Включается на GitHub Pages
+// (там сервера нет) или вручную параметром ?mock=1.
+const DEMO = location.hostname.endsWith("github.io") || new URLSearchParams(location.search).has("mock");
+if (DEMO) {
+  const m = await import("./mock.js");
   api = m.api;
+  if (!key) key = "demo"; // ключ устройства в демо не нужен
 }
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => { /* офлайн-установка недоступна */ });
+  navigator.serviceWorker.register("./sw.js").catch(() => { /* офлайн-установка недоступна */ });
 }
 
 requestWake();

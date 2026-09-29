@@ -1,14 +1,14 @@
 // Офлайн-кеш страницы рабочего. /api/* не кешируется никогда.
-const CACHE = "stan-v1";
+const CACHE = "stan-v2";
 const ASSETS = [
-  "/",
-  "/index.html",
-  "/app.js",
-  "/app.css",
-  "/core/core.js",
-  "/mock.js",
-  "/icon.svg",
-  "/manifest.webmanifest",
+  "./",
+  "./index.html",
+  "./app.js",
+  "./app.css",
+  "./core/core.js",
+  "./mock.js",
+  "./icon.svg",
+  "./manifest.webmanifest",
 ];
 
 self.addEventListener("install", (e) => {
@@ -28,7 +28,7 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (url.origin !== self.location.origin || url.pathname.includes("/api/")) return;
   // Сеть вперёд, кеш — запасной вариант; удачный ответ обновляет кеш.
   e.respondWith(
     fetch(e.request)
@@ -42,7 +42,7 @@ self.addEventListener("fetch", (e) => {
       .catch(() =>
         caches.match(e.request).then((cached) => {
           if (cached) return cached;
-          if (e.request.mode === "navigate") return caches.match("/index.html");
+          if (e.request.mode === "navigate") return caches.match("./index.html");
           return Response.error();
         })
       )
