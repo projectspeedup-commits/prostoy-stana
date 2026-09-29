@@ -1,0 +1,10 @@
+private
+backups
+.git
+legacy
+tests
+guide
+bridge
+node_modules
+*.db
+.env

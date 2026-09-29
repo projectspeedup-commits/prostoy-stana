@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Проба связи</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <h1>Проба связи</h1>
+
+    <section id="keyBox" hidden>
+      <p>Введите ключ устройства.</p>
+      <input id="keyInput" type="password" autocomplete="off" aria-label="Ключ устройства">
+      <button id="keySave" type="button">Сохранить</button>
+    </section>
+
+    <section id="work" hidden>
+      <div id="state" class="state wait">Ожидание</div>
+      <dl>
+        <dt>Проб отправлено</dt><dd id="total">0</dd>
+        <dt>Доля удачных</dt><dd id="share">—</dd>
+        <dt>Самый длинный перерыв</dt><dd id="gap">—</dd>
+        <dt>Последний ответ</dt><dd id="last">—</dd>
+      </dl>
+      <p class="hint">Держите эту страницу открытой. Экран просим не гасить.</p>
+      <button id="reset" type="button" class="secondary">Обнулить счётчики</button>
+    </section>
+  </main>
+  <script src="probe.js"></script>
+</body>
+</html>

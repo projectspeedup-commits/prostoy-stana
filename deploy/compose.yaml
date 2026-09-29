@@ -1,0 +1,35 @@
+# Порты публикуются ТОЛЬКО на петлю (127.0.0.1). Менять на 0.0.0.0 нельзя:
+# наружу сервис выставляется отдельным защищённым входом, а не напрямую.
+services:
+  stan:
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+    container_name: stan
+    ports:
+      - "127.0.0.1:8095:8080"
+    volumes:
+      - stan-data:/app/data
+    restart: unless-stopped
+    environment:
+      STAN_DEVICE_KEYS: ${STAN_DEVICE_KEYS:?задайте в .env}
+    mem_limit: 512m
+
+  stan-test:
+    profiles: ["test"]
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+    container_name: stan-test
+    ports:
+      - "127.0.0.1:8096:8080"
+    volumes:
+      - stan-test-data:/app/data
+    restart: unless-stopped
+    environment:
+      STAN_DEVICE_KEYS: ${STAN_TEST_DEVICE_KEYS:?задайте в .env}
+    mem_limit: 512m
+
+volumes:
+  stan-data:
+  stan-test-data:

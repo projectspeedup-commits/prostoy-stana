@@ -1,0 +1,371 @@
+const PLAN_REASONS = [
+  "П-01 ППР (планово-предупредительный ремонт)",
+  "П-02 Перевалка валков / клетей",
+  "П-03 Перестройка стана на другой профиль",
+  "П-04 Замена калибров, проводковой арматуры по графику",
+  "П-05 Плановая остановка / разогрев нагревательной печи",
+  "П-06 Чистка, обслуживание оборудования по графику",
+  "П-07 Остановка по производственной программе (нет заказов)",
+  "П-08 Нерабочая смена по графику (выходной, праздник)"
+];
+const UNPL_REASONS = [
+  "В-М-01 Поломка клети, подшипниковых узлов",
+  "В-М-02 Поломка привода, редуктора, шпинделя, муфты",
+  "В-М-03 Неисправность ножниц",
+  "В-М-04 Неисправность холодильника, рольгангов",
+  "В-М-05 Неисправность гидравлики / системы смазки",
+  "В-М-06 Неисправность грузоподъёмного крана",
+  "В-Э-01 Отказ электродвигателя",
+  "В-Э-02 Отказ АСУ ТП, датчиков, автоматики",
+  "В-Э-03 Неисправность преобразователя, щита, кабеля",
+  "В-Т-01 Застревание / порыв раската",
+  "В-Т-02 Настройка стана, брак проката",
+  "В-Т-03 Недогрев / перегрев заготовки",
+  "В-Т-04 Внеплановая замена проводок, валков",
+  "В-О-01 Отсутствие заготовки",
+  "В-О-02 Отсутствие персонала",
+  "В-О-03 Ожидание крана / транспорта",
+  "В-О-04 Переполнение склада готовой продукции",
+  "В-В-01 Отключение электроэнергии",
+  "В-В-02 Отключение / падение давления газа",
+  "В-В-03 Отключение воды, охлаждения",
+  "В-П-99 Прочее (указать в описании)"
+];
+const NODES = [
+  "Склад заготовки, загрузка",
+  "Нагревательная печь",
+  "Черновая группа клетей",
+  "Промежуточная группа клетей",
+  "Чистовая группа клетей",
+  "Летучие ножницы",
+  "Холодильник",
+  "Ножницы холодной резки",
+  "Правильная машина",
+  "Пакетирование, вязка, упаковка",
+  "Краны",
+  "Энергохозяйство",
+  "АСУ ТП",
+  "Стан в целом"
+];
+const GROUPS = {
+  "П-01 ППР (планово-предупредительный ремонт)": "Плановый",
+  "П-02 Перевалка валков / клетей": "Плановый",
+  "П-03 Перестройка стана на другой профиль": "Плановый",
+  "П-04 Замена калибров, проводковой арматуры по графику": "Плановый",
+  "П-05 Плановая остановка / разогрев нагревательной печи": "Плановый",
+  "П-06 Чистка, обслуживание оборудования по графику": "Плановый",
+  "П-07 Остановка по производственной программе (нет заказов)": "Плановый",
+  "П-08 Нерабочая смена по графику (выходной, праздник)": "Плановый",
+  "В-М-01 Поломка клети, подшипниковых узлов": "Механическая",
+  "В-М-02 Поломка привода, редуктора, шпинделя, муфты": "Механическая",
+  "В-М-03 Неисправность ножниц": "Механическая",
+  "В-М-04 Неисправность холодильника, рольгангов": "Механическая",
+  "В-М-05 Неисправность гидравлики / системы смазки": "Механическая",
+  "В-М-06 Неисправность грузоподъёмного крана": "Механическая",
+  "В-Э-01 Отказ электродвигателя": "Электрическая",
+  "В-Э-02 Отказ АСУ ТП, датчиков, автоматики": "Электрическая",
+  "В-Э-03 Неисправность преобразователя, щита, кабеля": "Электрическая",
+  "В-Т-01 Застревание / порыв раската": "Технологическая",
+  "В-Т-02 Настройка стана, брак проката": "Технологическая",
+  "В-Т-03 Недогрев / перегрев заготовки": "Технологическая",
+  "В-Т-04 Внеплановая замена проводок, валков": "Технологическая",
+  "В-О-01 Отсутствие заготовки": "Организационная",
+  "В-О-02 Отсутствие персонала": "Организационная",
+  "В-О-03 Ожидание крана / транспорта": "Организационная",
+  "В-О-04 Переполнение склада готовой продукции": "Организационная",
+  "В-В-01 Отключение электроэнергии": "Внешняя",
+  "В-В-02 Отключение / падение давления газа": "Внешняя",
+  "В-В-03 Отключение воды, охлаждения": "Внешняя",
+  "В-П-99 Прочее (указать в описании)": "Прочее"
+};
+/**
+ * Google Форма «Режимы работы прокатного стана» + таблица-журнал с контролем баланса смен.
+ * Приложение 1 к протоколу совещания по учёту режимов работы прокатного стана.
+ *
+ * КАК ЗАПУСТИТЬ (5 минут, один раз):
+ *   1. Откройте https://script.google.com → «Новый проект».
+ *   2. Удалите всё в файле Code.gs и вставьте этот скрипт целиком. Сохраните (Ctrl+S).
+ *   3. Вверху выберите функцию setup → «Выполнить». Разрешите доступ к Формам, Таблицам и Диску.
+ *   4. В «Журнале выполнения» появятся две ссылки: форма для мастеров и таблица с журналом.
+ *   Повторно setup не запускайте — он создаст ещё одну форму.
+ *
+ * ЧТО ПОЛУЧАЕТСЯ:
+ *   • Форма: мастер вносит один интервал (прокат / плановый / внеплановый простой) за одну отправку.
+ *     Простои — причина строго из классификатора; внеплановый — обязательно вес заготовки, т (0,001).
+ *   • Таблица: лист «Журнал» (столбцы A–J совпадают со столбцами B–K листа «Журнал интервалов» в Excel),
+ *     лист «Баланс» (по суткам и сменам: учтено = 720 мин?), лист «Справочники», меню «Стан».
+ *   • Исправление: мастер открывает ссылку «Изменить ответ» из письма/подтверждения — строка в журнале
+ *     обновится, а не задвоится.
+ */
+
+const TITLE = 'Режимы работы прокатного стана';
+const SHIFT1 = 'Смена 1 (08:00–20:00)';
+const SHIFT2 = 'Смена 2 (20:00–08:00)';
+const MODE_WORK = 'Прокат производился', MODE_PLAN = 'Плановый простой', MODE_UNPL = 'Внеплановый простой';
+const MASTERS = ['Мастер 1 (заменить)', 'Мастер 2 (заменить)', 'Мастер 3 (заменить)', 'Мастер 4 (заменить)'];
+
+// Заголовки вопросов (по ним скрипт читает ответы — не переименовывайте в форме вручную)
+const Q = {
+  master: 'Мастер смены', date: 'Производственные сутки', shift: 'Смена',
+  start: 'Начало интервала', end: 'Окончание интервала', mode: 'Режим работы стана',
+  planReason: 'Причина планового простоя', planNode: 'Узел оборудования (плановый простой)', planDesc: 'Описание работ (плановый простой)',
+  unplReason: 'Причина внепланового простоя', unplNode: 'Узел оборудования (внеплановый простой)',
+  billet: 'Расход заготовки, т', unplDesc: 'Описание, принятые меры (внеплановый простой)',
+  workNote: 'Комментарий к прокату (по желанию)'
+};
+
+const J_HEAD = ['Начало интервала', 'Окончание интервала', 'Режим работы', 'Причина (по классификатору)', 'Узел оборудования',
+  'Мастер смены', 'Описание, принятые меры', 'Расход заготовки, т', 'Проверено', 'Замечание контролёра',
+  'Сутки', 'Смена', 'Длит., мин', 'Группа', 'Контроль', 'Отметка времени', 'ID ответа'];
+const C = { start: 1, end: 2, mode: 3, reason: 4, node: 5, master: 6, desc: 7, billet: 8, checked: 9, note: 10,
+  day: 11, shift: 12, dur: 13, group: 14, ctrl: 15, ts: 16, id: 17 };
+
+// ============================================================ создание
+function setup() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('FORM_ID')) throw new Error('Форма уже создана. Ссылки: меню «Стан» в таблице или функция showLinks.');
+
+  const ss = SpreadsheetApp.create(TITLE + ' — журнал');
+  ss.setSpreadsheetTimeZone('Europe/Moscow');
+  const form = FormApp.create(TITLE);
+  form.setDescription(
+    'Один интервал — одна отправка. Всё время смены заносится без пропусков: сумма интервалов смены = 12 часов.\n' +
+    'Смена 1: 08:00–20:00. Смена 2: 20:00–08:00 — дата смены = дата её начала (вечер).\n' +
+    'Интервал через пересменку делится: закройте его в 08:00 или 20:00, следующая смена откроет новый.\n' +
+    'Причины простоев — только из списка. По внеплановому простою обязательно укажите вес израсходованной заготовки (0 — если потерь нет).');
+  form.setProgressBar(true).setAllowResponseEdits(true).setShowLinkToRespondAgain(true)
+      .setConfirmationMessage('Интервал записан. Внесите следующий интервал смены. Для исправления используйте ссылку «Изменить ответ».');
+
+  // --- страница 1: общие поля
+  form.addListItem().setTitle(Q.master).setChoiceValues(MASTERS).setRequired(true);
+  form.addDateItem().setTitle(Q.date).setHelpText('Дата начала смены. Ночная смена с 20:00 28.09 до 08:00 29.09 — это сутки 28.09.').setRequired(true);
+  form.addMultipleChoiceItem().setTitle(Q.shift).setChoiceValues([SHIFT1, SHIFT2]).setRequired(true);
+  form.addTimeItem().setTitle(Q.start).setRequired(true);
+  form.addTimeItem().setTitle(Q.end).setHelpText('Не позже конца смены (20:00 или 08:00).').setRequired(true);
+  const mode = form.addMultipleChoiceItem().setTitle(Q.mode).setRequired(true);
+
+  // --- страница «Прокат»
+  const pWork = form.addPageBreakItem().setTitle('Прокат производился');
+  form.addParagraphTextItem().setTitle(Q.workNote);
+
+  // --- страница «Плановый простой»
+  const pPlan = form.addPageBreakItem().setTitle('Плановый простой').setGoToPage(FormApp.PageNavigationType.SUBMIT);
+  form.addListItem().setTitle(Q.planReason).setChoiceValues(PLAN_REASONS).setRequired(true);
+  form.addListItem().setTitle(Q.planNode).setChoiceValues(NODES).setRequired(true);
+  form.addParagraphTextItem().setTitle(Q.planDesc);
+
+  // --- страница «Внеплановый простой»
+  const pUnpl = form.addPageBreakItem().setTitle('Внеплановый простой').setGoToPage(FormApp.PageNavigationType.SUBMIT);
+  form.addListItem().setTitle(Q.unplReason).setChoiceValues(UNPL_REASONS).setRequired(true);
+  form.addListItem().setTitle(Q.unplNode).setChoiceValues(NODES).setRequired(true);
+  form.addTextItem().setTitle(Q.billet).setRequired(true)
+    .setHelpText('Вес израсходованной заготовки, не подлежащей прокатке, в тоннах с точностью до 0,001. Потерь нет — 0.')
+    .setValidation(FormApp.createTextValidation()
+      .setHelpText('Введите число, например 0 или 2,067')
+      .requireTextMatchesPattern('^\\d{1,3}([.,]\\d{1,3})?$').build());
+  form.addParagraphTextItem().setTitle(Q.unplDesc);
+
+  mode.setChoices([
+    mode.createChoice(MODE_WORK, pWork),
+    mode.createChoice(MODE_PLAN, pPlan),
+    mode.createChoice(MODE_UNPL, pUnpl),
+  ]);
+
+  // --- таблица
+  form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+  buildSheets_(ss);
+  props.setProperties({ FORM_ID: form.getId(), SS_ID: ss.getId() });
+
+  ScriptApp.newTrigger('onFormSubmit').forForm(form).onFormSubmit().create();
+  ScriptApp.newTrigger('onOpenSs').forSpreadsheet(ss).onOpen().create();
+
+  Logger.log('Форма для мастеров: ' + form.getPublishedUrl());
+  Logger.log('Редактирование формы: ' + form.getEditUrl());
+  Logger.log('Таблица-журнал: ' + ss.getUrl());
+}
+
+function buildSheets_(ss) {
+  const j = ss.insertSheet('Журнал', 0);
+  j.getRange(1, 1, 1, J_HEAD.length).setValues([J_HEAD]).setFontWeight('bold').setBackground('#1F3864').setFontColor('#FFFFFF').setWrap(true);
+  j.setFrozenRows(1); j.setFrozenColumns(2);
+  j.getRange('A:B').setNumberFormat('dd.mm.yyyy hh:mm');
+  j.getRange('H:H').setNumberFormat('0.000');
+  j.getRange('K:K').setNumberFormat('dd.mm.yyyy');
+  j.getRange('P:P').setNumberFormat('dd.mm.yyyy hh:mm:ss');
+  [150, 150, 150, 300, 200, 170, 260, 90, 90, 200, 90, 80, 70, 120, 320, 140, 120].forEach((w, i) => j.setColumnWidth(i + 1, w));
+  j.getRange('I2:I').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['Да', 'Нет'], true).build());
+  j.getRange('I:J').setBackground('#FFF2CC');
+  const ctrl = j.getRange('O2:O');
+  j.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('ОК').setBackground('#C6EFCE').setRanges([ctrl]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($O2<>"",$O2<>"ОК")').setBackground('#F8CBAD').setRanges([ctrl]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(MODE_UNPL).setFontColor('#C8481A').setBold(true).setRanges([j.getRange('C2:C')]).build(),
+  ]);
+  j.hideColumns(17);
+
+  // Баланс по суткам
+  const b = ss.insertSheet('Баланс', 1);
+  const bh = ['Сутки', 'С1 прокат, мин', 'С1 план. простой', 'С1 внепл. простой', 'С1 учтено', 'Баланс С1',
+    'С2 прокат, мин', 'С2 план. простой', 'С2 внепл. простой', 'С2 учтено', 'Баланс С2',
+    'Прокат за сутки, ч', 'КИВ', 'Заготовка, т', 'Строк с ошибками', 'Не проверено'];
+  b.getRange(1, 1, 1, bh.length).setValues([bh]).setFontWeight('bold').setBackground('#1F3864').setFontColor('#FFFFFF').setWrap(true);
+  b.getRange('A2').setFormula('=IFERROR(SORT(UNIQUE(FILTER(Журнал!K2:K,Журнал!K2:K<>""))),"")');
+  const rows = [];
+  for (let r = 2; r <= 400; r++) {
+    const s = (sh, m) => `SUMIFS(Журнал!$M:$M,Журнал!$K:$K,$A${r},Журнал!$L:$L,"${sh}",Журнал!$C:$C,"${m}")`;
+    const bal = (col) => `=IF($A${r}="","",IF(${col}${r}=720,"ОК",IF(${col}${r}<720,"не хватает "&(720-${col}${r})&" мин","лишние "&(${col}${r}-720)&" мин")))`;
+    rows.push([
+      `=IF($A${r}="","",${s('Смена 1', MODE_WORK)})`, `=IF($A${r}="","",${s('Смена 1', MODE_PLAN)})`, `=IF($A${r}="","",${s('Смена 1', MODE_UNPL)})`,
+      `=IF($A${r}="","",SUM(B${r}:D${r}))`, bal('E'),
+      `=IF($A${r}="","",${s('Смена 2', MODE_WORK)})`, `=IF($A${r}="","",${s('Смена 2', MODE_PLAN)})`, `=IF($A${r}="","",${s('Смена 2', MODE_UNPL)})`,
+      `=IF($A${r}="","",SUM(G${r}:I${r}))`, bal('J'),
+      `=IF($A${r}="","",(B${r}+G${r})/60)`, `=IF(OR($A${r}="",E${r}+J${r}=0),"",(B${r}+G${r})/(E${r}+J${r}))`,
+      `=IF($A${r}="","",SUMIFS(Журнал!$H:$H,Журнал!$K:$K,$A${r}))`,
+      `=IF($A${r}="","",COUNTIFS(Журнал!$K:$K,$A${r},Журнал!$O:$O,"<>ОК"))`,
+      `=IF($A${r}="","",COUNTIFS(Журнал!$K:$K,$A${r},Журнал!$I:$I,"<>Да"))`,
+    ]);
+  }
+  ss.setSpreadsheetLocale('ru_RU');   // числа с запятой; формулы в Apps Script всегда пишутся с «,»
+  b.getRange(2, 2, rows.length, rows[0].length).setFormulas(rows);
+  b.getRange('A:A').setNumberFormat('dd.mm.yyyy');
+  b.getRange('L:L').setNumberFormat('0.00'); b.getRange('M:M').setNumberFormat('0.0%'); b.getRange('N:N').setNumberFormat('0.000');
+  b.setFrozenRows(1); b.setFrozenColumns(1);
+  const balR = [b.getRange('F2:F'), b.getRange('K2:K')];
+  b.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('ОК').setBackground('#C6EFCE').setRanges(balR).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND(F2<>"",F2<>"ОК")').setBackground('#F8CBAD').setRanges([balR[0]]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND(K2<>"",K2<>"ОК")').setBackground('#F8CBAD').setRanges([balR[1]]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThan(0).setBackground('#F8CBAD').setRanges([b.getRange('O2:O')]).build(),
+  ]);
+
+  // Справочники (источник списков формы)
+  const sp = ss.insertSheet('Справочники', 2);
+  sp.getRange('A1:D1').setValues([['Мастер смены', 'Причина планового простоя', 'Причина внепланового простоя', 'Узел оборудования']])
+    .setFontWeight('bold').setBackground('#1F3864').setFontColor('#FFFFFF');
+  const put = (col, arr) => sp.getRange(2, col, arr.length, 1).setValues(arr.map(v => [v]));
+  put(1, MASTERS); put(2, PLAN_REASONS); put(3, UNPL_REASONS); put(4, NODES);
+  [200, 380, 380, 260].forEach((w, i) => sp.setColumnWidth(i + 1, w));
+  sp.getRange('F1').setValue('После правки списков: меню «Стан» → «Обновить списки в форме». Новые причины внепланового простоя начинайте с кода В-…');
+  ss.getSheets().forEach(sh => {
+    if (['Журнал', 'Баланс', 'Справочники'].indexOf(sh.getName()) < 0 && sh.getLastRow() === 0 && !sh.getFormUrl()) ss.deleteSheet(sh);
+  });
+}
+
+// ============================================================ обработка ответов
+function onFormSubmit(e) {
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SS_ID'));
+    const j = ss.getSheetByName('Журнал');
+    const row = toRow_(e.response);
+    const last = j.getLastRow();
+    let target = 0;
+    if (last > 1) {
+      const ids = j.getRange(2, C.id, last - 1, 1).getValues().flat();
+      const k = ids.indexOf(row[C.id - 1]);
+      if (k >= 0) target = k + 2;
+    }
+    if (target) {                                   // исправленный ответ: сохраняем отметки контролёра
+      const keep = j.getRange(target, C.checked, 1, 2).getValues()[0];
+      row[C.checked - 1] = keep[0] === 'Да' ? 'Нет' : keep[0];   // после исправления — проверить заново
+      row[C.note - 1] = keep[1];
+      j.getRange(target, 1, 1, row.length).setValues([row]);
+    } else {
+      j.appendRow(row);
+    }
+    recheck_(j);
+  } finally { lock.releaseLock(); }
+}
+
+function toRow_(resp) {
+  const a = {};
+  resp.getItemResponses().forEach(ir => a[ir.getItem().getTitle()] = ir.getResponse());
+  const mode = a[Q.mode] || '';
+  const shift = (a[Q.shift] || '').indexOf('Смена 1') === 0 ? 'Смена 1' : 'Смена 2';
+  const [y, m, d] = String(a[Q.date] || '').split('-').map(Number);
+  const dayS = serial_(y, m, d, 0);
+  const tStart = toMin_(a[Q.start]), tEnd = toMin_(a[Q.end]);
+  // смена 2: время до 08:00 включительно относится к следующему календарному дню
+  const abs = (t, isEnd) => shift === 'Смена 2' && (t < 480 || (isEnd && t === 480)) ? t + 1440 : t;
+  const s = dayS + abs(tStart, false) / 1440, en = dayS + abs(tEnd, true) / 1440;
+  let reason = '', node = '', desc = '', billet = '';
+  if (mode === MODE_PLAN) { reason = a[Q.planReason]; node = a[Q.planNode]; desc = a[Q.planDesc] || ''; }
+  else if (mode === MODE_UNPL) {
+    reason = a[Q.unplReason]; node = a[Q.unplNode]; desc = a[Q.unplDesc] || '';
+    billet = Number(String(a[Q.billet] || '').replace(',', '.'));
+  } else { desc = a[Q.workNote] || ''; }
+  const group = mode === MODE_WORK ? 'Работа' : (GROUPS[reason] || (reason ? 'Не из классификатора' : ''));
+  const dur = Math.round((en - s) * 1440);
+  return [s, en, mode, reason, node, a[Q.master] || '', desc, billet, 'Нет', '', dayS, shift, dur, group, '',
+    resp.getTimestamp(), resp.getId()];
+}
+
+// Контроль всех строк: границы смены, длительность, вес заготовки, пересечения и дубли
+function recheck_(j) {
+  const n = j.getLastRow() - 1; if (n < 1) return;
+  j.getRange(2, 1, n, J_HEAD.length).sort([{ column: C.start, ascending: true }]);
+  const v = j.getRange(2, 1, n, J_HEAD.length).getValues();
+  const byDay = {};
+  v.forEach((r, i) => { const d = Math.round(num_(r[C.day - 1])); (byDay[d] = byDay[d] || []).push(i); });
+  const out = v.map((r, i) => {
+    const e = [];
+    const s = num_(r[C.start - 1]), en = num_(r[C.end - 1]), day = Math.round(num_(r[C.day - 1]));
+    const sh0 = day + (r[C.shift - 1] === 'Смена 1' ? 480 : 1200) / 1440, sh1 = sh0 + 0.5;
+    if (!(en > s)) e.push('Окончание не позже начала');
+    if (s < sh0 - 1e-6 || s >= sh1 - 1e-6) e.push('Начало вне своей смены');
+    if (en > sh1 + 1e-6) e.push('Выходит за конец смены — закройте в ' + (r[C.shift - 1] === 'Смена 1' ? '20:00' : '08:00'));
+    if (r[C.mode - 1] !== MODE_WORK && !r[C.reason - 1]) e.push('Нет причины');
+    if (r[C.group - 1] === 'Не из классификатора') e.push('Причина не из классификатора');
+    if (r[C.mode - 1] === MODE_UNPL && r[C.billet - 1] === '') e.push('Нет веса заготовки');
+    (byDay[day] || []).forEach(k => {
+      if (k === i) return;
+      const o = v[k];
+      const os = num_(o[C.start - 1]), oe = num_(o[C.end - 1]);
+      if (os < en - 1e-6 && oe > s + 1e-6) e.push('Пересекается со строкой ' + (k + 2));
+    });
+    return [e.length ? e.join('; ') : 'ОК'];
+  });
+  j.getRange(2, C.ctrl, n, 1).setValues(out);
+}
+
+// ============================================================ меню таблицы
+function onOpenSs() {
+  SpreadsheetApp.getUi().createMenu('Стан')
+    .addItem('Перепроверить журнал', 'menuRecheck')
+    .addItem('Обновить списки в форме из «Справочников»', 'syncLists')
+    .addItem('Показать ссылки', 'showLinks')
+    .addToUi();
+}
+function menuRecheck() { recheck_(ss_().getSheetByName('Журнал')); SpreadsheetApp.getActive().toast('Журнал перепроверен'); }
+
+function syncLists() {
+  const sp = ss_().getSheetByName('Справочники');
+  const col = c => sp.getRange(2, c, Math.max(sp.getLastRow() - 1, 1), 1).getValues().flat().filter(String);
+  const form = FormApp.openById(PropertiesService.getScriptProperties().getProperty('FORM_ID'));
+  const set = (title, vals) => form.getItems(FormApp.ItemType.LIST).filter(i => i.getTitle() === title)
+    .forEach(i => i.asListItem().setChoiceValues(vals));
+  set(Q.master, col(1)); set(Q.planReason, col(2)); set(Q.unplReason, col(3));
+  set(Q.planNode, col(4)); set(Q.unplNode, col(4));
+  try { SpreadsheetApp.getActive().toast('Списки в форме обновлены'); } catch (e) { }
+}
+
+function showLinks() {
+  const p = PropertiesService.getScriptProperties();
+  const form = FormApp.openById(p.getProperty('FORM_ID'));
+  const msg = 'Форма для мастеров:\n' + form.getPublishedUrl() + '\n\nТаблица:\n' + ss_().getUrl();
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
+}
+
+// ============================================================ утилиты
+function ss_() { return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SS_ID')); }
+function toMin_(t) { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; }
+function serial_(y, m, d, min) { return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5 + min / 1440; }
+function num_(x) { return x instanceof Date ? (x.getTime() - Date.UTC(1899, 11, 30)) / 864e5 + tzFix_(x) : Number(x); }
+// значения дат, прочитанные из таблицы, приходят как Date в часовом поясе таблицы — переводим обратно в «серийное» число
+let TZ_ = null;
+function tzFix_(x) {
+  const tz = TZ_ || (TZ_ = ss_().getSpreadsheetTimeZone());
+  const off = Utilities.formatDate(x, tz, 'Z');            // например +0300
+  const sign = off[0] === '-' ? -1 : 1;
+  return sign * (Number(off.substr(1, 2)) * 60 + Number(off.substr(3, 2))) / 1440;
+}

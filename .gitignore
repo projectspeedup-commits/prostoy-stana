@@ -1,0 +1,13 @@
+# Личные данные, секреты и рабочие файлы в репозиторий не попадают
+private/
+backups/
+.env
+*.env
+!deploy/env.example
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.clasp.json
+.clasprc.json
