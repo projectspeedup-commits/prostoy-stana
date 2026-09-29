@@ -37,13 +37,14 @@ export function createEventStore(db) {
           if (!TYPES.has(event.type)) throw new Error();
           if (event.device != null && typeof event.device !== "string") throw new Error();
           if (event.seq != null && (!Number.isSafeInteger(event.seq) || event.seq < 0)) throw new Error();
-          for (const field of ["reason", "node", "note", "downtimeId"]) {
+          for (const field of ["reason", "node", "note", "action", "downtimeId"]) {
             if (event[field] != null && typeof event[field] !== "string") throw new Error();
           }
           for (const field of ["crewId", "personId"]) {
             if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
           }
           if (typeof event.note === "string" && event.note.length > 500) throw new Error();
+          if (typeof event.action === "string" && event.action.length > 500) throw new Error();
           if (event.billet != null && (typeof event.billet !== "number" || !Number.isFinite(event.billet) || event.billet < 0)) throw new Error();
           if (event.type === "fix" && (typeof event.downtimeId !== "string" || !event.downtimeId ||
             !Number.isSafeInteger(event.index) || event.index < 0)) throw new Error();

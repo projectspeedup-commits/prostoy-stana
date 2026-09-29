@@ -201,3 +201,14 @@ test("buildDowntimes: reason сохраняет текст рабочего", ()
   assert.equal(r.segments[0].reason, "В-Э-02");
   assert.equal(r.segments[0].note, "датчик на ножницах глючит");
 });
+
+test("buildDowntimes: start сохраняет, что сделали для пуска", () => {
+  const r = buildDowntimes([
+    { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d" },
+    { id: "b", type: "reason", at: "2026-09-28T10:14:00+03:00", downtimeId: "d", reason: "В-М-03", note: "ножи тупые" },
+    { id: "c", type: "start", at: "2026-09-28T10:14:00+03:00", downtimeId: "d", action: "заменили ножи" },
+  ], Date.parse("2026-09-28T12:00:00+03:00"));
+  assert.equal(r.segments[0].action, "заменили ножи");
+  assert.equal(r.segments[0].note, "ножи тупые");
+  assert.equal(r.segments[0].endMs, Date.parse("2026-09-28T10:14:00+03:00"));
+});

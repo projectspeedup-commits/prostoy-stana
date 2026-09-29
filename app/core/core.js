@@ -130,6 +130,7 @@ export function buildDowntimes(events, nowMs) {
     node: val(e.node, prev && prev.node),
     billet: val(e.billet),
     note: val(e.note),
+    action: val(e.action),
     crewId: val(e.crewId, prev && prev.crewId),
     personId: val(e.personId, prev && prev.personId),
     manual: false,
@@ -162,7 +163,7 @@ export function buildDowntimes(events, nowMs) {
         const target = [cur, ...segments].find((s) => s &&
           s.downtimeId === e.downtimeId && s.index === e.index);
         if (!target) ignored.push(e.id);
-        else for (const field of ["reason", "node", "billet", "note"]) {
+        else for (const field of ["reason", "node", "billet", "note", "action"]) {
           if (e[field] !== undefined) target[field] = e[field];
         }
         break;
@@ -177,7 +178,11 @@ export function buildDowntimes(events, nowMs) {
         break;
       case "start":
         if (!cur || !matches(e)) ignored.push(e.id);
-        else close(t);
+        else {
+          // Что сделали, чтобы запустить стан: обязательный текст при пуске
+          if (e.action !== undefined) cur.action = e.action;
+          close(t);
+        }
         break;
       case "manual": {
         const from = toMs(e.from);
@@ -195,6 +200,7 @@ export function buildDowntimes(events, nowMs) {
           node: val(e.node),
           billet: val(e.billet),
           note: val(e.note),
+          action: val(e.action),
           crewId: val(e.crewId),
           personId: val(e.personId),
           manual: true,
