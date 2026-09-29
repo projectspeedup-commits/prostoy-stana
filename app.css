@@ -1,4 +1,5 @@
-/* Страница рабочего: тёмная тема, крупные элементы под перчатки. */
+/* Страница рабочего: тёмная тема, крупные элементы под перчатки.
+   Версия 2: пошаговые экраны, один вопрос — один экран. */
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -33,15 +34,18 @@ body {
 .pill.demo { background: #6e4bd8; color: #fff; }
 
 main {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
 }
 h1 { font-size: 1.5em; margin: 4px 0 16px; }
+h1.q { font-size: 1.6em; font-weight: 800; margin: 12px 0 16px; }
 h2 { font-size: 1.15em; margin: 20px 0 12px; }
 .muted { color: #a0a6b1; }
+.hint { color: #a0a6b1; font-size: 0.85em; margin: 8px 2px 0; }
+.step { color: #a0a6b1; font-size: 0.85em; margin: 12px 0 0; }
 
-button, input {
+button, input, textarea {
   font: inherit;
   color: inherit;
   border-radius: 14px;
@@ -54,6 +58,15 @@ input {
   padding: 12px 16px;
   margin-top: 12px;
   font-size: 1.1em;
+}
+.note-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  font-size: 22px;
+  line-height: 1.4;
+  resize: vertical;
 }
 .btn {
   display: block;
@@ -71,8 +84,41 @@ input {
 .btn:active { filter: brightness(1.25); }
 .btn.primary { background: #1a7f37; border-color: #2ea043; }
 .btn.danger { background: #c5221f; border-color: #da3633; }
-.btn.ghost { background: transparent; }
+.btn.warn-btn { background: #4a3a10; border-color: #e3b341; }
 .btn:disabled { opacity: 0.45; }
+
+/* Кнопка «Назад»: первая строка вложенного экрана, серая рамка, не путается с действием */
+.btn.back {
+  background: transparent;
+  border-color: #4a505c;
+  color: #a0a6b1;
+  text-align: left;
+  font-weight: 400;
+  margin-top: 0;
+}
+.btn-flat {
+  background: transparent;
+  border-color: #4a505c;
+  color: #a0a6b1;
+  font-weight: 400;
+}
+.btn-inline {
+  width: auto;
+  min-height: 48px;
+  margin-top: 0;
+  padding: 8px 16px;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* Шапка главного экрана: кто на посту + «Сменить» справа */
+.runhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9em;
+}
 
 /* Главные кнопки поста */
 .btn-huge {
@@ -105,7 +151,7 @@ input {
   margin-top: 4px;
 }
 
-/* Плитки выбора (бригады, люди, группы причин, причины) */
+/* Плитки выбора (бригады, люди, группы причин, причины, время) */
 .tiles {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -135,19 +181,27 @@ input {
 }
 .tile.sel { border-color: #2ea043; background: #14532d; }
 
-/* Текущая причина */
-.chip {
-  display: block;
-  width: 100%;
-  padding: 12px 16px;
+/* Две обычные кнопки в ряд */
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.row2 .btn { margin-top: 12px; }
+
+/* Карточка (причина на экране «Стан стоит», «Простой записан», «Проверьте») */
+.card {
   margin-top: 12px;
+  padding: 14px 16px;
   border-radius: 14px;
   background: #22252b;
   border: 2px solid #4a505c;
-  font-weight: 700;
 }
-.chip .t-code { font-weight: 400; font-size: 0.8em; color: #a0a6b1; }
-.chip.none { border-color: #e3b341; color: #e3b341; }
+.card.ok { border-color: #2ea043; }
+.card.none { border-color: #e3b341; background: #4a3a10; }
+.card-title { font-weight: 800; font-size: 1.15em; }
+.card-line { font-weight: 700; margin-top: 6px; }
+.card-note { color: #a0a6b1; margin-top: 6px; }
 
 /* Плашка «Стан всё ещё стоит?» */
 .banner-warn {
@@ -179,13 +233,13 @@ input {
 .stat.bad .v { color: #f85149; }
 .stat.planned .v { color: #58a6ff; }
 
-/* Список отрезков */
+/* Список простоев смены */
 .segs { margin-top: 12px; display: grid; gap: 12px; }
 .seg {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 12px;
-  align-items: center;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  align-items: start;
   width: 100%;
   min-height: 64px;
   padding: 12px 14px;
@@ -198,7 +252,6 @@ input {
 .seg .when { font-weight: 800; font-variant-numeric: tabular-nums; }
 .seg .dur { color: #a0a6b1; font-variant-numeric: tabular-nums; }
 .seg .why { font-weight: 700; }
-.seg .why .t-code { font-weight: 400; font-size: 0.8em; color: #a0a6b1; }
 .badge-need {
   display: inline-block;
   background: #e3b341;
@@ -208,38 +261,38 @@ input {
   font-weight: 800;
   font-size: 0.85em;
 }
+.seg .badge-need { margin-top: 6px; }
 .seg.open { border-color: #da3633; }
 .seg .manual-tag { display: block; font-size: 0.75em; color: #a0a6b1; font-weight: 400; }
 
-/* Шаги ±5 мин / ±1 ч */
-.stepper {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-top: 8px;
-}
-.stepper .btn { margin-top: 0; min-height: 64px; }
+/* Крупное значение времени в мастере «Забыл отметить простой» */
 .stepval {
   text-align: center;
   font-size: 1.6em;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  margin-top: 8px;
+  margin-top: 12px;
 }
 
-/* Расход заготовки */
-.billet-row {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
-  margin-top: 8px;
+/* «Записано» внизу на 3 секунды */
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  z-index: 10;
+  background: #1a7f37;
+  border: 2px solid #2ea043;
+  color: #fff;
+  font-weight: 800;
+  padding: 14px 28px;
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
-.billet-row .btn { margin-top: 0; }
-.billet-row .btn.sel { border-color: #2ea043; background: #14532d; }
 
 /* Отказы сервера */
 .rejects {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 0 12px 24px;
 }
@@ -253,18 +306,37 @@ input {
 }
 .error-text { color: #f85149; font-weight: 700; }
 
-/* Планшет в горизонтали: «Стан стоит» в две колонки */
+/* Планшет в горизонтали: только экран «Стан стоит» шире, в две колонки */
 @media (min-width: 900px) and (orientation: landscape) {
-  main { max-width: 1240px; }
+  main:has(.stop-grid) { max-width: 1240px; }
   .stop-grid {
     display: grid;
     grid-template-columns: minmax(380px, 5fr) 7fr;
     gap: 16px;
     align-items: start;
   }
-  .stop-grid .tiles { grid-template-columns: repeat(3, 1fr); }
   .btn-go { min-height: 30dvh; }
 }
 
-/* Атрибут hidden сильнее любых классов: иначе плашка «Демо-данные» видна всегда */
+/* Атрибут hidden сильнее любых классов */
 [hidden] { display: none !important; }
+
+/* В карточке простоя: время и длительность в первой строке, причина и метки — ниже на всю ширину */
+.seg .when { grid-column: 1; grid-row: 1; }
+.seg .dur { grid-column: 2; grid-row: 1; text-align: right; }
+.seg > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+
+/* Табло стана на первом экране */
+.board { background: #1b1e24; border: 2px solid #3a3f4a; border-radius: 16px; padding: 14px 16px; margin: 4px 0 16px; }
+.board-top { display: flex; align-items: baseline; gap: 12px; }
+.board-clock { font-size: 2.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
+.board-date { color: #a0a6b1; }
+.board-state { font-weight: 800; font-size: 1.1em; margin-top: 6px; }
+.board-state.running { color: #3fb950; }
+.board-state.stopped { color: #ff6b6b; }
+.board-period { margin: 2px 0 10px; }
+.board-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.board-stat { background: #22252b; border-radius: 12px; padding: 10px; text-align: center; color: #a0a6b1; font-size: 0.85em; }
+.board-stat .v { display: block; white-space: nowrap; font-size: 1.15em; font-weight: 800; color: #f0f2f5; font-variant-numeric: tabular-nums; }
+.board-stat.good .v { color: #3fb950; }
+.board-stat.bad .v { color: #ff6b6b; }
