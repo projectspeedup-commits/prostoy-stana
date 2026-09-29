@@ -311,6 +311,13 @@ function buildView() {
     .sort((a, b) => core.toMs(a.event.at) - core.toMs(b.event.at) || (a.event.seq || 0) - (b.event.seq || 0)).at(-1)?.event;
   if (lastShift?.type === "shift_open" && s.crew?.at === lastShift.at) v.closed = false;
   for (const e of queue) applyEvent(v, e);
+  // Первое нажатие ещё не дошло до сервера — учёт начался с него
+  for (const e of queue) {
+    for (const t of [e.at, e.type === "manual" ? e.from : undefined]) {
+      if (t === undefined || t === null) continue;
+      try { const ms = core.toMs(t); if (v.dataFromMs === null || ms < v.dataFromMs) v.dataFromMs = ms; } catch { /* битое время пропускаем */ }
+    }
+  }
   if (refs) v.shift = core.shiftOf(nowMs(), refs.settings.schedule);
   v.segments.sort((a, b) => a.startMs - b.startMs || (a.index || 0) - (b.index || 0));
   return v;
@@ -507,9 +514,10 @@ function fmtDate(ms) {
   return String(d.getUTCDate()).padStart(2, "0") + "." + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
 
-// Работа за смену: от начала смены, а если учёт начался позже — от первой записи в базе
+// Работа за смену: от начала смены, а если учёт начался позже — от первой записи.
+// Записей нет совсем — о стане ничего не известно, работу не считаем
 function shiftWorkMin(view, downMin) {
-  const from = Math.max(view.shift.startMs, view.dataFromMs ?? view.shift.startMs);
+  const from = Math.max(view.shift.startMs, view.dataFromMs ?? nowMs());
   const to = Math.min(nowMs(), view.shift.endMs);
   return Math.max(0, Math.round((to - from) / 60000) - downMin);
 }
