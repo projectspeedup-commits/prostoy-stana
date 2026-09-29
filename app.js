@@ -695,7 +695,7 @@ function renderCrew(main, view) {
     } else if (ui.crewBack) {
       kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
     }
-    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question(`${crewTitle(chosen)}: кто вы?`));
+    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question(crewTitle(chosen)));
     const people = (refs.people || []).filter((p) => p.crewId === chosen);
     kids.push(h("div", { class: "tiles" },
       people.map((p) => h("button", {
