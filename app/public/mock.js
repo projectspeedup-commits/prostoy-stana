@@ -32,17 +32,25 @@ const refs = {
   ],
   settings: { shortStopMinutes: 5, schedule: core.DEFAULT_SCHEDULE },
   crews: [
-    { id: "c1", title: "Бригада А" },
-    { id: "c2", title: "Бригада Б" },
+    { id: "1", title: "Бригада 1" },
+    { id: "2", title: "Бригада 2" },
+    { id: "3", title: "Бригада 3" },
   ],
+  // Условные имена для демо, не настоящие работники
   people: [
-    { id: "p1", name: "Тест Один", crewId: "c1" },
-    { id: "p2", name: "Тест Два", crewId: "c1" },
-    { id: "p3", name: "Тест Три", crewId: "c2" },
+    { id: "p1", name: "Кузнецов А.В", crewId: "1" },
+    { id: "p2", name: "Смирнов Д.С", crewId: "1" },
+    { id: "p3", name: "Орлов К.Р", crewId: "1" },
+    { id: "p4", name: "Волков Е.Н", crewId: "2" },
+    { id: "p5", name: "Морозов А.П", crewId: "2" },
+    { id: "p6", name: "Лебедев Г.О", crewId: "2" },
+    { id: "p7", name: "Новиков С.И", crewId: "3" },
+    { id: "p8", name: "Фёдоров М.А", crewId: "3" },
+    { id: "p9", name: "Соколов В.Т", crewId: "3" },
   ],
   demo: true,
 };
-const REFS_VERSION = "mock-1";
+const REFS_VERSION = "mock-2";
 
 const events = []; // журнал событий, как в базе сервера
 
