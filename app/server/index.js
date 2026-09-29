@@ -244,8 +244,8 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const isCore = rel === "/core/core.js";
-    const full = isCore ? path.resolve(HERE, "..", "core", "core.js") : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
+    const isCore = rel === "/core/core.js" || rel === "/core/refs.js";
+    const full = isCore ? path.resolve(HERE, "..", "core", rel.slice("/core/".length)) : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
     if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       return res.end("Не найдено");
