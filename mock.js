@@ -1,35 +1,13 @@
 // Имитация сервера в памяти для проверки страницы без backend.
 // Подключается только из app.js при ?mock=1. Считает на том же ядре, что и сервер.
 import * as core from "./core/core.js";
+import { DEFAULT_REFS } from "./core/refs.js";
 
+// Справочник причин, плиток и узлов — тот же, что у сервера
 const refs = {
-  reasons: {
-    R03: { title: "Замятие полосы", short: "Замятие", group: "Прокатка", planned: false },
-    R04: { title: "Обрыв полосы", short: "Обрыв", group: "Прокатка", planned: false },
-    R01: { title: "Настройка клетей", short: "Настройка клетей", group: "Наладка", planned: false },
-    R02: { title: "Перевалка валков", short: "Перевалка валков", group: "Наладка", planned: true },
-    E01: { title: "Нет напряжения", short: "Нет напряжения", group: "Электрика", planned: false },
-    E02: { title: "Авария привода", short: "Авария привода", group: "Электрика", planned: false },
-    M01: { title: "Подшипник клети", short: "Подшипник клети", group: "Механика", planned: false },
-    M02: { title: "Гидравлика", short: "Гидравлика", group: "Механика", planned: false },
-    O01: { title: "Нет заготовок", short: "Нет заготовок", group: "Организация", planned: false },
-    O02: { title: "Ожидание крана", short: "Ожидание крана", group: "Организация", planned: false },
-    P01: { title: "Плановый ремонт", short: "Плановый ремонт", group: "Плановые", planned: true },
-    P02: { title: "Технологическая пауза", short: "Тех. пауза", group: "Плановые", planned: true },
-  },
-  tiles: [
-    { id: "t-roll", title: "Прокатка", codes: ["R03", "R04"] },
-    { id: "t-setup", title: "Наладка", codes: ["R01", "R02"] },
-    { id: "t-elec", title: "Электрика", codes: ["E01", "E02"] },
-    { id: "t-mech", title: "Механика", codes: ["M01", "M02"] },
-    { id: "t-org", title: "Организация", codes: ["O01", "O02"] },
-    { id: "t-plan", title: "Плановые", codes: ["P01", "P02"] },
-  ],
-  nodes: [
-    { id: "n1", title: "Печь" },
-    { id: "n2", title: "Черновая группа" },
-    { id: "n3", title: "Чистовая группа" },
-  ],
+  reasons: DEFAULT_REFS.reasons,
+  tiles: DEFAULT_REFS.tiles,
+  nodes: DEFAULT_REFS.nodes,
   settings: { shortStopMinutes: 5, schedule: core.DEFAULT_SCHEDULE },
   crews: [
     { id: "1", title: "Бригада 1" },
@@ -50,7 +28,7 @@ const refs = {
   ],
   demo: true,
 };
-const REFS_VERSION = "mock-2";
+const REFS_VERSION = "mock-3";
 
 const events = []; // журнал событий, как в базе сервера
 
