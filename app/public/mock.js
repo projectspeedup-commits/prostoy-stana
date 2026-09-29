@@ -10,9 +10,9 @@ const refs = {
   nodes: DEFAULT_REFS.nodes,
   settings: { shortStopMinutes: 5, schedule: core.DEFAULT_SCHEDULE },
   crews: [
-    { id: "1", title: "Бригада 1" },
-    { id: "2", title: "Бригада 2" },
-    { id: "3", title: "Бригада 3" },
+    { id: "1", title: "Смена 1" },
+    { id: "2", title: "Смена 2" },
+    { id: "3", title: "Смена 3" },
   ],
   // Условные имена для демо, не настоящие работники
   people: [
@@ -49,12 +49,6 @@ function computeState() {
   const schedule = refs.settings.schedule;
   const built = core.buildDowntimes(events, now);
 
-  // Последняя правка fix на отрезок (ядро fix не применяет — это дело сервера)
-  const fixes = new Map();
-  for (const e of events) {
-    if (e.type === "fix") fixes.set(`${e.downtimeId}|${e.index}`, e);
-  }
-
   // Бригада на посту: последний shift_open, снятый shift_close
   let crew = null;
   let closed = false;
@@ -73,16 +67,13 @@ function computeState() {
   const segments = [];
   for (const seg of built.segments) {
     for (const p of core.splitByShifts(seg, schedule)) {
-      const fix = fixes.get(`${p.downtimeId}|${p.index}`);
-      const reason = fix && fix.reason !== undefined ? fix.reason : p.reason ?? null;
-      const part = { ...p, reason };
+      // reason/billet/note уже применены ядром (fix и note в reason поддерживает core)
+      const part = { ...p, reason: p.reason ?? null, billet: p.billet ?? null, note: p.note ?? null };
       const cls = core.classify(part, refs, refs.settings);
       const full = {
         ...part,
         ...cls,
         open: seg.open === true && p.endMs === seg.endMs,
-        billet: fix && fix.billet !== undefined ? fix.billet : null,
-        note: fix && fix.note !== undefined ? fix.note : null,
         personId: crew ? crew.personId : null,
         crewId: crew ? crew.crewId : null,
       };
