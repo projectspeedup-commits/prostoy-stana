@@ -191,3 +191,13 @@ test("workIntervals: дополнение простоев, слияние пе�
   assert.deepEqual(w.map((x) => [x.startMs, x.endMs, x.minutes]), [[msk(28, 10), msk(28, 19), 540]]);
   assert.deepEqual(workIntervals([], shift).map((x) => x.minutes), [720]);
 });
+
+test("buildDowntimes: reason сохраняет текст рабочего", () => {
+  const r = buildDowntimes([
+    { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d" },
+    { id: "b", type: "reason", at: "2026-09-28T10:01:00+03:00", downtimeId: "d", reason: "В-Э-02", note: "датчик на ножницах глючит" },
+    { id: "c", type: "start", at: "2026-09-28T10:15:00+03:00", downtimeId: "d" },
+  ], Date.parse("2026-09-28T12:00:00+03:00"));
+  assert.equal(r.segments[0].reason, "В-Э-02");
+  assert.equal(r.segments[0].note, "датчик на ножницах глючит");
+});

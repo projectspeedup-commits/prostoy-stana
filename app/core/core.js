@@ -151,7 +151,11 @@ export function buildDowntimes(events, nowMs) {
         const target = cur && matches(e) ? cur : e.downtimeId != null
           ? segments.findLast((s) => s.downtimeId === e.downtimeId) : null;
         if (!target) ignored.push(e.id);
-        else target.reason = e.reason !== undefined ? e.reason : null;
+        else {
+          target.reason = e.reason !== undefined ? e.reason : null;
+          // Своими словами: текст рабочего к причине
+          if (e.note !== undefined) target.note = e.note;
+        }
         break;
       }
       case "fix": {
