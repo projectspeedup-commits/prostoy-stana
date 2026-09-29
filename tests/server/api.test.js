@@ -226,3 +226,22 @@ test("events: простой без человека получает брига
     await app.close();
   }
 });
+
+test("state: dataFromMs — начало учёта, у ручного простоя берётся его начало", async () => {
+  const { app, base } = await start();
+  try {
+    const empty = await fetch(`${base}/api/state`, { headers: HEAD }).then((r) => r.json());
+    assert.equal(empty.state.dataFromMs, null);
+    await postEvents(base, [
+      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d1" },
+      { id: "e", type: "start", at: "2026-01-01T10:30:00Z", downtimeId: "d1" },
+    ]);
+    const { body } = await postEvents(base, [
+      { id: "m", type: "manual", at: "2026-01-01T11:00:00Z", from: "2026-01-01T09:00:00Z", to: "2026-01-01T09:20:00Z" },
+    ]);
+    assert.deepEqual(body.saved, ["m"]);
+    assert.equal(body.state.dataFromMs, Date.parse("2026-01-01T09:00:00Z"));
+  } finally {
+    await app.close();
+  }
+});

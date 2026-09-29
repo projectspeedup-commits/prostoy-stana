@@ -68,7 +68,7 @@ export function dayChart(days) {
  * rows: [{ name, minutes }]
  */
 export function donut(rows, centerTitle) {
-  const W = 320, H = 200, cx = 100, cy = 100, r = 80, w = 28;
+  const W = 480, H = 200, cx = 100, cy = 100, r = 80, w = 28;
   const total = rows.reduce((s, r2) => s + r2.minutes, 0);
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart donut", role: "img", "aria-label": "Доли простоя по группам причин" });
   if (!total) return svg;

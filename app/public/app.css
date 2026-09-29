@@ -360,6 +360,39 @@ a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: c
 .shift-block .shift-time { margin: 0 0 8px; }
 .pill.home { background: #2d333b; color: #f0f2f5; }
 
+/* Смена: спокойный блок под главным действием, одинаковый в обоих режимах. */
+.shift-block { margin-top: 28px; padding-top: 20px; border-top: 2px solid #3a3f4a; }
+.shift-person h2 { margin: 0 0 4px; }
+.shift-person p { margin: 4px 0; }
+.shift-block .shift-time { margin: 16px 0; flex-wrap: wrap; font-size: 0.95em; }
+.shift-action { text-align: left; font-size: 1em; }
+.action-help { display: block; margin-top: 5px; color: #b7bdc7; font-size: 0.85em; font-weight: 400; }
+.handover-note { padding: 16px 0; border-block: 1px solid #626b7a; color: #f2f4f8; }
+.receipt { font-weight: 700; }
+.save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: #b7bdc7; font-size: 0.8em; }
+.save-status.attention { color: #ffcf70; }
+.cancel { margin-top: 28px; }
+.topbar { flex-wrap: wrap; }
+button.pill { min-height: 52px; font-size: 0.8em; white-space: normal; }
+.btn, .tile, .card-note, .action-help, .reject, .handover-note { overflow-wrap: anywhere; }
+.card-note, .action-help { white-space: pre-wrap; }
+.stop-grid > *, .stats > *, .board-stats > * { min-width: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #8cc8ff; outline-offset: 3px; }
+input, textarea { caret-color: #8cc8ff; }
+::selection { background: #245477; color: #fff; }
+input::placeholder, textarea::placeholder { color: #aeb6c4; opacity: 1; }
+.btn:disabled, .tile:disabled { cursor: default; }
+label { display: block; margin-top: 20px; }
+@media (max-width: 480px) {
+  .tiles, .row2 { grid-template-columns: 1fr; }
+  .btn-huge { min-height: 32dvh; font-size: 1.7em; }
+  .btn-go { min-height: 26dvh; }
+  .board-top, .m-bar-head, .chart-legend { flex-wrap: wrap; }
+  .board-clock { font-size: 2em; }
+  .board-stats, .metrics .m-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bar .msk { float: none; display: block; margin-top: 4px; font-size: 0.85em; }
+}
+
 /* Метрики работы стана */
 .metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid #2d333b; }
 .m-head { font-size: 1.2em; font-weight: 800; margin-bottom: 10px; }

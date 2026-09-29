@@ -45,6 +45,18 @@ function shiftsOfDay(day, schedule) {
   return out;
 }
 
+// Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
+function firstEventMs() {
+  let first = Infinity;
+  for (const e of events) {
+    for (const v of [e.at, e.type === "manual" ? e.from : undefined]) {
+      if (v === undefined || v === null) continue;
+      try { first = Math.min(first, core.toMs(v)); } catch { /* битое время пропускаем */ }
+    }
+  }
+  return Number.isFinite(first) ? first : null;
+}
+
 function computeState() {
   const now = Date.now();
   const schedule = refs.settings.schedule;
@@ -98,6 +110,7 @@ function computeState() {
     segments,
     summary,
     closed,
+    dataFromMs: firstEventMs(),
   };
 }
 

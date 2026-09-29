@@ -3,6 +3,18 @@ import { buildDowntimes, classify, DEFAULT_SCHEDULE, shiftOf, splitByShifts, sum
 const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
 const MINUTE = 60_000;
 
+// Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
+function firstEventMs(events) {
+  let first = Infinity;
+  for (const e of events) {
+    for (const v of [e.at, e.type === "manual" ? e.from : undefined]) {
+      if (v === undefined || v === null) continue;
+      try { first = Math.min(first, toMs(v)); } catch { /* битое время пропускаем */ }
+    }
+  }
+  return Number.isFinite(first) ? first : null;
+}
+
 export function createEventStore(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY, type TEXT, at_ms INTEGER, received_ms INTEGER,
@@ -117,6 +129,7 @@ export function createEventStore(db) {
       segments,
       summary: summarizeDay(segments, [shift], { [shift.shiftNo]: ownEvents.length > 0 || !!ping }),
       closed: ownEvents.some((e) => e.type === "shift_close"),
+      dataFromMs: firstEventMs(events),
     };
   }
 
