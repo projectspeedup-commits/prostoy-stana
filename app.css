@@ -360,6 +360,39 @@ a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: c
 .shift-block .shift-time { margin: 0 0 8px; }
 .pill.home { background: #2d333b; color: #f0f2f5; }
 
+/* Смена: спокойный блок под главным действием, одинаковый в обоих режимах. */
+.shift-block { margin-top: 28px; padding-top: 20px; border-top: 2px solid #3a3f4a; }
+.shift-person h2 { margin: 0 0 4px; }
+.shift-person p { margin: 4px 0; }
+.shift-block .shift-time { margin: 16px 0; flex-wrap: wrap; font-size: 0.95em; }
+.shift-action { text-align: left; font-size: 1em; }
+.action-help { display: block; margin-top: 5px; color: #b7bdc7; font-size: 0.85em; font-weight: 400; }
+.handover-note { padding: 16px 0; border-block: 1px solid #626b7a; color: #f2f4f8; }
+.receipt { font-weight: 700; }
+.save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: #b7bdc7; font-size: 0.8em; }
+.save-status.attention { color: #ffcf70; }
+.cancel { margin-top: 28px; }
+.topbar { flex-wrap: wrap; }
+button.pill { min-height: 52px; font-size: 0.8em; white-space: normal; }
+.btn, .tile, .card-note, .action-help, .reject, .handover-note { overflow-wrap: anywhere; }
+.card-note, .action-help { white-space: pre-wrap; }
+.stop-grid > *, .stats > *, .board-stats > * { min-width: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #8cc8ff; outline-offset: 3px; }
+input, textarea { caret-color: #8cc8ff; }
+::selection { background: #245477; color: #fff; }
+input::placeholder, textarea::placeholder { color: #aeb6c4; opacity: 1; }
+.btn:disabled, .tile:disabled { cursor: default; }
+label { display: block; margin-top: 20px; }
+@media (max-width: 480px) {
+  .tiles, .row2 { grid-template-columns: 1fr; }
+  .btn-huge { min-height: 32dvh; font-size: 1.7em; }
+  .btn-go { min-height: 26dvh; }
+  .board-top, .m-bar-head, .chart-legend { flex-wrap: wrap; }
+  .board-clock { font-size: 2em; }
+  .board-stats, .metrics .m-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bar .msk { float: none; display: block; margin-top: 4px; font-size: 0.85em; }
+}
+
 /* Метрики работы стана */
 .metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid #2d333b; }
 .m-head { font-size: 1.2em; font-weight: 800; margin-bottom: 10px; }
@@ -381,3 +414,22 @@ a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: c
 /* Шапка: кнопки в одну строку, не наезжают на содержимое */
 .pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
 .m-tab { font-size: 0.8em; padding: 0 4px; }
+
+/* Графики */
+.chart { width: 100%; height: auto; display: block; background: #1b1e24; border-radius: 12px; }
+.chart .grid { stroke: #2d333b; stroke-width: 1; }
+.chart .ax { stroke: #6e7681; stroke-width: 1.5; }
+.chart .tick { fill: #a0a6b1; font-size: 12px; }
+.chart .work { fill: #2ea043; }
+.chart .down { fill: #da3633; }
+.chart .nodata { fill: none; stroke: #4a505c; stroke-dasharray: 3 3; }
+.chart .legend { fill: #f0f2f5; font-size: 13px; }
+.chart .center { fill: #f0f2f5; font-size: 16px; font-weight: 800; }
+.chart .seg-0 { fill: #da3633; stroke: #da3633; } .chart .seg-1 { fill: #e3b341; stroke: #e3b341; }
+.chart .seg-2 { fill: #58a6ff; stroke: #58a6ff; } .chart .seg-3 { fill: #a371f7; stroke: #a371f7; }
+.chart .seg-4 { fill: #3fb950; stroke: #3fb950; } .chart .seg-5 { fill: #f778ba; stroke: #f778ba; }
+.chart .seg-6 { fill: #8b949e; stroke: #8b949e; }
+.chart .ring { fill: none; }
+.chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.8em; color: #a0a6b1; }
+.lg::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.lg.work::before { background: #2ea043; } .lg.down::before { background: #da3633; } .lg.nodata::before { border: 1px dashed #6e7681; }

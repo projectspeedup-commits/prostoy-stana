@@ -102,10 +102,19 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const now = toMsValue(nowMs);
   if (to < from) throw new Error("Некорректный период");
   const built = buildDowntimes(events, now);
+  // Учёт начинается с первого события: раньше данных нет, и считать это время работой нельзя
+  let firstAt = Infinity;
+  for (const e of events) {
+    for (const v of [e.at, e.type === "manual" ? e.from : undefined]) {
+      if (v === undefined || v === null) continue;
+      try { firstAt = Math.min(firstAt, toMsValue(v)); } catch { /* пропускаем битое время */ }
+    }
+  }
+  const dataFrom = Number.isFinite(firstAt) ? Math.min(Math.max(from, firstAt), to) : to;
   const visible = clippedSegments(built.segments, from, to, refs);
   const visibleByDowntime = downtimeMap(visible);
   const allByDowntime = downtimeMap(built.segments);
-  const totalMs = to - from;
+  const totalMs = to - dataFrom;
   const downMs = visible.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
   const modeMs = { planned: 0, unplanned: 0, short: 0 };
   for (const segment of visible) modeMs[segment.mode] += segment.endMs - segment.startMs;
@@ -151,8 +160,12 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   if (to > from) {
     const first = shiftOf(from, refs.settings.schedule).day;
     for (let start = firstShiftStart(first, refs.settings.schedule); start < to; start += DAY) {
-      const dayFrom = Math.max(start, from);
       const dayTo = Math.min(start + DAY, to);
+      if (dayTo <= dataFrom) {
+        days.push({ day: localDate(start, refs.settings.schedule), noData: true, workMin: null, downMin: 0, stops: 0 });
+        continue;
+      }
+      const dayFrom = Math.max(start, from, dataFrom);
       const own = clippedSegments(built.segments, dayFrom, dayTo, refs);
       const dayDown = own.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
       days.push({ day: localDate(start, refs.settings.schedule), workMin: minutes(dayTo - dayFrom - dayDown), downMin: minutes(dayDown), stops: new Set(own.map((segment) => segment.downtimeId)).size });
@@ -180,6 +193,8 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   return {
     fromMs: from,
     toMs: to,
+    dataFromMs: dataFrom,
+    noData: dataFrom >= to,
     totalMin,
     workMin: Math.max(0, totalMin - downMin),
     downMin,
