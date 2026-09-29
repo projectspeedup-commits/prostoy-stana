@@ -1,0 +1,270 @@
+/* Страница рабочего: тёмная тема, крупные элементы под перчатки. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font: 20px/1.4 system-ui, sans-serif;
+  background: #14161a;
+  color: #f2f4f8;
+  min-height: 100dvh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+  background: #14161a;
+}
+.pill {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.9em;
+  font-weight: 700;
+  background: #3a3e46;
+}
+.pill.ok { background: #1a7f37; color: #fff; }
+.pill.bad { background: #c5221f; color: #fff; }
+.pill.warn { background: #e3b341; color: #1a1c20; }
+.pill.demo { background: #6e4bd8; color: #fff; }
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
+}
+h1 { font-size: 1.5em; margin: 4px 0 16px; }
+h2 { font-size: 1.15em; margin: 20px 0 12px; }
+.muted { color: #a0a6b1; }
+
+button, input {
+  font: inherit;
+  color: inherit;
+  border-radius: 14px;
+  border: 2px solid #4a505c;
+  background: #22252b;
+}
+input {
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  font-size: 1.1em;
+}
+.btn {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  font-size: 1.1em;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active { filter: brightness(1.25); }
+.btn.primary { background: #1a7f37; border-color: #2ea043; }
+.btn.danger { background: #c5221f; border-color: #da3633; }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: 0.45; }
+
+/* Главные кнопки поста */
+.btn-huge {
+  min-height: 45dvh;
+  font-size: 2em;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.btn-go {
+  min-height: 22dvh;
+  font-size: 1.6em;
+  font-weight: 800;
+}
+
+/* Цветные полосы состояния */
+.bar {
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 12px;
+  font-weight: 700;
+}
+.bar.green { background: #14532d; border: 2px solid #2ea043; }
+.bar.red { background: #5c1a18; border: 2px solid #da3633; }
+.timer {
+  display: block;
+  font-size: 2.6em;
+  font-weight: 800;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
+/* Плитки выбора (бригады, люди, группы причин, причины) */
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.tile {
+  min-height: 84px;
+  padding: 14px;
+  font-size: 1.05em;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  background: #22252b;
+  border: 2px solid #4a505c;
+  border-radius: 14px;
+  touch-action: manipulation;
+}
+.tile:active { filter: brightness(1.3); }
+.tile.unknown { background: #4a3a10; border-color: #e3b341; }
+.tile .t-code {
+  display: block;
+  font-size: 0.75em;
+  font-weight: 400;
+  color: #a0a6b1;
+  margin-top: 4px;
+}
+.tile.sel { border-color: #2ea043; background: #14532d; }
+
+/* Текущая причина */
+.chip {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  margin-top: 12px;
+  border-radius: 14px;
+  background: #22252b;
+  border: 2px solid #4a505c;
+  font-weight: 700;
+}
+.chip .t-code { font-weight: 400; font-size: 0.8em; color: #a0a6b1; }
+.chip.none { border-color: #e3b341; color: #e3b341; }
+
+/* Плашка «Стан всё ещё стоит?» */
+.banner-warn {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #e3b341;
+  color: #1a1c20;
+  font-weight: 800;
+  text-align: center;
+}
+
+/* Сводка итога смены */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.stat {
+  background: #22252b;
+  border: 2px solid #4a505c;
+  border-radius: 14px;
+  padding: 14px;
+  text-align: center;
+}
+.stat .v { display: block; font-size: 1.4em; font-weight: 800; margin-top: 4px; }
+.stat.good .v { color: #3fb950; }
+.stat.bad .v { color: #f85149; }
+.stat.planned .v { color: #58a6ff; }
+
+/* Список отрезков */
+.segs { margin-top: 12px; display: grid; gap: 12px; }
+.seg {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 14px;
+  text-align: left;
+  background: #22252b;
+  border: 2px solid #4a505c;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.seg .when { font-weight: 800; font-variant-numeric: tabular-nums; }
+.seg .dur { color: #a0a6b1; font-variant-numeric: tabular-nums; }
+.seg .why { font-weight: 700; }
+.seg .why .t-code { font-weight: 400; font-size: 0.8em; color: #a0a6b1; }
+.badge-need {
+  display: inline-block;
+  background: #e3b341;
+  color: #1a1c20;
+  border-radius: 8px;
+  padding: 2px 10px;
+  font-weight: 800;
+  font-size: 0.85em;
+}
+.seg.open { border-color: #da3633; }
+.seg .manual-tag { display: block; font-size: 0.75em; color: #a0a6b1; font-weight: 400; }
+
+/* Шаги ±5 мин / ±1 ч */
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+.stepper .btn { margin-top: 0; min-height: 64px; }
+.stepval {
+  text-align: center;
+  font-size: 1.6em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-top: 8px;
+}
+
+/* Расход заготовки */
+.billet-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+.billet-row .btn { margin-top: 0; }
+.billet-row .btn.sel { border-color: #2ea043; background: #14532d; }
+
+/* Отказы сервера */
+.rejects {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 12px 24px;
+}
+.reject {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #5c1a18;
+  border: 2px solid #da3633;
+  font-size: 0.9em;
+}
+.error-text { color: #f85149; font-weight: 700; }
+
+/* Планшет в горизонтали: «Стан стоит» в две колонки */
+@media (min-width: 900px) and (orientation: landscape) {
+  main { max-width: 1240px; }
+  .stop-grid {
+    display: grid;
+    grid-template-columns: minmax(380px, 5fr) 7fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .stop-grid .tiles { grid-template-columns: repeat(3, 1fr); }
+  .btn-go { min-height: 30dvh; }
+}
+
+/* Атрибут hidden сильнее любых классов: иначе плашка «Демо-данные» видна всегда */
+[hidden] { display: none !important; }
