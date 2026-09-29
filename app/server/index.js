@@ -1,4 +1,4 @@
-// Сервер пробы связи: принимает пинги от планшета и считает сводку.
+// Сервер учёта простоев и пробы связи.
 // Только встроенные модули Node; база — node:sqlite.
 import http from "node:http";
 import fs from "node:fs";
@@ -6,6 +6,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { createEventStore } from "./events.js";
+import { createRefsReader } from "./people.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -18,6 +20,7 @@ const MIME = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
@@ -54,7 +57,9 @@ function median(values) {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
 
-export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date() } = {}) {
+export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE } = {}) {
+  const clock = () => new Date(now());
+  const readRefs = createRefsReader(peopleFile);
   const keys = Array.isArray(deviceKeys) ? deviceKeys : parseDeviceKeys(deviceKeys);
   if (!keys.length) {
     throw new Error("Не заданы ключи устройств (STAN_DEVICE_KEYS): сервер без ключей не запускается.");
@@ -79,6 +84,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     );
     CREATE TABLE IF NOT EXISTS alive (at TEXT PRIMARY KEY);
   `);
+  const eventStore = createEventStore(db);
 
   const insertPing = db.prepare(
     "INSERT INTO pings (device, client_at, server_at, prev_ms, prev_ok) VALUES (?, ?, ?, ?, ?)"
@@ -87,7 +93,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
 
   // Журнал живости: момент запуска и далее раз в минуту.
   const beat = () => {
-    try { insertAlive.run(now().toISOString()); } catch { /* база уже закрыта */ }
+    try { insertAlive.run(clock().toISOString()); } catch { /* база уже закрыта */ }
   };
   beat();
   const timer = setInterval(beat, 60_000);
@@ -95,7 +101,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
 
   const windows = new Map(); // имя устройства -> { minute, count }
   function allowed(name) {
-    const minute = Math.floor(now().getTime() / 60_000);
+    const minute = Math.floor(clock().getTime() / 60_000);
     const w = windows.get(name);
     if (!w || w.minute !== minute) {
       windows.set(name, { minute, count: 1 });
@@ -175,13 +181,22 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     }
     const isPing = pathname === "/api/ping" && req.method === "POST";
     const isSummary = pathname === "/api/probe-summary" && req.method === "GET";
-    if (!isPing && !isSummary) return send(res, 404, { ok: false, error: "not_found" });
+    const isRefs = pathname === "/api/refs" && req.method === "GET";
+    const isState = pathname === "/api/state" && req.method === "GET";
+    const isEvents = pathname === "/api/events" && req.method === "POST";
 
     const device = identify(req);
     if (!device) return send(res, 401, { ok: false, error: "bad_key" });
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
+    if (!isPing && !isSummary && !isRefs && !isState && !isEvents) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
+    if (isRefs) return send(res, 200, { ok: true, ...readRefs() });
+    if (isState) {
+      const { refs, refsVersion } = readRefs();
+      const time = clock();
+      return send(res, 200, { ok: true, state: eventStore.state(time.getTime(), refs), refsVersion, serverTime: time.toISOString() });
+    }
 
     let data;
     try {
@@ -190,6 +205,15 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       if (e && e.code === "too_large") return send(res, 413, { ok: false, error: "bad_request" });
       return send(res, 400, { ok: false, error: "bad_request" });
     }
+    if (isEvents) {
+      if (!data || !Array.isArray(data.events) || data.events.length > 200) {
+        return send(res, 400, { ok: false, error: "bad_request" });
+      }
+      const { refs } = readRefs();
+      const time = clock();
+      const result = eventStore.save(data.events, time.getTime(), device.name, refs.settings.schedule);
+      return send(res, 200, { ok: true, ...result, state: eventStore.state(time.getTime(), refs), serverTime: time.toISOString() });
+    }
     const okType = (v, t) => v === null || v === undefined || typeof v === t;
     if (
       !data || typeof data !== "object" || Array.isArray(data) ||
@@ -197,7 +221,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     ) {
       return send(res, 400, { ok: false, error: "bad_request" });
     }
-    const serverTime = now().toISOString();
+    const serverTime = clock().toISOString();
     insertPing.run(
       device.name,
       data.clientAt ?? null,
@@ -220,8 +244,9 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const full = path.resolve(PUBLIC_DIR, "." + path.sep + rel);
-    if (full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
+    const isCore = rel === "/core/core.js";
+    const full = isCore ? path.resolve(HERE, "..", "core", "core.js") : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
+    if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       return res.end("Не найдено");
     }

@@ -104,6 +104,42 @@ test("buildDowntimes: незакрытый простой open, конец = now
   assert.equal(r.segments[1].manual, false);
 });
 
+test("buildDowntimes: fix меняет закрытый отрезок и не трогает непереданные поля", () => {
+  const r = buildDowntimes([
+    { id: "s", type: "stop", at: msk(28, 10), downtimeId: "d1", reason: "R1", node: "клети", billet: 2, note: "до" },
+    { id: "e", type: "start", at: msk(28, 10, 30), downtimeId: "d1" },
+    { id: "f", type: "fix", at: msk(28, 10, 40), downtimeId: "d1", index: 0, reason: "R2", note: "после" },
+  ], msk(28, 12));
+  assert.equal(r.segments[0].reason, "R2");
+  assert.equal(r.segments[0].node, "клети");
+  assert.equal(r.segments[0].billet, 2);
+  assert.equal(r.segments[0].note, "после");
+  assert.deepEqual(r.ignored, []);
+});
+
+test("buildDowntimes: fix неизвестного отрезка и reason без цели попадают в ignored", () => {
+  const r = buildDowntimes([
+    { id: "s", type: "stop", at: msk(28, 10), downtimeId: "d1" },
+    { id: "e", type: "start", at: msk(28, 10, 30), downtimeId: "d1" },
+    { id: "f", type: "fix", at: msk(28, 10, 40), downtimeId: "d1", index: 1, reason: "R2" },
+    { id: "r", type: "reason", at: msk(28, 10, 41), downtimeId: "нет", reason: "R3" },
+  ], msk(28, 12));
+  assert.deepEqual(r.ignored, ["f", "r"]);
+});
+
+test("buildDowntimes: reason после закрытия применяется к последнему отрезку простоя", () => {
+  const r = buildDowntimes([
+    { id: "s", type: "stop", at: msk(28, 10), downtimeId: "d1" },
+    { id: "sp", type: "split", at: msk(28, 10, 10), downtimeId: "d1", reason: "R1" },
+    { id: "e", type: "start", at: msk(28, 10, 30), downtimeId: "d1" },
+    { id: "r", type: "reason", at: msk(28, 10, 40), downtimeId: "d1", reason: "R2" },
+  ], msk(28, 12));
+  assert.deepEqual(r.segments.map((s) => [s.index, s.reason, s.billet, s.note]), [
+    [0, null, null, null],
+    [1, "R2", null, null],
+  ]);
+});
+
 const refs = { reasons: { R1: { group: "Механика", planned: false }, P1: { group: "Плановые", planned: true } } };
 const settings = { shortStopMinutes: 5 };
 

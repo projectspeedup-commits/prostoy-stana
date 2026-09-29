@@ -11,3 +11,6 @@ node_modules/
 *.log
 .clasp.json
 .clasprc.json
+
+# Настройки предпросмотра с тестовым ключом
+.claude/

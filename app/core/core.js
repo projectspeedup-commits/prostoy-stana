@@ -18,16 +18,24 @@ export const DEFAULT_SCHEDULE = {
 
 /** Момент времени (число мс UTC или ISO 8601) -> мс UTC. Без пояса в строке считаем UTC. */
 export function toMs(at) {
-  if (typeof at === "number" && Number.isFinite(at)) return at;
+  if (typeof at === "number" && Number.isFinite(at) && Math.abs(at) <= 8.64e15) return at;
   if (typeof at === "string") {
     const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i.exec(at.trim());
     if (m) {
       const ms = m[7] ? Math.round(Number("0." + m[7]) * 1000) : 0;
-      let t = Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), ms);
+      const date = new Date(0);
+      date.setUTCFullYear(+m[1], +m[2] - 1, +m[3]);
+      if (date.getUTCFullYear() !== +m[1] || date.getUTCMonth() !== +m[2] - 1 ||
+        date.getUTCDate() !== +m[3] || +(m[4] || 0) > 23 || +(m[5] || 0) > 59 || +(m[6] || 0) > 59) {
+        throw new Error("Некорректный момент времени");
+      }
+      date.setUTCHours(+(m[4] || 0), +(m[5] || 0), +(m[6] || 0), ms);
+      let t = date.getTime();
       const z = m[8];
       if (z && z.toUpperCase() !== "Z") {
         const sign = z[0] === "-" ? -1 : 1;
         const digits = z.slice(1).replace(":", "");
+        if (+digits.slice(0, 2) > 23 || +(digits.slice(2) || 0) > 59) throw new Error("Некорректный часовой пояс");
         const off = +digits.slice(0, 2) * 60 + +(digits.slice(2) || 0);
         t -= sign * off * MIN;
       }
@@ -120,6 +128,8 @@ export function buildDowntimes(events, nowMs) {
     endMs: null,
     reason: e.reason !== undefined ? e.reason : null,
     node: val(e.node, prev && prev.node),
+    billet: val(e.billet),
+    note: val(e.note),
     crewId: val(e.crewId, prev && prev.crewId),
     personId: val(e.personId, prev && prev.personId),
     manual: false,
@@ -137,10 +147,22 @@ export function buildDowntimes(events, nowMs) {
         if (cur) ignored.push(e.id);
         else cur = open(e, t, e.downtimeId ?? e.id, 0, null);
         break;
-      case "reason":
-        if (!cur || !matches(e)) ignored.push(e.id);
-        else cur.reason = e.reason !== undefined ? e.reason : null;
+      case "reason": {
+        const target = cur && matches(e) ? cur : e.downtimeId != null
+          ? segments.findLast((s) => s.downtimeId === e.downtimeId) : null;
+        if (!target) ignored.push(e.id);
+        else target.reason = e.reason !== undefined ? e.reason : null;
         break;
+      }
+      case "fix": {
+        const target = [cur, ...segments].find((s) => s &&
+          s.downtimeId === e.downtimeId && s.index === e.index);
+        if (!target) ignored.push(e.id);
+        else for (const field of ["reason", "node", "billet", "note"]) {
+          if (e[field] !== undefined) target[field] = e[field];
+        }
+        break;
+      }
       case "split":
         if (!cur || !matches(e)) ignored.push(e.id);
         else {
@@ -167,6 +189,8 @@ export function buildDowntimes(events, nowMs) {
           endMs: to,
           reason: e.reason !== undefined ? e.reason : null,
           node: val(e.node),
+          billet: val(e.billet),
+          note: val(e.note),
           crewId: val(e.crewId),
           personId: val(e.personId),
           manual: true,
