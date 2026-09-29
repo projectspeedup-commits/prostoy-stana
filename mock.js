@@ -2,6 +2,7 @@
 // Подключается только из app.js при ?mock=1. Считает на том же ядре, что и сервер.
 import * as core from "./core/core.js";
 import { DEFAULT_REFS } from "./core/refs.js";
+import { computeStats, periodRange } from "./core/stats.js";
 
 // Справочник причин, плиток и узлов — тот же, что у сервера
 const refs = {
@@ -118,6 +119,18 @@ export async function api(path, options = {}) {
   }
   if (path === "/api/state") {
     return { ok: true, state: computeState(), refsVersion: REFS_VERSION, serverTime: serverTime() };
+  }
+  const url = new URL(path, "http://mock.local");
+  if (url.pathname === "/api/stats") {
+    const period = url.searchParams.get("period");
+    if (!new Set(["shift", "day", "week", "month"]).has(period)) {
+      const err = new Error("bad_request");
+      err.status = 400;
+      throw err;
+    }
+    const now = Date.now();
+    const range = periodRange(period, now, refs.settings.schedule);
+    return { ok: true, period, label: range.label, stats: computeStats(events, { ...range, nowMs: now, refs }), serverTime: serverTime() };
   }
   if (path === "/api/events" && options.method === "POST") {
     let body;

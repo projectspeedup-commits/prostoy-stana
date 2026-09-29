@@ -231,6 +231,7 @@ function buildView() {
     open = {
       downtimeId: s.open.downtimeId,
       startMs: last ? last.startMs : core.toMs(s.open.startMs),
+      since: core.toMs(s.open.startMs),
       reason: last && last.reason !== undefined ? last.reason : null,
       note: last && last.note !== undefined ? last.note : null,
       action: last && last.action !== undefined ? last.action : null,
@@ -271,7 +272,7 @@ function applyEvent(v, e) {
   switch (e.type) {
     case "stop":
       if (!v.open) {
-        v.open = { downtimeId: e.downtimeId || e.id, startMs: t, reason: e.reason ?? null, note: null, index: 0 };
+        v.open = { downtimeId: e.downtimeId || e.id, startMs: t, since: t, reason: e.reason ?? null, note: null, index: 0 };
         v.running = false;
       }
       break;
@@ -288,6 +289,7 @@ function applyEvent(v, e) {
           downtimeId: v.open.downtimeId,
           index: v.open.index + 1,
           startMs: t,
+          since: v.open.since ?? v.open.startMs,
           reason: e.reason ?? null,
           note: e.note !== undefined ? e.note : null,
         };
@@ -451,8 +453,8 @@ function board(view) {
       h("span", { class: "board-clock", text: fmtClock(nowMs()) }),
       h("span", { class: "board-date", text: `${fmtDate(nowMs())} · Москва` })),
     h("div", { class: "board-state " + (stopped ? "stopped" : "running"),
-      text: stopped ? `Стан стоит с ${fmtClock(view.open.startMs)}` : "Стан работает" }),
-    h("div", { class: "board-period muted", text: `${periodLabel(shift)} · с начала периода` }),
+      text: stopped ? `Стан стоит с ${fmtClock(view.open.since ?? view.open.startMs)}` : "Стан работает" }),
+    h("div", { class: "board-period muted", text: `${periodLabel(shift)} · с начала периода${refs.demo ? " · демо-данные" : ""}` }),
     h("div", { class: "board-stats" },
       h("div", { class: "board-stat good" }, h("span", { class: "v", text: fmtHM(workMin) }), "работа"),
       h("div", { class: "board-stat bad" }, h("span", { class: "v", text: fmtHM(downMin) }), "простой"),
@@ -465,6 +467,14 @@ function fmtHM(min) {
   const h = Math.floor(min / 60);
   return h ? `${h} ч ${min % 60} м` : `${min} м`;
 }
+// Подсказки в полях — по теме выбранной причины (из справочника)
+const DEFAULT_NOTE_HINT = "Например: на третьей клети заклинило подшипник";
+const DEFAULT_ACTION_HINT = "Например: заменили ножи, подтянули муфту";
+function noteHint(code) { return (reasonRef(code) && reasonRef(code).hint) || DEFAULT_NOTE_HINT; }
+function actionHint(code) { return (reasonRef(code) && reasonRef(code).actionHint) || DEFAULT_ACTION_HINT; }
+// «Иная причина»: описание своими словами обязательно
+function isOther(code) { return !!(reasonRef(code) && reasonRef(code).other); }
+
 function fmtDurMin(min) {
   min = Math.max(0, Math.round(min));
   const h = Math.floor(min / 60);
@@ -504,6 +514,8 @@ function h(tag, attrs, ...kids) {
       if (val === null || val === undefined || val === false) continue;
       if (k === "class") el.className = val;
       else if (k === "text") el.textContent = val;
+      // Стиль — через CSSOM: атрибут style запрещён политикой безопасности страницы
+      else if (k === "style") el.style.cssText = val;
       else if (k === "dataset") Object.assign(el.dataset, val);
       else if (k.startsWith("on") && typeof val === "function") el.addEventListener(k.slice(2), val);
       else if (val === true) el.setAttribute(k, "");
@@ -537,21 +549,35 @@ function showToast(text) {
 }
 
 function renderTopbar() {
+  // Кнопка «Связаться»: открывает экран звонка. Цвет — состояние связи с сервером
   const conn = $("conn");
+  if (!conn.dataset.bound) {
+    conn.dataset.bound = "1";
+    conn.addEventListener("click", () => { if (key && refs) { ui.contactBack = ui.screen; go("contact"); } });
+  }
   if (!key) {
     conn.className = "pill wait";
-    conn.textContent = "Нет ключа";
+    conn.textContent = "Связаться";
   } else if (online && !queue.length) {
     conn.className = "pill ok";
-    conn.textContent = "На связи";
+    conn.textContent = "Связаться";
   } else if (online) {
     conn.className = "pill warn";
-    conn.textContent = `Отправка: ${queue.length}`;
+    conn.textContent = `Связаться · отправка ${queue.length}`;
   } else {
     conn.className = "pill bad";
-    conn.textContent = queue.length ? `Нет связи, в очереди ${queue.length}` : "Нет связи";
+    conn.textContent = queue.length ? `Связаться · нет сети, ждут ${queue.length}` : "Связаться · нет сети";
   }
-  $("demo").hidden = !(refs && refs.demo);
+  // Кнопка «На главный экран»: бросить незаконченный мастер и вернуться
+  const home = $("demo");
+  if (!home.dataset.bound) {
+    home.dataset.bound = "1";
+    home.addEventListener("click", () => {
+      ui.wz = null; ui.mw = null; ui.rw = null; ui.af = null; ui.crewId = null; ui.crewBack = false;
+      go("auto");
+    });
+  }
+  home.hidden = !key;
 }
 
 function renderRejects() {
@@ -575,6 +601,8 @@ function reasonRef(code) {
 }
 function reasonLabel(code) {
   const r = reasonRef(code);
+  // «Иная причина» — с группой: «Иная механическая причина»
+  if (r && r.other) return r.title || r.short || code;
   return r ? r.short || r.title || code : code || "";
 }
 function personName(id) {
@@ -625,10 +653,36 @@ function render() {
     case "billet": return renderBillet(main, view);
     case "closeConfirm": return renderCloseConfirm(main, view);
     case "closed": return renderClosed(main, view);
+    case "contact": return renderContact(main, view);
   }
   if (needCrew(view)) return renderCrew(main, view);
   if (view.open) return renderStop(main, view);
   return renderRun(main, view);
+}
+
+// Экран «Связаться»: звонок мастеру, ремонтникам, диспетчеру.
+// Номера задаются в настройках (refs.settings.contacts); пока их нет — показываем, кому звонить.
+const DEFAULT_CONTACTS = [
+  { title: "Мастер смены", tel: "" },
+  { title: "Дежурный механик", tel: "" },
+  { title: "Дежурный электрик", tel: "" },
+  { title: "Диспетчер", tel: "" },
+];
+function renderContact(main, view) {
+  const list = (refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS;
+  const back = ui.contactBack && ui.contactBack !== "contact" ? ui.contactBack : "auto";
+  const status = online && !queue.length ? "Связь с сервером есть, нажатия доходят."
+    : online ? `Отправляются нажатия: ${queue.length}.`
+    : `Нет связи с сервером. Нажатия сохранены на планшете${queue.length ? ` (${queue.length})` : ""} и уйдут сами, когда связь появится.`;
+  fill(main,
+    backBtn("Вернуться", () => go(back)),
+    question("Связаться"),
+    h("p", { class: "muted", text: status }),
+    h("div", { class: "tiles one" },
+      list.map((c) => c.tel
+        ? h("a", { class: "tile", href: `tel:${c.tel}` }, c.title, h("span", { class: "t-code", text: c.tel }))
+        : h("div", { class: "tile tile-off" }, c.title, h("span", { class: "t-code", text: "номер не задан" }))))
+  );
 }
 
 // Рендер по таймерам/ответам сервера: не дёргать экран, пока рабочий печатает
@@ -689,6 +743,7 @@ function renderCrew(main, view) {
     kids.push(h("div", { class: "tiles" },
       crews.map((c) => h("button", { class: "tile", onclick: () => { ui.crewId = c.id; render(); } }, c.title))
     ));
+    kids.push(metrics());
   } else {
     if (!single) {
       kids.push(backBtn("К выбору смены", () => { ui.crewId = null; render(); }));
@@ -742,31 +797,119 @@ function renderRun(main, view) {
       },
     }, "СТАН ВСТАЛ"),
     h("p", { class: "hint", text: "Нажмите, как только стан остановился" }),
-    // Время смены: границы и сколько осталось до конца
+    shiftBlock(view),
+    h("p", { class: "muted", text: `За смену: ${stops} ${plural(stops, "простой", "простоя", "простоев")}, ${fmtDurMin(downMin)}` })
+  );
+}
+
+// --- Метрики работы стана за период (первый экран) ---
+const PERIODS = [["shift", "Смена"], ["day", "Сутки"], ["week", "7 суток"], ["month", "Месяц"]];
+const STATS_TTL_MS = 60000;
+function loadStats(period) {
+  ui.stats = ui.stats || {};
+  const c = ui.stats[period];
+  if (c && (c.loading || nowMs() - c.at < STATS_TTL_MS)) return;
+  ui.stats[period] = { ...(c || {}), loading: true };
+  api(`/api/stats?period=${period}`)
+    .then((d) => { ui.stats[period] = { data: d.stats, label: d.label, at: nowMs() }; })
+    .catch(() => { ui.stats[period] = { ...(c || {}), error: true, at: nowMs() }; })
+    .finally(() => softRender());
+}
+const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 100)}%`);
+const mins = (x) => (x === null || x === undefined ? "—" : fmtHM(x));
+function barList(title, rows, total, label) {
+  if (!rows || !rows.length) return null;
+  const max = Math.max(...rows.map((r) => r.minutes), 1);
+  return h("div", { class: "m-block" },
+    h("div", { class: "m-title", text: title }),
+    rows.slice(0, 8).map((r) => h("div", { class: "m-bar" },
+      h("div", { class: "m-bar-head" },
+        h("span", { class: "m-bar-name", text: label(r) }),
+        h("span", { class: "m-bar-val", text: `${fmtHM(r.minutes)} · ${r.stops} ост.${total ? ` · ${Math.round((r.minutes / total) * 100)}%` : ""}` })),
+      h("div", { class: "m-track" }, h("div", { class: "m-fill", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
+}
+function metrics() {
+  const period = ui.statsPeriod || "day";
+  loadStats(period);
+  const c = (ui.stats || {})[period] || {};
+  const st = c.data;
+  const tabs = h("div", { class: "m-tabs" },
+    PERIODS.map(([id, name]) => h("button", {
+      class: "m-tab" + (id === period ? " on" : ""),
+      onclick: () => { ui.statsPeriod = id; render(); },
+    }, name)));
+  if (!st) {
+    return h("div", { class: "metrics" }, h("div", { class: "m-head", text: "Работа стана" }), tabs,
+      h("p", { class: "muted", text: c.error ? "Нет связи с сервером — метрики появятся, когда связь вернётся." : "Считаем…" }));
+  }
+  const kpi = (v, t, cls = "") => h("div", { class: "board-stat " + cls }, h("span", { class: "v", text: v }), t);
+  const q = st.quality || {};
+  const warn = [];
+  if (q.noReason) warn.push(`без причины: ${q.noReason}`);
+  if (q.noAction) warn.push(`не указано, что сделали: ${q.noAction}`);
+  if (q.otherShare > 0.1) warn.push(`«иная причина» — ${pct(q.otherShare)} простоя, стоит дополнить список причин`);
+  const crewName = (id) => (id ? crewTitle(id) : "Смена не указана");
+  return h("div", { class: "metrics" },
+    h("div", { class: "m-head", text: "Работа стана" }),
+    tabs,
+    h("div", { class: "board-stats m-kpi" },
+      kpi(pct(st.availability), "доступность", st.availability !== null && st.availability < 0.85 ? "bad" : "good"),
+      kpi(mins(st.workMin), "работа", "good"),
+      kpi(mins(st.downMin), "простой", "bad"),
+      kpi(String(st.stops), "остановок"),
+      kpi(mins(st.plannedMin), "плановые"),
+      kpi(mins(st.unplannedMin), "внеплановые", "bad"),
+      kpi(mins(st.avgStopMin), "средний простой"),
+      kpi(mins(st.mtbfMin), "работа между отказами"),
+      kpi(mins(st.mttrMin), "время на ремонт")),
+    st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
+    warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
+    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? `${reasonLabel(r.reason)} · ${r.reason}` : "Без причины")),
+    barList("По группам", st.byGroup, st.downMin, (r) => r.group),
+    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
+    st.byDay && st.byDay.length > 1 ? h("div", { class: "m-block" },
+      h("div", { class: "m-title", text: "По суткам: работа и простой" }),
+      st.byDay.map((d) => {
+        const tot = Math.max(1, d.workMin + d.downMin);
+        return h("div", { class: "m-bar" },
+          h("div", { class: "m-bar-head" }, h("span", { class: "m-bar-name", text: d.day.slice(8, 10) + "." + d.day.slice(5, 7) }),
+            h("span", { class: "m-bar-val", text: `работа ${fmtHM(d.workMin)} · простой ${fmtHM(d.downMin)} · ${d.stops} ост.` })),
+          h("div", { class: "m-track split" },
+            h("div", { class: "m-fill work", style: `width:${Math.round((d.workMin / tot) * 100)}%` }),
+            h("div", { class: "m-fill down", style: `width:${Math.round((d.downMin / tot) * 100)}%` })));
+      })) : null,
+    h("p", { class: "hint", text: "Доступность — доля работы во времени без плановых остановок. «Работа между отказами» и «время на ремонт» считаются по внеплановым простоям." })
+  );
+}
+
+// Блок смены: кто принял, время смены, остаток, закрытие. Одинаков при работающем и стоящем стане
+function shiftBlock(view) {
+  const c = view.crew;
+  return h("div", { class: "shift-block" },
+    h("div", { class: "shift-time" },
+      h("span", { text: c ? `Смену принял: ${personName(c.personId)}, ${crewTitle(c.crewId)}, в ${fmtClock(core.toMs(c.at))}` : "Смена не принята" })),
     h("div", { class: "shift-time" },
       h("span", { text: `Смена ${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)}` }),
       h("span", { class: "left" }, "до конца ",
-        h("span", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))
-    ),
+        h("span", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))),
     h("div", { class: "row2" },
-      h("button", { class: "btn", onclick: () => startManualWizard("run") }, "Забыл отметить простой"),
-      h("button", { class: "btn", onclick: () => go("shift") }, "Смена закончилась")
-    ),
-    h("p", { class: "muted", text: `За смену: ${stops} ${plural(stops, "простой", "простоя", "простоев")}, ${fmtDurMin(downMin)}` })
+      h("button", { class: "btn", onclick: () => startManualWizard(view.open ? "stop" : "run") }, "Забыл отметить простой"),
+      h("button", { class: "btn", onclick: () => go("shift") }, "Закрыть смену"))
   );
 }
 
 // Экран «Стан стоит»
 function renderStop(main, view) {
   const open = view.open;
-  const elapsed = nowMs() - open.startMs;
+  const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
+  const elapsed = nowMs() - since;
   const cur = open.reason;
 
   const left = h("div", null,
     h("div", { class: "bar red" },
-      `Стан стоит с ${fmtClock(open.startMs)}`,
+      `Стан стоит с ${fmtClock(since)}`,
       h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
-      h("span", { class: "timer", dataset: { since: String(open.startMs) } }, fmtTimer(elapsed))
+      h("span", { class: "timer", dataset: { since: String(since) } }, fmtTimer(elapsed))
     ),
     elapsed > LONG_STOP_MS
       ? h("div", { class: "banner-warn", text: "Стан всё ещё стоит? Если уже работает — нажмите зелёную кнопку" })
@@ -811,7 +954,7 @@ function renderStop(main, view) {
     );
   }
 
-  fill(main, h("div", { class: "stop-grid" }, left, h("div", null, card)));
+  fill(main, h("div", { class: "stop-grid" }, left, h("div", null, card, shiftBlock(view))));
 }
 
 function cancelRestart() {
@@ -929,21 +1072,29 @@ function renderReasonWizard(main, view) {
     class: "note-input",
     rows: "4",
     maxlength: String(NOTE_MAX),
-    placeholder: "Например: на третьей клети заклинило подшипник",
+    placeholder: noteHint(wz.reason),
     "aria-label": "Описание своими словами",
   });
   ta.value = wz.note || "";
-  ta.addEventListener("input", () => { wz.note = ta.value; });
-  const done = (withNote) => finishReasonWizard(withNote ? ta.value : undefined);
+  const must = isOther(wz.reason);
+  const needText = h("p", { class: "error-text", text: "Опишите причину своими словами" });
+  const upd = () => { needText.hidden = !must || validAction(ta.value); };
+  ta.addEventListener("input", () => { wz.note = ta.value; upd(); });
+  upd();
+  const done = (withNote) => {
+    if (must && !validAction(ta.value)) { ta.focus(); return; }
+    finishReasonWizard(withNote ? ta.value : undefined);
+  };
   fill(main,
     restarting ? restartBack() : backBtn("К выбору причины", () => { wz.step = 2; render(); }),
     stepLine(3, total),
-    question("Расскажите своими словами"),
+    question(must ? "Опишите причину своими словами" : "Расскажите своими словами"),
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
     ta,
+    must ? needText : null,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    h("button", { class: "btn primary", onclick: () => done(true) }, "Готово"),
-    h("button", { class: "btn", onclick: () => done(false) }, "Пропустить")
+    h("button", { class: "btn primary", onclick: () => done(true) }, must ? "Отправить" : "Готово"),
+    must ? null : h("button", { class: "btn", onclick: () => done(false) }, "Пропустить")
   );
   if (ui.focusNote) {
     ui.focusNote = false;
@@ -1002,7 +1153,7 @@ function renderRestartAction(main, view) {
     class: "note-input",
     rows: "4",
     maxlength: String(NOTE_MAX),
-    placeholder: "Например: заменили ножи, подтянули муфту",
+    placeholder: actionHint(rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open.reason),
     "aria-label": "Что сделали, чтобы запустить стан",
   });
   ta.value = rw.action || "";
@@ -1181,7 +1332,7 @@ function renderManual(main, view) {
       class: "note-input",
       rows: "4",
       maxlength: String(NOTE_MAX),
-      placeholder: "Например: заменили ножи, подтянули муфту",
+      placeholder: actionHint(mw.reason),
       "aria-label": "Что сделали, чтобы запустить стан",
     });
     ta.value = mw.action || "";
@@ -1216,11 +1367,15 @@ function renderManual(main, view) {
     class: "note-input",
     rows: "4",
     maxlength: String(NOTE_MAX),
-    placeholder: "Например: на третьей клети заклинило подшипник",
+    placeholder: noteHint(mw.reason),
     "aria-label": "Описание своими словами",
   });
   ta.value = mw.note || "";
-  ta.addEventListener("input", () => { mw.note = ta.value; });
+  const mMust = isOther(mw.reason);
+  const mNeed = h("p", { class: "error-text", text: "Опишите причину своими словами" });
+  const mUpd = () => { mNeed.hidden = !mMust || validAction(ta.value); };
+  ta.addEventListener("input", () => { mw.note = ta.value; mUpd(); });
+  mUpd();
   fill(main,
     backBtn(...manualBacks[5]),
     stepLine(5, 6),
@@ -1228,8 +1383,9 @@ function renderManual(main, view) {
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(mw.reason) })),
     ta,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    h("button", { class: "btn primary", onclick: () => { mw.note = ta.value; mw.step = 6; render(); } }, "Далее"),
-    h("button", { class: "btn", onclick: () => { mw.note = ""; mw.step = 6; render(); } }, "Пропустить")
+    mMust ? mNeed : null,
+    h("button", { class: "btn primary", onclick: () => { if (mMust && !validAction(ta.value)) { ta.focus(); return; } mw.note = ta.value; mw.step = 6; render(); } }, "Далее"),
+    mMust ? null : h("button", { class: "btn", onclick: () => { mw.note = ""; mw.step = 6; render(); } }, "Пропустить")
   );
   if (ui.focusNote) {
     ui.focusNote = false;
@@ -1363,7 +1519,7 @@ function renderActionFix(main, view) {
     class: "note-input",
     rows: "4",
     maxlength: String(NOTE_MAX),
-    placeholder: "Например: заменили ножи, подтянули муфту",
+    placeholder: actionHint(af.reason),
     "aria-label": "Что сделали, чтобы запустить стан",
   });
   ta.value = af.action || "";
@@ -1486,7 +1642,7 @@ function tick() {
   // Простой перевалил за 4 часа — перерисовать с плашкой
   if (serverState && refs && ui.screen === "auto") {
     const view = buildView();
-    if (view && view.open && now - view.open.startMs > LONG_STOP_MS && !document.querySelector(".banner-warn")) {
+    if (view && view.open && now - (view.open.since ?? view.open.startMs) > LONG_STOP_MS && !document.querySelector(".banner-warn")) {
       render();
     }
   }
