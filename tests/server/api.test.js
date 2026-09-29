@@ -127,14 +127,37 @@ test("events: shift_open попадает в state.crew", async () => {
   }
 });
 
-test("refs: 29 причин, 7 плиток и демо-люди", async () => {
+test("refs: 35 причин, 7 плиток и демо-люди", async () => {
   const { app, base } = await start();
   try {
     const response = await fetch(`${base}/api/refs`, { headers: HEAD });
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.ok, true);
-    assert.equal(Object.keys(body.refs.reasons).length, 29);
+    assert.equal(Object.keys(body.refs.reasons).length, 35);
+    for (const [code, reason] of Object.entries(body.refs.reasons)) {
+      for (const field of ["hint", "actionHint"]) {
+        assert.equal(typeof reason[field], "string", `${code}: ${field}`);
+        assert.ok(reason[field].trim().length > 0, `${code}: пустой ${field}`);
+        assert.ok(reason[field].length <= 70, `${code}: длинный ${field}`);
+      }
+      assert.match(reason.actionHint, /^Например: /, `${code}: actionHint`);
+      if (reason.other) assert.equal(reason.hint, "Опишите, что случилось", code);
+      else assert.match(reason.hint, /^Например: /, `${code}: hint`);
+    }
+    const lastCodes = {
+      mech: "В-М-99", elec: "В-Э-99", tech: "В-Т-99", org: "В-О-99",
+      ext: "В-В-99", plan: "П-99", other: "В-П-99",
+    };
+    for (const tile of body.refs.tiles) {
+      const last = tile.codes.at(-1);
+      assert.equal(last, lastCodes[tile.id], `${tile.id}: последняя причина`);
+      assert.equal(body.refs.reasons[last]?.other, true, `${tile.id}: other`);
+      if (tile.id !== "other") {
+        assert.equal(body.refs.reasons[last].short, "Иная причина", last);
+      }
+      assert.equal(body.refs.reasons[last].planned, tile.id === "plan", last);
+    }
     assert.equal(body.refs.tiles.length, 7);
     assert.equal(body.refs.nodes.length, 14);
     assert.equal(body.refs.demo, true);
@@ -153,6 +176,23 @@ test("api без ключа получает 401, кроме health", async () =
     const response = await fetch(`${base}/api/state`);
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { ok: false, error: "bad_key" });
+  } finally {
+    await app.close();
+  }
+});
+
+test("stats: период day отдаёт метрики, неверный период — 400, без ключа — 401", async () => {
+  const { app, base } = await start();
+  try {
+    const ok = await fetch(`${base}/api/stats?period=day`, { headers: HEAD });
+    const body = await ok.json();
+    assert.equal(ok.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.stats.stops, "number");
+    const bad = await fetch(`${base}/api/stats?period=year`, { headers: HEAD });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), { ok: false, error: "bad_request" });
+    assert.equal((await fetch(`${base}/api/stats?period=day`)).status, 401);
   } finally {
     await app.close();
   }

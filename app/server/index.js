@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { createEventStore } from "./events.js";
 import { createRefsReader } from "./people.js";
+import { computeStats, periodRange } from "../core/stats.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -175,7 +176,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     };
   }
 
-  async function handleApi(req, res, pathname) {
+  async function handleApi(req, res, pathname, searchParams) {
     if (pathname === "/api/health" && req.method === "GET") {
       return send(res, 200, { ok: true });
     }
@@ -183,12 +184,13 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isSummary = pathname === "/api/probe-summary" && req.method === "GET";
     const isRefs = pathname === "/api/refs" && req.method === "GET";
     const isState = pathname === "/api/state" && req.method === "GET";
+    const isStats = pathname === "/api/stats" && req.method === "GET";
     const isEvents = pathname === "/api/events" && req.method === "POST";
 
     const device = identify(req);
     if (!device) return send(res, 401, { ok: false, error: "bad_key" });
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
-    if (!isPing && !isSummary && !isRefs && !isState && !isEvents) return send(res, 404, { ok: false, error: "not_found" });
+    if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
     if (isRefs) return send(res, 200, { ok: true, ...readRefs() });
@@ -196,6 +198,18 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       const { refs, refsVersion } = readRefs();
       const time = clock();
       return send(res, 200, { ok: true, state: eventStore.state(time.getTime(), refs), refsVersion, serverTime: time.toISOString() });
+    }
+    if (isStats) {
+      const period = searchParams.get("period");
+      if (!new Set(["shift", "day", "week", "month"]).has(period)) {
+        return send(res, 400, { ok: false, error: "bad_request" });
+      }
+      const { refs } = readRefs();
+      const time = clock();
+      const range = periodRange(period, time.getTime(), refs.settings.schedule);
+      const events = db.prepare("SELECT body FROM events ORDER BY at_ms, rowid").all().map((row) => JSON.parse(row.body));
+      const stats = computeStats(events, { ...range, nowMs: time.getTime(), refs });
+      return send(res, 200, { ok: true, period, label: range.label, stats, serverTime: time.toISOString() });
     }
 
     let data;
@@ -244,7 +258,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const isCore = rel === "/core/core.js" || rel === "/core/refs.js";
+    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js";
     const full = isCore ? path.resolve(HERE, "..", "core", rel.slice("/core/".length)) : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
     if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -269,10 +283,11 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'self'");
     try {
-      const pathname = new URL(req.url, "http://localhost").pathname;
+      const url = new URL(req.url, "http://localhost");
+      const pathname = url.pathname;
       if (pathname.startsWith("/api/")) {
         res.setHeader("Cache-Control", "no-store");
-        await handleApi(req, res, pathname);
+        await handleApi(req, res, pathname, url.searchParams);
       } else {
         serveStatic(req, res, pathname);
       }

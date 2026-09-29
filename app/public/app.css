@@ -349,3 +349,35 @@ input {
 .shift-time { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 8px; padding: 12px 14px;
   background: #1b1e24; border: 2px solid #3a3f4a; border-radius: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .shift-time .left { color: #a0a6b1; font-weight: 600; }
+
+/* Кнопка «Связаться» в шапке */
+button.pill { cursor: pointer; border: 0; font: inherit; font-weight: 800; }
+.tiles.one { grid-template-columns: 1fr; }
+a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.tile-off { opacity: 0.6; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+.shift-block { margin-top: 12px; }
+.shift-block .shift-time { margin: 0 0 8px; }
+.pill.home { background: #2d333b; color: #f0f2f5; }
+
+/* Метрики работы стана */
+.metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid #2d333b; }
+.m-head { font-size: 1.2em; font-weight: 800; margin-bottom: 10px; }
+.m-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.m-tab { min-height: 52px; border-radius: 12px; border: 2px solid #3a3f4a; background: #1b1e24; color: #f0f2f5; font: inherit; font-weight: 700; cursor: pointer; }
+.m-tab.on { border-color: #58a6ff; background: #1f3350; }
+.m-kpi { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+.m-block { margin: 16px 0; }
+.m-title { font-weight: 800; margin-bottom: 8px; }
+.m-bar { margin: 8px 0; }
+.m-bar-head { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
+.m-bar-name { font-weight: 700; }
+.m-bar-val { color: #a0a6b1; white-space: nowrap; }
+.m-track { height: 12px; background: #22252b; border-radius: 6px; overflow: hidden; margin-top: 4px; display: flex; }
+.m-fill { height: 100%; background: #da3633; }
+.m-fill.work { background: #2ea043; }
+.m-fill.down { background: #da3633; }
+
+/* Шапка: кнопки в одну строку, не наезжают на содержимое */
+.pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
+.m-tab { font-size: 0.8em; padding: 0 4px; }
