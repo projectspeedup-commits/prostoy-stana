@@ -919,7 +919,7 @@ function renderRun(main, view) {
   const dts = shiftDowntimes(view);
   const lastStart = dts.length
     ? Math.max(...dts.map((d) => (d.open || d.endMs === null ? nowMs() : d.endMs)))
-    : view.shift.startMs;
+    : Math.max(view.shift.startMs, view.dataFromMs ?? nowMs()); // до первой записи о стане ничего не известно
   fill(main,
     h("div", { class: "bar green" },
       "Стан работает · ",
