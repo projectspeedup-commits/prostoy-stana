@@ -1,6 +1,7 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
 import * as core from "./core/core.js";
+import { dayChart, donut } from "./charts.js";
 
 const STORE_KEY = "stan.deviceKey";
 const QUEUE_KEY = "stan.queue";
@@ -654,6 +655,7 @@ function render() {
     case "closeConfirm": return renderCloseConfirm(main, view);
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
+    case "stats": return renderStats(main, view);
   }
   if (needCrew(view)) return renderCrew(main, view);
   if (view.open) return renderStop(main, view);
@@ -842,6 +844,10 @@ function metrics() {
     return h("div", { class: "metrics" }, h("div", { class: "m-head", text: "Работа стана" }), tabs,
       h("p", { class: "muted", text: c.error ? "Нет связи с сервером — метрики появятся, когда связь вернётся." : "Считаем…" }));
   }
+  if (st.noData) {
+    return h("div", { class: "metrics" }, h("div", { class: "m-head", text: "Работа стана" }), tabs,
+      h("p", { class: "muted", text: "За этот период записей ещё нет." }));
+  }
   const kpi = (v, t, cls = "") => h("div", { class: "board-stat " + cls }, h("span", { class: "v", text: v }), t);
   const q = st.quality || {};
   const warn = [];
@@ -864,20 +870,16 @@ function metrics() {
       kpi(mins(st.mttrMin), "время на ремонт")),
     st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
     warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
-    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? `${reasonLabel(r.reason)} · ${r.reason}` : "Без причины")),
-    barList("По группам", st.byGroup, st.downMin, (r) => r.group),
+    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? reasonLabel(r.reason) : "Без причины")),
+    st.byGroup && st.byGroup.length ? h("div", { class: "m-block" },
+      h("div", { class: "m-title", text: "Простой по группам причин" }),
+      donut(st.byGroup.map((g) => ({ name: g.group, minutes: g.minutes })), "простой")) : null,
     barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
     st.byDay && st.byDay.length > 1 ? h("div", { class: "m-block" },
-      h("div", { class: "m-title", text: "По суткам: работа и простой" }),
-      st.byDay.map((d) => {
-        const tot = Math.max(1, d.workMin + d.downMin);
-        return h("div", { class: "m-bar" },
-          h("div", { class: "m-bar-head" }, h("span", { class: "m-bar-name", text: d.day.slice(8, 10) + "." + d.day.slice(5, 7) }),
-            h("span", { class: "m-bar-val", text: `работа ${fmtHM(d.workMin)} · простой ${fmtHM(d.downMin)} · ${d.stops} ост.` })),
-          h("div", { class: "m-track split" },
-            h("div", { class: "m-fill work", style: `width:${Math.round((d.workMin / tot) * 100)}%` }),
-            h("div", { class: "m-fill down", style: `width:${Math.round((d.downMin / tot) * 100)}%` })));
-      })) : null,
+      h("div", { class: "m-title", text: "По суткам: работа и простой, часы" }),
+      dayChart(st.byDay),
+      h("div", { class: "chart-legend" },
+        h("span", { class: "lg work", text: "работа" }), h("span", { class: "lg down", text: "простой" }), h("span", { class: "lg nodata", text: "нет данных" }))) : null,
     h("p", { class: "hint", text: "Доступность — доля работы во времени без плановых остановок. «Работа между отказами» и «время на ремонт» считаются по внеплановым простоям." })
   );
 }
@@ -887,15 +889,24 @@ function shiftBlock(view) {
   const c = view.crew;
   return h("div", { class: "shift-block" },
     h("div", { class: "shift-time" },
-      h("span", { text: c ? `Смену принял: ${personName(c.personId)}, ${crewTitle(c.crewId)}, в ${fmtClock(core.toMs(c.at))}` : "Смена не принята" })),
+      h("span", { text: c ? `Смену принял: ${personName(c.personId)}, ${crewTitle(c.crewId)}, в ${fmtClock(core.toMs(c.at))}` : "Смена не принята" }),
+      // Сколько человек уже на смене — считается от момента приёма
+      c ? h("span", { class: "left" }, "на смене ",
+        h("span", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null),
     h("div", { class: "shift-time" },
       h("span", { text: `Смена ${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)}` }),
       h("span", { class: "left" }, "до конца ",
         h("span", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))),
     h("div", { class: "row2" },
       h("button", { class: "btn", onclick: () => startManualWizard(view.open ? "stop" : "run") }, "Забыл отметить простой"),
-      h("button", { class: "btn", onclick: () => go("shift") }, "Закрыть смену"))
+      h("button", { class: "btn", onclick: () => go("shift") }, "Закрыть смену")),
+    h("button", { class: "btn", onclick: () => go("stats") }, "Показатели стана")
   );
+}
+
+// Экран «Показатели стана»: табло и метрики за период, доступен в любой момент
+function renderStats(main, view) {
+  fill(main, backBtn("На главный экран", () => go("auto")), board(view), metrics());
 }
 
 // Экран «Стан стоит»
@@ -1059,7 +1070,7 @@ function renderReasonWizard(main, view) {
             onclick: () => { wz.reason = code; wz.step = 3; ui.focusNote = true; render(); },
           },
             r ? r.short || r.title : code,
-            h("span", { class: "t-code", text: code })
+            null
           );
         })
       )
@@ -1319,7 +1330,7 @@ function renderManual(main, view) {
             onclick: () => { mw.reason = code; mw.step = 5; ui.focusNote = true; render(); },
           },
             r ? r.short || r.title : code,
-            h("span", { class: "t-code", text: code })
+            null
           );
         })
       )

@@ -107,3 +107,18 @@ if (process.env.STATS_TZ_CHILD === "1") {
     assert.equal(results[0], results[1]);
   });
 }
+
+if (process.env.STATS_TZ_CHILD !== "1") test("computeStats: время до первого события не считается работой", async () => {
+  const { computeStats } = await import("../../app/core/stats.js");
+  const { DEFAULT_REFS } = await import("../../app/core/refs.js");
+  const from = Date.parse("2026-09-01T05:00:00Z");
+  const to = Date.parse("2026-09-03T05:00:00Z");
+  const st = computeStats([
+    { id: "a", type: "stop", at: "2026-09-02T10:00:00Z", downtimeId: "d" },
+    { id: "b", type: "start", at: "2026-09-02T11:00:00Z", downtimeId: "d", reason: "В-М-01", action: "x" },
+  ], { fromMs: from, toMs: to, nowMs: to, refs: DEFAULT_REFS });
+  assert.equal(st.byDay[0].noData, true);
+  assert.equal(st.byDay[0].workMin, null);
+  assert.equal(st.totalMin, 19 * 60);
+  assert.equal(st.downMin, 60);
+});

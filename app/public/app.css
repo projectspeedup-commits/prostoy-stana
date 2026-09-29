@@ -381,3 +381,22 @@ a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: c
 /* Шапка: кнопки в одну строку, не наезжают на содержимое */
 .pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
 .m-tab { font-size: 0.8em; padding: 0 4px; }
+
+/* Графики */
+.chart { width: 100%; height: auto; display: block; background: #1b1e24; border-radius: 12px; }
+.chart .grid { stroke: #2d333b; stroke-width: 1; }
+.chart .ax { stroke: #6e7681; stroke-width: 1.5; }
+.chart .tick { fill: #a0a6b1; font-size: 12px; }
+.chart .work { fill: #2ea043; }
+.chart .down { fill: #da3633; }
+.chart .nodata { fill: none; stroke: #4a505c; stroke-dasharray: 3 3; }
+.chart .legend { fill: #f0f2f5; font-size: 13px; }
+.chart .center { fill: #f0f2f5; font-size: 16px; font-weight: 800; }
+.chart .seg-0 { fill: #da3633; stroke: #da3633; } .chart .seg-1 { fill: #e3b341; stroke: #e3b341; }
+.chart .seg-2 { fill: #58a6ff; stroke: #58a6ff; } .chart .seg-3 { fill: #a371f7; stroke: #a371f7; }
+.chart .seg-4 { fill: #3fb950; stroke: #3fb950; } .chart .seg-5 { fill: #f778ba; stroke: #f778ba; }
+.chart .seg-6 { fill: #8b949e; stroke: #8b949e; }
+.chart .ring { fill: none; }
+.chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.8em; color: #a0a6b1; }
+.lg::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.lg.work::before { background: #2ea043; } .lg.down::before { background: #da3633; } .lg.nodata::before { border: 1px dashed #6e7681; }
