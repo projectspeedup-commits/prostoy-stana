@@ -728,7 +728,8 @@ function renderRun(main, view) {
     ),
     h("div", { class: "bar green" },
       "Стан работает · ",
-      h("span", { dataset: { since: String(lastStart), fmt: "dur" } }, fmtDurMin((nowMs() - lastStart) / 60000))
+      h("span", { dataset: { since: String(lastStart), fmt: "dur" } }, fmtDurMin((nowMs() - lastStart) / 60000)),
+      h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })
     ),
     h("button", {
       class: "btn danger btn-huge",
@@ -741,9 +742,15 @@ function renderRun(main, view) {
       },
     }, "СТАН ВСТАЛ"),
     h("p", { class: "hint", text: "Нажмите, как только стан остановился" }),
+    // Время смены: границы и сколько осталось до конца
+    h("div", { class: "shift-time" },
+      h("span", { text: `Смена ${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)}` }),
+      h("span", { class: "left" }, "до конца ",
+        h("span", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))
+    ),
     h("div", { class: "row2" },
       h("button", { class: "btn", onclick: () => startManualWizard("run") }, "Забыл отметить простой"),
-      h("button", { class: "btn", onclick: () => go("shift") }, "Итог смены")
+      h("button", { class: "btn", onclick: () => go("shift") }, "Смена закончилась")
     ),
     h("p", { class: "muted", text: `За смену: ${stops} ${plural(stops, "простой", "простоя", "простоев")}, ${fmtDurMin(downMin)}` })
   );
@@ -758,6 +765,7 @@ function renderStop(main, view) {
   const left = h("div", null,
     h("div", { class: "bar red" },
       `Стан стоит с ${fmtClock(open.startMs)}`,
+      h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
       h("span", { class: "timer", dataset: { since: String(open.startMs) } }, fmtTimer(elapsed))
     ),
     elapsed > LONG_STOP_MS
@@ -1467,6 +1475,10 @@ function renderClosed(main, view) {
 // --- Тики часов на экране ---
 function tick() {
   const now = nowMs();
+  // Московское время в полосах и на табло
+  for (const el of document.querySelectorAll("[data-msk]")) el.textContent = fmtClock(now) + " МСК";
+  for (const el of document.querySelectorAll("[data-until]")) el.textContent = fmtDurMin((Number(el.dataset.until) - now) / 60000);
+  for (const el of document.querySelectorAll(".board-clock")) el.textContent = fmtClock(now);
   for (const el of document.querySelectorAll("[data-since]")) {
     const since = Number(el.dataset.since);
     el.textContent = el.dataset.fmt === "dur" ? fmtDurMin((now - since) / 60000) : fmtTimer(now - since);

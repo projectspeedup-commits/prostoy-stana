@@ -340,3 +340,12 @@ input {
 .board-stat .v { display: block; white-space: nowrap; font-size: 1.15em; font-weight: 800; color: #f0f2f5; font-variant-numeric: tabular-nums; }
 .board-stat.good .v { color: #3fb950; }
 .board-stat.bad .v { color: #ff6b6b; }
+
+/* Московское время справа в полосе состояния */
+.bar { position: relative; }
+.bar .msk { float: right; font-variant-numeric: tabular-nums; font-weight: 800; opacity: 0.9; }
+
+/* Время смены под большой кнопкой */
+.shift-time { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 8px; padding: 12px 14px;
+  background: #1b1e24; border: 2px solid #3a3f4a; border-radius: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.shift-time .left { color: #a0a6b1; font-weight: 600; }
