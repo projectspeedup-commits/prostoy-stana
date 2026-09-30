@@ -127,14 +127,14 @@ test("events: shift_open попадает в state.crew", async () => {
   }
 });
 
-test("refs: 35 причин, 3 блока с пунктами и зонами, демо-люди", async () => {
+test("refs: 36 причин, 3 блока по одной причине с обязательным описанием, демо-люди", async () => {
   const { app, base } = await start();
   try {
     const response = await fetch(`${base}/api/refs`, { headers: HEAD });
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.ok, true);
-    assert.equal(Object.keys(body.refs.reasons).length, 35);
+    assert.equal(Object.keys(body.refs.reasons).length, 36);
     for (const [code, reason] of Object.entries(body.refs.reasons)) {
       for (const field of ["hint", "actionHint"]) {
         assert.equal(typeof reason[field], "string", `${code}: ${field}`);
@@ -145,27 +145,19 @@ test("refs: 35 причин, 3 блока с пунктами и зонами, �
       if (reason.other) assert.equal(reason.hint, "Опишите, что случилось", code);
       else assert.match(reason.hint, /^Например: /, `${code}: hint`);
     }
-    const covered = new Set();
-    assert.deepEqual(body.refs.tiles.map((tile) => tile.id), ["plan", "cobble", "failure"]);
+    // Три блока без подпунктов: у каждого одна причина, описание своими словами обязательно
+    assert.deepEqual(body.refs.tiles.map((tile) => [tile.id, tile.zone, tile.codes]), [
+      ["plan", "plan", ["П-02"]], ["cobble", "unplanned", ["В-Т-01"]], ["failure", "failure", ["В-А-01"]]]);
     for (const tile of body.refs.tiles) {
       assert.ok(tile.title && tile.subtitle, tile.id);
-      assert.ok(["plan", "unplanned", "failure"].includes(tile.zone), tile.id);
-      assert.ok(tile.items.length > 0, tile.id);
-      assert.deepEqual(tile.codes, [...new Set(tile.items.map((item) => item.code))]);
-      for (const item of tile.items) {
-        const reason = body.refs.reasons[item.code];
-        assert.ok(reason, item.code);
-        assert.equal(reason.zone, tile.zone, item.code);
-        assert.ok(item.label.trim(), item.code);
-        assert.equal(typeof item.text, "string", item.code);
-        if (reason.other) assert.equal(item.text, "", item.code);
-        else assert.ok(item.text.trim(), item.code);
-        covered.add(item.code);
-      }
+      assert.equal(tile.items.length, 1, tile.id);
+      const reason = body.refs.reasons[tile.items[0].code];
+      assert.equal(reason.zone, tile.zone, tile.id);
+      assert.equal(reason.noteRequired, true, tile.id);
+      assert.equal(tile.items[0].text, "", tile.id);
     }
-    assert.deepEqual([...covered].sort(), Object.keys(body.refs.reasons).sort());
     for (const [code, reason] of Object.entries(body.refs.reasons)) {
-      const expected = code.startsWith("П-") ? "plan" : /^В-[МЭВ]-/.test(code) ? "failure" : "unplanned";
+      const expected = code.startsWith("П-") ? "plan" : /^В-[МЭВА]-/.test(code) ? "failure" : "unplanned";
       assert.equal(reason.zone, expected, code);
     }
     assert.equal(body.refs.tiles.length, 3);
