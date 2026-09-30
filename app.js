@@ -577,6 +577,8 @@ function noteHint(code) { return (reasonRef(code) && reasonRef(code).hint) || DE
 function actionHint(code) { return (reasonRef(code) && reasonRef(code).actionHint) || DEFAULT_ACTION_HINT; }
 // «Иная причина»: описание своими словами обязательно
 function isOther(code) { return !!(reasonRef(code) && reasonRef(code).other); }
+// Описание своими словами обязательно: у «иной» причины и у трёх блоков без подпунктов
+function needsNote(code) { const r = reasonRef(code); return !!(r && (r.other || r.noteRequired)); }
 
 function fmtDurMin(min) {
   min = Math.max(0, Math.round(min));
@@ -1355,35 +1357,35 @@ function renderForgotStop(main, view) {
   if (!fw) return go("closeCheck");
   const back = () => {
     if (fw.step === 1) { go("closeCheck"); ui.resume = "forgotStop"; persistClient(); }
-    else { fw.step = fw.step === 5 && fw.unknown ? 2 : fw.step - 1; render(); }
+    else { fw.step = (fw.step === 5 && fw.unknown) || fw.step === 4 ? 2 : fw.step - 1; render(); }
   };
   const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору группы", 4: "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
   const top = () => [backBtn(backLabels[fw.step], back),
     h("p", { class: "muted", text: "Забыли отметить остановку" }),
-    stepLine(fw.unknown && fw.step === 5 ? 3 : fw.step, fw.unknown ? 3 : 5)];
+    stepLine(fw.unknown && fw.step === 5 ? 3 : fw.step > 3 ? fw.step - 1 : fw.step, fw.unknown ? 3 : 4)];
   const next = () => { fw.step++; render(); };
   if (fw.step === 1) {
     fill(main, ...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, next));
     return;
   }
-  if (fw.step === 2 || fw.step === 3) {
-    const group = fw.step === 2;
-    fill(main, ...top(), question(group ? "Почему стоит?" : "Что именно?"),
-      group ? reasonGroups(fw, next) : reasonChoices(fw, next),
-      group ? h("button", { class: "btn btn-flat reason-later",
-        onclick: () => { fw.unknown = true; fw.step = 5; render(); } }, "Пока не знаю") : null);
+  if (fw.step === 3) fw.step = 4; // шага «Что именно?» больше нет
+  if (fw.step === 2) {
+    fill(main, ...top(), question("Почему стоит?"),
+      reasonGroups(fw, () => { fw.step = 4; render(); }),
+      h("button", { class: "btn btn-flat reason-later",
+        onclick: () => { fw.unknown = true; fw.step = 5; render(); } }, "Пока не знаю"));
     return;
   }
   if (fw.step === 4) {
     const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
       placeholder: noteHint(fw.reason), "aria-label": "Описание своими словами" });
     ta.value = fw.note || "";
-    const error = h("p", { class: "error-text", text: "Опишите иную причину своими словами." });
+    const error = h("p", { class: "error-text", text: "Опишите своими словами, что случилось." });
     const submit = h("button", { class: "btn primary", onclick: next }, "Далее");
     let touched = !!ta.value;
     const update = () => {
       fw.note = ta.value;
-      submit.disabled = isOther(fw.reason) && !validAction(ta.value);
+      submit.disabled = needsNote(fw.reason) && !validAction(ta.value);
       error.hidden = !submit.disabled || !touched;
     };
     ta.addEventListener("input", () => { touched = true; fw.noteEdited = true; update(); });
@@ -1403,7 +1405,7 @@ function renderForgotStop(main, view) {
 }
 function forgottenStopError(view, fw) {
   return forgottenTimeError(view, fw.atMs) || (!fw.unknown && !reasonRef(fw.reason) ? "Выберите причину простоя."
-    : !fw.unknown && isOther(fw.reason) && !validAction(fw.note) ? "Опишите иную причину своими словами." : "");
+    : !fw.unknown && needsNote(fw.reason) && !validAction(fw.note) ? "Опишите своими словами, что случилось." : "");
 }
 function saveForgottenStop() {
   const fw = ui.fw;
@@ -1423,7 +1425,7 @@ function saveForgottenStop() {
 function renderRestartTime(main, view) {
   const rw = ui.rw;
   if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  const total = rw.route === "reason" || !rw.reason ? 5 : 3;
+  const total = rw.route === "reason" || !rw.reason ? 4 : 3;
   fill(main, backBtn("К проверке состояния стана", () => { go("closeCheck"); ui.resume = "restartTime"; persistClient(); }),
     h("p", { class: "muted", text: "Забыли отметить пуск" }), stepLine(1, total), question("Когда стан пошёл?"),
     ...forgottenTimeFields(view, rw, "startMs", true, () => {
@@ -1457,7 +1459,7 @@ function renderRestartConfirm(main, view) {
     stepLine(rw.thenClose ? 2 : 1, rw.thenClose ? 3 : 2),
     question(`Причина: ${reasonLabel(rw.reason)} — верно?`),
     h("button", { class: "btn primary", onclick: () => {
-      if (isOther(rw.reason) && !validAction(rw.note)) { startRestartReasonWizard(); ui.wz.step = 3; render(); }
+      if (needsNote(rw.reason) && !validAction(rw.note)) { startRestartReasonWizard(); ui.wz.step = 3; render(); }
       else { rw.route = "confirm"; go("restartAction"); }
     } }, "Да, верно"),
     h("button", { class: "btn", onclick: startRestartReasonWizard }, "Изменить")
@@ -1507,15 +1509,15 @@ function chooseReasonItem(draft, tile, item) {
 function reasonGroups(draft, next) {
   return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
     h("button", { class: "tile reason-group reason-zone-" + tile.zone + (draft.group === tile.id ? " sel" : ""),
-      onclick: () => { draft.group = tile.id; draft.unknown = false; next(); } },
+      onclick: () => {
+        draft.group = tile.id;
+        draft.unknown = false;
+        const items = reasonItems(tile);
+        if (items.length === 1) chooseReasonItem(draft, tile, items[0]);
+        next();
+      } },
     h("span", { class: "reason-group-title", text: tile.title }),
     h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
-}
-function reasonChoices(draft, next) {
-  const tile = (refs.tiles || []).find((item) => item.id === draft.group);
-  return h("div", { class: "tiles" }, reasonItems(tile).map((item) =>
-    h("button", { class: "tile" + (draft.itemKey === reasonItemKey(tile, item) ? " sel" : ""),
-      onclick: () => { chooseReasonItem(draft, tile, item); next(); } }, item.label)));
 }
 function focusReasonNote(ta) {
   if (!ui.focusNote) return;
@@ -1532,7 +1534,7 @@ function renderReasonWizard(main, view) {
   if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
   const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
   const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? 4 + offset : 3;
+  const total = restarting ? 3 + offset : 2;
   const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
@@ -1550,7 +1552,7 @@ function renderReasonWizard(main, view) {
       backBtn(...back1),
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, () => { wz.step = 2; render(); }),
+      reasonGroups(wz, () => { wz.step = 3; render(); }),
       !restarting ? h("button", {
         class: "btn btn-flat reason-later",
         onclick: () => {
@@ -1562,15 +1564,7 @@ function renderReasonWizard(main, view) {
     return;
   }
 
-  if (wz.step === 2) {
-    fill(main,
-      backBtn("К выбору группы", () => { wz.step = 1; render(); }),
-      stepLine(2 + offset, total),
-      question("Что именно?"),
-      reasonChoices(wz, () => { wz.step = 3; render(); })
-    );
-    return;
-  }
+  if (wz.step === 2) wz.step = 3; // шага «Что именно?» больше нет
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
@@ -1581,19 +1575,21 @@ function renderReasonWizard(main, view) {
     "aria-label": "Описание своими словами",
   });
   ta.value = wz.note || "";
-  const must = isOther(wz.reason);
-  const needText = h("p", { class: "error-text", text: "Опишите причину своими словами" });
-  const upd = () => { needText.hidden = !must || validAction(ta.value); };
+  const must = needsNote(wz.reason);
+  const needText = h("p", { class: "error-text", text: "Напишите, что случилось" });
+  // Красная строка — только после попытки пройти дальше с пустым полем
+  let tried = false;
+  const upd = () => { needText.hidden = !must || !tried || validAction(ta.value); };
   ta.addEventListener("input", () => { wz.note = ta.value; wz.noteEdited = true; upd(); });
   upd();
   const done = (withNote) => {
-    if (must && !validAction(ta.value)) { ta.focus(); return; }
+    if (must && !validAction(ta.value)) { tried = true; upd(); ta.focus(); return; }
     finishReasonWizard(withNote ? ta.value : "");
   };
   fill(main,
-    backBtn("К выбору причины", () => { wz.step = 2; render(); }),
-    stepLine(3 + offset, total),
-    question(must ? "Опишите причину своими словами" : "Расскажите своими словами"),
+    backBtn("К выбору причины", () => { wz.step = 1; render(); }),
+    stepLine(2 + offset, total),
+    question(must ? "Что случилось? Опишите своими словами" : "Расскажите своими словами"),
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
     ta,
     must ? needText : null,
@@ -1610,7 +1606,7 @@ function finishReasonWizard(rawNote) {
     showToast("Простой уже изменился. Проверьте стан; текст остаётся в черновике."); return;
   }
   const note = String(rawNote || "").trim();
-  if (!reasonRef(wz.reason) || (isOther(wz.reason) && !validAction(note))) return;
+  if (!reasonRef(wz.reason) || (needsNote(wz.reason) && !validAction(note))) return;
   const noteField = { note };
   if (wz.mode === "repair") {
     ui.repair.event.reason = wz.reason;
@@ -1685,7 +1681,7 @@ function renderRestartAction(main, view) {
   };
   ta.addEventListener("input", () => { touched = true; update(); });
   update();
-  const total = (rw.route === "reason" ? 4 : 2) + (rw.thenClose ? 1 : 0);
+  const total = (rw.route === "reason" ? 3 : 2) + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
   fill(main,
@@ -1711,7 +1707,7 @@ function finishRestart(rawAction) {
   const action = rawAction.trim();
   if (!rw || action.length < 3) return;
   if (!restartMatches(buildView(), rw)) { render(); return; }
-  if (!reasonRef(rw.reason) || (isOther(rw.reason) && !validAction(rw.note))) { startRestartReasonWizard(); return; }
+  if (!reasonRef(rw.reason) || (needsNote(rw.reason) && !validAction(rw.note))) { startRestartReasonWizard(); return; }
   if (rw.startMs < buildView().open.startMs || rw.startMs > nowMs()) {
     showToast("Проверьте время пуска и часы планшета"); return;
   }
@@ -1769,7 +1765,7 @@ function manualError(view, mw) {
   const overlap = manualOverlap(view, mw.from, mw.to);
   if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в итоге смены.`;
   if (!reasonRef(mw.reason)) return "Выберите причину простоя.";
-  if (isOther(mw.reason) && !validAction(mw.note)) return "Для иной причины опишите, что случилось.";
+  if (needsNote(mw.reason) && !validAction(mw.note)) return "Опишите своими словами, что случилось.";
   if (!validAction(mw.action)) return "Напишите, что сделали перед пуском.";
   return "";
 }
@@ -1778,10 +1774,10 @@ function renderManual(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
   const back = () => {
-    if (mw.step > 1) { mw.step--; render(); }
+    if (mw.step > 1) { mw.step = mw.step === 5 ? 3 : mw.step - 1; render(); }
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
-  const top = () => [backBtn(mw.step > 1 ? "К предыдущему вопросу" : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), stepLine(mw.step, 7)];
+  const top = () => [backBtn(mw.step > 1 ? "К предыдущему вопросу" : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), stepLine(mw.step > 4 ? mw.step - 1 : mw.step, 6)];
   const next = () => { mw.step++; mw.error = ""; render(); };
   if (mw.step <= 2) {
     const start = mw.step === 1;
@@ -1827,19 +1823,18 @@ function renderManual(main, view) {
       error, submit);
     return;
   }
-  if (mw.step === 3 || mw.step === 4) {
-    const group = mw.step === 3;
-    fill(main, ...top(), question(group ? "Почему стоял?" : "Что именно?"),
-      group ? reasonGroups(mw, next) : reasonChoices(mw, next));
+  if (mw.step === 4) mw.step = 5; // шага «Что именно?» больше нет
+  if (mw.step === 3) {
+    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, () => { mw.step = 5; mw.error = ""; render(); }));
     return;
   }
   const action = mw.step === 6;
   const field = action ? "action" : "note";
-  const must = action || isOther(mw.reason);
+  const must = action || needsNote(mw.reason);
   const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
     placeholder: action ? actionHint(mw.reason) : noteHint(mw.reason), "aria-label": action ? "Что сделали" : "Что случилось" });
   ta.value = mw[field] || "";
-  const error = h("p", { class: "error-text", text: action ? "Напишите, что сделали." : "Опишите иную причину своими словами." });
+  const error = h("p", { class: "error-text", text: action ? "Напишите, что сделали." : "Опишите своими словами, что случилось." });
   const submit = h("button", { class: "btn primary", onclick: () => {
     if (must && !validAction(ta.value)) return;
     mw[field] = ta.value;
@@ -1866,7 +1861,7 @@ function renderManualCheck(main, view) {
   const error = manualError(view, mw);
   fill(main,
     backBtn("К выполненным работам", () => { mw.step = 6; go("manual"); }),
-    stepLine(7, 7), question("Всё верно?"),
+    stepLine(6, 6), question("Всё верно?"),
     h("div", { class: "card" },
       h("div", { class: "card-title", text: `${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}` }),
       h("div", { class: "card-line", text: reasonLabel(mw.reason) }),
@@ -2016,11 +2011,11 @@ function renderActionFix(main, view) {
   if (!af) return go("detail");
   const field = af.field || "action";
   const note = field === "note";
-  const must = !note || isOther(af.reason);
+  const must = !note || needsNote(af.reason);
   const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
     placeholder: note ? noteHint(af.reason) : actionHint(af.reason), "aria-label": note ? "Что случилось" : "Что сделали" });
   ta.value = af.value || "";
-  const error = h("p", { class: "error-text", text: note ? "Опишите иную причину своими словами." : "Напишите, что сделали." });
+  const error = h("p", { class: "error-text", text: note ? "Опишите своими словами, что случилось." : "Напишите, что сделали." });
   const save = h("button", { class: "btn primary", onclick: () => {
     if (must && !validAction(ta.value)) return;
     const data = cardData(buildView());
@@ -2231,7 +2226,7 @@ function submitRepair() {
   const target = e.type === "fix" ? [...view.segments, view.open].find((s) => s && s.downtimeId === e.downtimeId && s.index === e.index) : null;
   const effectiveReason = e.reason === undefined ? target?.reason : e.reason;
   const effectiveNote = e.note === undefined ? target?.note : e.note;
-  if (effectiveReason && (!reasonRef(effectiveReason) || (isOther(effectiveReason) && !validAction(effectiveNote)))) {
+  if (effectiveReason && (!reasonRef(effectiveReason) || (needsNote(effectiveReason) && !validAction(effectiveNote)))) {
     repair.error = "Проверьте причину. Для иной причины нужно описание своими словами.";
   }
   if (e.type === "fix" && e.action !== undefined && !validAction(e.action)) repair.error = "Напишите, что сделали.";
@@ -2240,10 +2235,10 @@ function submitRepair() {
     const reason = e.reason || view.open?.reason;
     const note = e.note ?? view.open?.note;
     if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
-    else if (!reasonRef(reason) || !validAction(e.action) || (isOther(reason) && !validAction(note))) repair.error = "Укажите причину и что сделали. Для иной причины нужно описание.";
+    else if (!reasonRef(reason) || !validAction(e.action) || (needsNote(reason) && !validAction(note))) repair.error = "Укажите причину и что сделали. Для иной причины нужно описание.";
     else if (core.toMs(e.at) < view.open.startMs) repair.error = "Пуск не может быть раньше остановки.";
   }
-  if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (isOther(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
+  if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (needsNote(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
   if (core.toMs(e.at) > nowMs()) repair.error = "Время записи в будущем. Исправьте его.";
   if (Object.values(repair.invalid || {}).some(Boolean)) repair.error = "Проверьте введённое время или вес. Ответ остался в своём поле.";
   if (repair.error) { render(); return; }
