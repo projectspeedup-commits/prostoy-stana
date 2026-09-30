@@ -441,3 +441,26 @@ label { display: block; margin-top: 20px; }
 .chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.8em; color: #a0a6b1; }
 .lg::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .lg.work::before { background: #2ea043; } .lg.down::before { background: #da3633; } .lg.nodata::before { border: 1px dashed #6e7681; }
+
+/* Три блока причин и единые цвета зон в метриках. */
+.reason-zone-work { --reason-zone-color: #2ea043; }
+.reason-zone-plan { --reason-zone-color: #ffffff; }
+.reason-zone-unplanned { --reason-zone-color: #e3b341; }
+.reason-zone-failure { --reason-zone-color: #da3633; }
+.tiles.reason-groups { grid-template-columns: 1fr; }
+.tile.reason-group { display: flex; flex-direction: column; align-items: flex-start;
+  justify-content: center; gap: 8px; min-height: 112px; text-align: left;
+  border-left: 10px solid var(--reason-zone-color); padding: 18px 20px; }
+.reason-group-title { font-weight: 800; }
+.reason-group-subtitle { font-size: 0.75em; font-weight: 400; line-height: 1.4; color: #c5cbd5; }
+.btn.reason-later { min-height: 48px; padding: 10px 16px; font-size: 0.85em; margin-top: 12px; }
+.reason-zone-mark { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px;
+  border: 1px solid #808895; border-radius: 3px; margin-right: 8px;
+  vertical-align: -1px; background: var(--reason-zone-color); }
+.zone-metric-row { display: flex; flex-wrap: wrap; justify-content: space-between;
+  align-items: baseline; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid #3a3f4a; }
+.zone-metric-name { font-weight: 700; }
+.zone-metric-value { color: #c5cbd5; font-size: 0.85em; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+  .zone-metric-value { flex-basis: 100%; padding-left: 24px; }
+}
