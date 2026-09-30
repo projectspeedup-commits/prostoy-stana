@@ -769,14 +769,6 @@ function crewTitle(id) {
   const c = (refs.crews || []).find((x) => x.id === id);
   return c ? c.title : id != null && id !== "" ? `Смена ${id}` : "—";
 }
-// Смена по часам: дневная — «Смена 1», ночная — «Смена 2». Если в справочнике
-// другое число смен, смену выбирают плиткой, как раньше
-function autoCrewId(view) {
-  const crews = refs.crews || [];
-  const id = String(view.shift.shiftNo);
-  const count = refs.settings?.schedule?.shifts?.length ?? 2;
-  return crews.length === count && crews.some((c) => c.id === id) ? id : null;
-}
 // ФИО полностью: три слова и больше, без инициалов с точками
 function fullName(name) {
   const parts = String(name || "").trim().split(/\s+/);
@@ -977,24 +969,23 @@ function renderFio(main, view) {
 function renderCrew(main, view) {
   if (ui.fio) return renderFio(main, view);
   const crews = refs.crews || [];
-  const auto = autoCrewId(view);
   const single = crews.length === 1 ? crews[0].id : null;
-  const chosen = ui.crewId || auto || single;
+  const chosen = ui.crewId || single;
   const kids = [];
   if (!chosen) {
     if (ui.crewBack) kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
-    kids.push(board(view), stepLine(1, 2), question("Выберите вашу смену"));
+    kids.push(board(view), stepLine(1, 2), question("Выберите вашу смену"),
+      h("p", { class: "muted", text: `Сейчас: ${periodLabel(view.shift)}` }));
     kids.push(h("div", { class: "tiles" },
       crews.map((c) => h("button", { class: "tile", onclick: () => { ui.crewId = c.id; render(); } }, c.title))
     ));
     kids.push(metrics());
   } else {
-    if (!single && !auto) {
+    if (!single) {
       kids.push(backBtn("К выбору смены", () => { ui.crewId = null; render(); }));
     } else if (ui.crewBack) {
       kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
     }
-    if (auto) kids.push(board(view));
     // У кого в списке только инициалы — ФИО дописывают при приёме
     const pick = (p) => {
       if (fullName(p.name)) return acceptShift(chosen, p.id, p.name.trim().replace(/\s+/g, " "));
@@ -1002,16 +993,11 @@ function renderCrew(main, view) {
       render();
     };
     const tile = (p) => h("button", { class: "tile", onclick: () => pick(p) }, p.name);
-    const people = refs.people || [];
-    const own = people.filter((p) => p.crewId === chosen);
-    const others = people.filter((p) => p.crewId !== chosen);
-    kids.push(question("Мастер, который принимает смену"),
+    const own = (refs.people || []).filter((p) => p.crewId === chosen);
+    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question("Мастер, который принимает смену"),
       h("p", { class: "muted", text: `${crewTitle(chosen)} · ${periodLabel(view.shift)}` }),
       h("div", { class: "tiles" }, own.map(tile)),
-      others.length ? h("p", { class: "muted", text: "Мастера другой смены" }) : null,
-      others.length ? h("div", { class: "tiles" }, others.map(tile)) : null,
       h("button", { class: "btn", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"));
-    if (auto) kids.push(metrics());
   }
   fill(main, ...kids);
 }
