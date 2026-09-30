@@ -1696,7 +1696,6 @@ function renderRestartAction(main, view) {
     stepLine(total, total),
     question("Что сделали, чтобы запустить стан?"),
     h("p", { class: "muted", text: `Время пуска: ${fmtSince(rw.startMs, view.shift)} МСК${rw.thenClose ? "" : " — по первому нажатию"}` }),
-    h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(rw.reason) })),
     earlier.length ? h("div", { class: "earlier" },
       h("p", { class: "hint", text: "Раньше по этому простою:" }),
       earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
@@ -1855,7 +1854,7 @@ function renderManual(main, view) {
   ta.addEventListener("input", () => { touched = true; if (!action) mw.noteEdited = true; update(); });
   update();
   fill(main, ...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Расскажите своими словами"),
-    h("p", { class: "muted", text: reasonLabel(mw.reason) }), ta, error,
+    action ? null : h("p", { class: "muted", text: reasonLabel(mw.reason) }), ta, error,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit,
     !must ? h("button", { class: "btn", onclick: () => { mw.note = ""; mw.noteEdited = true; next(); } }, "Без описания") : null);
   if (!action) focusReasonNote(ta);
@@ -2041,7 +2040,7 @@ function renderActionFix(main, view) {
   ta.addEventListener("input", () => { touched = true; update(); });
   update();
   fill(main, backBtn("К записи простоя", () => go("detail")), question(note ? "Что случилось?" : "Что сделали?"),
-    h("p", { class: "muted", text: reasonLabel(af.reason) }), ta,
+    note ? h("p", { class: "muted", text: reasonLabel(af.reason) }) : null, ta,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), error, save);
 }
 
