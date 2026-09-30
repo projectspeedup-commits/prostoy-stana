@@ -109,6 +109,32 @@ export function splitByShifts(segment, schedule) {
   return parts;
 }
 
+// Проверка времени запоздалой остановки и пуска — одна для сервера и демо.
+export function eventTimeError(events, event, nowMs) {
+  if (event.type !== "stop" && event.type !== "start") return "";
+  const at = toMs(event.at);
+  const built = buildDowntimes(events, nowMs);
+  if (event.type === "stop") {
+    // Лишнее нажатие во время простоя ядро по-прежнему принимает и игнорирует.
+    const before = events.filter((e) => toMs(e.at) <= at);
+    if (buildDowntimes(before, at).open) return "";
+    if (built.segments.some((s) => !s.open && s.endMs > at) ||
+        events.some((e) => e.type === "start" && toMs(e.at) > at)) return "overlap";
+  } else {
+    const id = event.downtimeId ?? built.open?.downtimeId;
+    const last = built.segments.filter((s) => s.downtimeId === id).at(-1);
+    if (last && at < last.startMs) return "bad_time";
+  }
+  return "";
+}
+
+// Граница для забытой остановки, включая пуски и простои прошлых смен.
+export function lastRunningMs(events, nowMs) {
+  const ends = buildDowntimes(events, nowMs).segments.filter((s) => !s.open).map((s) => s.endMs);
+  const starts = events.filter((e) => e.type === "start").map((e) => toMs(e.at));
+  return ends.length || starts.length ? Math.max(...ends, ...starts) : null;
+}
+
 /** Собирает отрезки простоя из событий. */
 export function buildDowntimes(events, nowMs) {
   const now = toMs(nowMs);

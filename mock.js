@@ -96,7 +96,8 @@ function computeState() {
   }
   segments.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
 
-  const openSegs = built.open ? segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
+  // Для времени пуска нужны исходные отрезки, без обрезки по границе смены.
+  const openSegs = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
   // Начало всего простоя (не последнего отрезка) — как у сервера
   const openStartMs = built.open
     ? Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs))
@@ -121,6 +122,7 @@ function computeState() {
     summary,
     closed,
     dataFromMs: firstEventMs(),
+    runningSinceMs: core.lastRunningMs(events, now),
   };
 }
 
@@ -170,6 +172,21 @@ export async function api(path, options = {}) {
         rejected.push({ id: e && e.id ? e.id : "?", error: "bad_event" });
         continue;
       }
+      // Повтор очереди подтверждаем без повторной записи, как на сервере.
+      if (events.some((old) => old.id === e.id)) {
+        saved.push(e.id);
+        continue;
+      }
+      let at;
+      try { at = core.toMs(e.at); }
+      catch {
+        rejected.push({ id: e.id, error: "bad_request" });
+        continue;
+      }
+      if (at > Date.now() + 2 * 60000) {
+        rejected.push({ id: e.id, error: "bad_time" });
+        continue;
+      }
       if (e.type === "manual") {
         try {
           if (!(core.toMs(e.to) > core.toMs(e.from))) throw new Error("bad_range");
@@ -177,6 +194,11 @@ export async function api(path, options = {}) {
           rejected.push({ id: e.id, error: "bad_range" });
           continue;
         }
+      }
+      const timeError = core.eventTimeError(events, e, Date.now());
+      if (timeError) {
+        rejected.push({ id: e.id, error: timeError });
+        continue;
       }
       events.push(e);
       saved.push(e.id);
