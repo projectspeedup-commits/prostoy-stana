@@ -258,7 +258,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js";
+    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js" || rel === "/core/zones.js";
     const full = isCore ? path.resolve(HERE, "..", "core", rel.slice("/core/".length)) : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
     if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

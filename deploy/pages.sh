@@ -16,9 +16,9 @@ fi
 
 # Собираем сайт заново: страница рабочего без страницы пробы связи и ядро
 find "$WORK" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-cp app/public/{index.html,app.js,app.css,charts.js,mock.js,sw.js,icon.svg,manifest.webmanifest} "$WORK/"
+cp app/public/{index.html,app.js,app.css,charts.js,timeline.js,timeline.css,mock.js,sw.js,icon.svg,manifest.webmanifest} "$WORK/"
 mkdir -p "$WORK/core"
-cp app/core/{core.js,refs.js,stats.js} "$WORK/core/"
+cp app/core/{core.js,refs.js,stats.js,zones.js} "$WORK/core/"
 touch "$WORK/.nojekyll"
 
 cd "$WORK"

@@ -10,26 +10,23 @@ const refs = {
   tiles: DEFAULT_REFS.tiles,
   nodes: DEFAULT_REFS.nodes,
   settings: { shortStopMinutes: 5, schedule: core.DEFAULT_SCHEDULE },
+  // Две смены по 12 часов: Смена 1 — дневная 08:00–20:00, Смена 2 — ночная 20:00–08:00
   crews: [
     { id: "1", title: "Смена 1" },
     { id: "2", title: "Смена 2" },
-    { id: "3", title: "Смена 3" },
   ],
-  // Условные имена для демо, не настоящие работники
+  // Условные мастера для демо, не настоящие работники
   people: [
-    { id: "p1", name: "Кузнецов А.В", crewId: "1" },
-    { id: "p2", name: "Смирнов Д.С", crewId: "1" },
-    { id: "p3", name: "Орлов К.Р", crewId: "1" },
-    { id: "p4", name: "Волков Е.Н", crewId: "2" },
-    { id: "p5", name: "Морозов А.П", crewId: "2" },
-    { id: "p6", name: "Лебедев Г.О", crewId: "2" },
-    { id: "p7", name: "Новиков С.И", crewId: "3" },
-    { id: "p8", name: "Фёдоров М.А", crewId: "3" },
-    { id: "p9", name: "Соколов В.Т", crewId: "3" },
+    { id: "p1", name: "Кузнецов Алексей Викторович", crewId: "1" },
+    { id: "p2", name: "Смирнов Дмитрий Сергеевич", crewId: "1" },
+    { id: "p3", name: "Орлов Константин Романович", crewId: "1" },
+    { id: "p4", name: "Волков Евгений Николаевич", crewId: "2" },
+    { id: "p5", name: "Морозов Андрей Павлович", crewId: "2" },
+    { id: "p6", name: "Лебедев Григорий Олегович", crewId: "2" },
   ],
   demo: true,
 };
-const REFS_VERSION = "mock-3";
+const REFS_VERSION = "mock-4";
 
 const events = []; // журнал событий, как в базе сервера
 
@@ -67,7 +64,7 @@ function computeState() {
   let closed = false;
   for (const e of events) {
     if (e.type === "shift_open") {
-      crew = { crewId: e.crewId, personId: e.personId, at: e.at };
+      crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
       closed = false;
     } else if (e.type === "shift_close") {
       crew = null;
@@ -79,6 +76,8 @@ function computeState() {
   const allParts = [];
   const segments = [];
   for (const seg of built.segments) {
+    // Мгновенное нажатие ещё не даёт длительности, как и на сервере.
+    if (seg.endMs <= seg.startMs) continue;
     for (const p of core.splitByShifts(seg, schedule)) {
       // reason/billet/note уже применены ядром (fix и note в reason поддерживает core)
       const part = { ...p, reason: p.reason ?? null, billet: p.billet ?? null, note: p.note ?? null };
@@ -104,6 +103,14 @@ function computeState() {
     : null;
   const dayParts = allParts.filter((p) => p.day === shift.day);
   const summary = core.summarizeDay(dayParts, shiftsOfDay(shift.day, schedule), {});
+  const dayRange = periodRange("day", now, schedule);
+  const day = {
+    fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * 60000,
+    segments: built.segments.map((segment) => ({
+      ...segment, startMs: Math.max(segment.startMs, dayRange.fromMs),
+      endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * 60000),
+    })).filter((segment) => segment.endMs > segment.startMs),
+  };
 
   return {
     running: !built.open,
@@ -119,6 +126,7 @@ function computeState() {
     shift,
     crew,
     segments,
+    day,
     summary,
     closed,
     dataFromMs: firstEventMs(),

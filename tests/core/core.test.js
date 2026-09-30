@@ -245,7 +245,7 @@ test("handoversSince: сдачи смены не раньше начала пр�
   ];
   const list = handoversSince(events, msk(28, 10));
   assert.deepEqual(list.map((x) => x.crewId), ["1", "2"]);
-  assert.deepEqual(list[0], { at: "2026-09-28T20:00:00+03:00", crewId: "1", personId: "p1", action: null, note: null });
+  assert.deepEqual(list[0], { at: "2026-09-28T20:00:00+03:00", crewId: "1", personId: "p1", personName: null, action: null, note: null });
   assert.equal(list[1].action, "ждём подшипник");
   assert.deepEqual(handoversSince(events, msk(30, 0)), []);
 });

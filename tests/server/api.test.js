@@ -121,13 +121,13 @@ test("events: shift_open попадает в state.crew", async () => {
     const { body } = await postEvents(base, [
       { id: "shift", type: "shift_open", at: "2026-01-01T11:00:00Z", crewId: "2", personId: "2-3" },
     ]);
-    assert.deepEqual(body.state.crew, { crewId: "2", personId: "2-3", at: "2026-01-01T11:00:00Z" });
+    assert.deepEqual(body.state.crew, { crewId: "2", personId: "2-3", personName: null, at: "2026-01-01T11:00:00Z" });
   } finally {
     await app.close();
   }
 });
 
-test("refs: 35 причин, 7 плиток и демо-люди", async () => {
+test("refs: 35 причин, 3 блока с пунктами и зонами, демо-люди", async () => {
   const { app, base } = await start();
   try {
     const response = await fetch(`${base}/api/refs`, { headers: HEAD });
@@ -145,24 +145,36 @@ test("refs: 35 причин, 7 плиток и демо-люди", async () => {
       if (reason.other) assert.equal(reason.hint, "Опишите, что случилось", code);
       else assert.match(reason.hint, /^Например: /, `${code}: hint`);
     }
-    const lastCodes = {
-      mech: "В-М-99", elec: "В-Э-99", tech: "В-Т-99", org: "В-О-99",
-      ext: "В-В-99", plan: "П-99", other: "В-П-99",
-    };
+    const covered = new Set();
+    assert.deepEqual(body.refs.tiles.map((tile) => tile.id), ["plan", "cobble", "failure"]);
     for (const tile of body.refs.tiles) {
-      const last = tile.codes.at(-1);
-      assert.equal(last, lastCodes[tile.id], `${tile.id}: последняя причина`);
-      assert.equal(body.refs.reasons[last]?.other, true, `${tile.id}: other`);
-      if (tile.id !== "other") {
-        assert.equal(body.refs.reasons[last].short, "Иная причина", last);
+      assert.ok(tile.title && tile.subtitle, tile.id);
+      assert.ok(["plan", "unplanned", "failure"].includes(tile.zone), tile.id);
+      assert.ok(tile.items.length > 0, tile.id);
+      assert.deepEqual(tile.codes, [...new Set(tile.items.map((item) => item.code))]);
+      for (const item of tile.items) {
+        const reason = body.refs.reasons[item.code];
+        assert.ok(reason, item.code);
+        assert.equal(reason.zone, tile.zone, item.code);
+        assert.ok(item.label.trim(), item.code);
+        assert.equal(typeof item.text, "string", item.code);
+        if (reason.other) assert.equal(item.text, "", item.code);
+        else assert.ok(item.text.trim(), item.code);
+        covered.add(item.code);
       }
-      assert.equal(body.refs.reasons[last].planned, tile.id === "plan", last);
     }
-    assert.equal(body.refs.tiles.length, 7);
+    assert.deepEqual([...covered].sort(), Object.keys(body.refs.reasons).sort());
+    for (const [code, reason] of Object.entries(body.refs.reasons)) {
+      const expected = code.startsWith("П-") ? "plan" : /^В-[МЭВ]-/.test(code) ? "failure" : "unplanned";
+      assert.equal(reason.zone, expected, code);
+    }
+    assert.equal(body.refs.tiles.length, 3);
     assert.equal(body.refs.nodes.length, 14);
     assert.equal(body.refs.demo, true);
-    assert.equal(body.refs.crews.length, 4);
-    assert.equal(body.refs.people.length, 16);
+    // Две смены по 12 часов, в списке — мастера с полным ФИО
+    assert.deepEqual(body.refs.crews.map((c) => c.title), ["Смена 1", "Смена 2"]);
+    assert.equal(body.refs.people.length, 4);
+    for (const p of body.refs.people) assert.equal(p.name.split(" ").length, 3, p.name);
     assert.match(body.refsVersion, /^[a-f0-9]{12}$/);
   } finally {
     await app.close();
@@ -264,7 +276,7 @@ test("events: ремонт через смены — shift_close с action ви�
     assert.equal(closed.body.state.running, false);
     assert.equal(closed.body.state.open.downtimeId, "d1");
     assert.deepEqual(closed.body.state.open.handovers, [
-      { at: "2026-01-01T04:50:00Z", crewId: "1", personId: "p1", action, note: "Стан стоит." },
+      { at: "2026-01-01T04:50:00Z", crewId: "1", personId: "p1", personName: null, action, note: "Стан стоит." },
     ]);
     // Другая бригада принимает смену: стан стоит, передача на месте, простой не менялся
     const opened = await postEvents(base, [
@@ -313,6 +325,61 @@ test("events: shift_close с action длиннее 500 знаков отклон
     ]);
     assert.deepEqual(body.saved, ["c-ok"]);
     assert.deepEqual(body.rejected, [{ id: "c-long", error: "bad_request" }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("events: ФИО мастера из приёма смены попадает в состояние и в следующие нажатия", async () => {
+  const { app, base } = await start();
+  try {
+    const personName = "Петров Пётр Петрович";
+    const { body } = await postEvents(base, [
+      { id: "open", type: "shift_open", at: "2026-01-01T09:00:00Z", crewId: "1", personId: null, personName },
+      { id: "stop", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d1" },
+      { id: "close", type: "shift_close", at: "2026-01-01T11:00:00Z" },
+    ]);
+    assert.deepEqual(body.saved, ["open", "stop", "close"]);
+    assert.equal(body.state.crew.personName, personName);
+    assert.equal(body.state.open.handovers[0].personName, personName);
+    const long = await postEvents(base, [
+      { id: "long", type: "shift_open", at: "2026-01-01T11:30:00Z", crewId: "1", personName: "Я".repeat(121) },
+    ]);
+    assert.deepEqual(long.body.saved, []);
+  } finally {
+    await app.close();
+  }
+});
+
+test("state.day: обе смены, обрезка по суткам, причины и открытый простой", async () => {
+  const now = new Date("2026-01-01T22:00:00Z");
+  const { app, base } = await start(() => now);
+  try {
+    const { body } = await postEvents(base, [
+      { id: "d-old", type: "stop", at: "2026-01-01T04:00:00Z", reason: "П-02" },
+      { id: "d-old-end", type: "start", at: "2026-01-01T06:00:00Z" },
+      { id: "d-cross", type: "stop", at: "2026-01-01T16:50:00Z", reason: "В-Т-01" },
+      { id: "d-split", type: "split", at: "2026-01-01T17:10:00Z", reason: "В-М-02" },
+      { id: "d-cross-end", type: "start", at: "2026-01-01T18:00:00Z" },
+      { id: "d-open", type: "stop", at: "2026-01-01T21:00:00Z" },
+    ]);
+    assert.deepEqual(body.rejected, []);
+    const day = body.state.day;
+    assert.equal(day.fromMs, Date.parse("2026-01-01T05:00:00Z"));
+    assert.equal(day.toMs, Date.parse("2026-01-02T05:00:00Z"));
+    assert.deepEqual(day.segments.map((s) => [s.startMs, s.endMs, s.reason, s.open]), [
+      [day.fromMs, Date.parse("2026-01-01T06:00:00Z"), "П-02", false],
+      [Date.parse("2026-01-01T16:50:00Z"), Date.parse("2026-01-01T17:10:00Z"), "В-Т-01", false],
+      [Date.parse("2026-01-01T17:10:00Z"), Date.parse("2026-01-01T18:00:00Z"), "В-М-02", false],
+      [Date.parse("2026-01-01T21:00:00Z"), now.getTime(), null, true],
+    ]);
+    const state = await fetch(`${base}/api/state`, { headers: HEAD }).then((r) => r.json());
+    assert.deepEqual(state.state.day, day);
+    assert.ok(body.state.segments.every((s) => s.startMs >= body.state.shift.startMs));
+    const source = await fetch(`${base}/core/zones.js`);
+    assert.equal(source.status, 200);
+    assert.equal(source.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.ok((await source.text()).includes("export function dayCells"));
   } finally {
     await app.close();
   }

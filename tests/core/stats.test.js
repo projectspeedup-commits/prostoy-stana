@@ -9,9 +9,9 @@ const MINUTE = 60_000;
 const t = (value) => toMs(value);
 const refs = {
   reasons: {
-    U1: { title: "Авария", group: "Механическая", planned: false },
-    U2: { title: "Нет заготовки", group: "Организационная", planned: false },
-    P1: { title: "ППР", group: "Плановый", planned: true },
+    U1: { title: "Авария", group: "Механическая", planned: false, zone: "failure" },
+    U2: { title: "Нет заготовки", group: "Организационная", planned: false, zone: "unplanned" },
+    P1: { title: "ППР", group: "Плановый", planned: true, zone: "plan" },
     O1: { title: "Иная", group: "Прочее", planned: false, other: true },
   },
   settings: { shortStopMinutes: 5, schedule: DEFAULT_SCHEDULE },
@@ -25,6 +25,52 @@ if (process.env.STATS_TZ_CHILD === "1") {
   const range = periodRange("month", t("2026-03-15T12:00:00Z"), DEFAULT_SCHEDULE);
   console.log(JSON.stringify(range));
 } else {
+  test("byZone: четыре зоны, минуты, остановки и доля времени учёта", () => {
+    const result = stats([
+      { id: "p", type: "manual", at: "2026-01-01T08:00:00Z", from: "2026-01-01T08:00:00Z", to: "2026-01-01T08:10:00Z", reason: "P1" },
+      { id: "u", type: "manual", at: "2026-01-01T08:20:00Z", from: "2026-01-01T08:20:00Z", to: "2026-01-01T08:40:00Z", reason: "U2" },
+      { id: "f", type: "stop", at: "2026-01-01T09:00:00Z", reason: "U1" },
+      { id: "end", type: "start", at: "2026-01-01T09:30:00Z" },
+    ], "2026-01-01T08:00:00Z", "2026-01-01T10:00:00Z");
+    assert.deepEqual(result.byZone, [
+      { zone: "plan", minutes: 10, stops: 1, share: 10 / 120 },
+      { zone: "unplanned", minutes: 20, stops: 1, share: 20 / 120 },
+      { zone: "failure", minutes: 30, stops: 1, share: 30 / 120 },
+      { zone: "work", minutes: 60, stops: 0, share: 60 / 120 },
+    ]);
+  });
+
+  test("byZone: смена причины не удваивает остановку внутри зоны", () => {
+    const result = stats([
+      { id: "s", type: "stop", at: "2026-01-01T08:00:00Z", reason: "U1" },
+      { id: "same", type: "split", at: "2026-01-01T08:10:00Z", reason: "U1" },
+      { id: "other", type: "split", at: "2026-01-01T08:20:00Z", reason: "U2" },
+    ], "2026-01-01T08:00:00Z", "2026-01-01T08:30:00Z");
+    assert.equal(result.stops, 1);
+    assert.equal(result.byZone.find((row) => row.zone === "failure").stops, 1);
+    assert.equal(result.byZone.find((row) => row.zone === "unplanned").stops, 1);
+    assert.equal(result.byZone.reduce((sum, row) => sum + row.minutes, 0), result.totalMin);
+  });
+
+  test("byZone: короткий простой без причины — жёлтый, округление сохраняет итог", () => {
+    const result = stats([
+      { id: "p", type: "manual", at: "2026-01-01T08:00:00Z", from: "2026-01-01T08:00:00Z", to: "2026-01-01T08:00:20Z", reason: "P1" },
+      { id: "u", type: "manual", at: "2026-01-01T08:00:20Z", from: "2026-01-01T08:00:20Z", to: "2026-01-01T08:00:40Z" },
+      { id: "f", type: "manual", at: "2026-01-01T08:00:40Z", from: "2026-01-01T08:00:40Z", to: "2026-01-01T08:01:00Z", reason: "U1" },
+    ], "2026-01-01T08:00:00Z", "2026-01-01T08:02:00Z");
+    assert.equal(result.byZone.filter((row) => row.zone !== "work").reduce((sum, row) => sum + row.minutes, 0), result.downMin);
+    const unknown = result.byZone.find((row) => row.zone === "unplanned");
+    assert.equal(unknown.stops, 1);
+    assert.equal(unknown.share, 1 / 6);
+  });
+
+  test("byZone: до первого события нет работы, пустые зоны имеют нули", () => {
+    const empty = stats([], "2026-01-01T08:00:00Z", "2026-01-01T10:00:00Z");
+    assert.ok(empty.byZone.every((row) => row.minutes === 0 && row.stops === 0 && row.share === 0));
+    const result = stats([{ id: "open", type: "shift_open", at: "2026-01-01T09:00:00Z" }],
+      "2026-01-01T08:00:00Z", "2026-01-01T10:00:00Z");
+    assert.deepEqual(result.byZone.find((row) => row.zone === "work"), { zone: "work", minutes: 60, stops: 0, share: 1 });
+  });
   test("отрезок простоя через границу периода обрезается", () => {
     const result = stats([
       { id: "m", type: "manual", from: "2026-01-01T07:00:00Z", to: "2026-01-01T09:00:00Z", at: "2026-01-01T07:00:00Z", reason: "U1" },

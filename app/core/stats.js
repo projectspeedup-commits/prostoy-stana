@@ -1,5 +1,6 @@
 // Метрики простоев за производственный период. Работает и в браузере, и в Node.
 import { buildDowntimes, classify, shiftOf, toMs } from "./core.js";
+import { zoneOf } from "./zones.js";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -263,6 +264,18 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const downMin = rounded(downMs);
   const crewList = [...crewRows.values()];
   const crewMinutes = apportionMinutes(crewList.map((row) => row.ms), downMin);
+  // Одна остановка считается один раз в каждой затронутой зоне.
+  const zoneRows = ["plan", "unplanned", "failure"].map((zone) => {
+    const own = visible.filter((segment) => zoneOf(segment.reason, refs) === zone);
+    return { zone, ms: own.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0),
+      stops: new Set(own.map((segment) => segment.downtimeId)).size };
+  });
+  const zoneMinutes = apportionMinutes(zoneRows.map((row) => row.ms), downMin);
+  const byZone = zoneRows.map((row, i) => ({
+    zone: row.zone, minutes: zoneMinutes[i], stops: row.stops, share: totalMs ? row.ms / totalMs : 0,
+  }));
+  byZone.push({ zone: "work", minutes: Math.max(0, totalMin - downMin), stops: 0,
+    share: totalMs ? workMs / totalMs : 0 });
   return {
     fromMs: from,
     toMs: to,
@@ -271,6 +284,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     totalMin,
     workMin: Math.max(0, totalMin - downMin),
     downMin,
+    byZone,
     plannedMin: rounded(modeMs.planned),
     unplannedMin: rounded(modeMs.unplanned),
     shortMin: rounded(modeMs.short),

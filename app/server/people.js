@@ -2,12 +2,13 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { DEFAULT_REFS } from "./refs.js";
 
+// Две смены по 12 часов: Смена 1 — дневная, Смена 2 — ночная; в списке — мастера с полным ФИО
 function demoPeople() {
-  const crews = Array.from({ length: 4 }, (_, i) => ({ id: String(i + 1), title: `Бригада ${i + 1}` }));
-  const names = ["Первый", "Второй", "Третий", "Четвёртый"];
-  const people = crews.flatMap((crew) => names.map((name, i) => ({
-    id: `${crew.id}-${i + 1}`, name: `Демо ${name} ${crew.id}`, crewId: crew.id,
-  })));
+  const crews = [{ id: "1", title: "Смена 1" }, { id: "2", title: "Смена 2" }];
+  const people = [
+    ["Демонов Первый Иванович", "1"], ["Демонов Второй Петрович", "1"],
+    ["Демонов Третий Сергеевич", "2"], ["Демонов Четвёртый Павлович", "2"],
+  ].map(([name, crewId], i) => ({ id: `d${i + 1}`, name, crewId }));
   return { crews, people, demo: true };
 }
 

@@ -258,7 +258,7 @@ export function handoversSince(events, sinceMs) {
   return events
     .filter((e) => e.type === "shift_close" && toMs(e.at) >= sinceMs)
     .sort((a, b) => toMs(a.at) - toMs(b.at))
-    .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, action: e.action ?? null, note: e.note ?? null }));
+    .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }));
 }
 
 /** Режим и группа отрезка. */

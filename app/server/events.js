@@ -1,5 +1,7 @@
 import { buildDowntimes, classify, DEFAULT_SCHEDULE, eventTimeError, handoversSince, lastRunningMs, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
 
+import { periodRange } from "../core/stats.js";
+
 const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
 const MINUTE = 60_000;
 
@@ -57,6 +59,7 @@ export function createEventStore(db) {
           }
           if (typeof event.note === "string" && event.note.length > 500) throw new Error();
           if (typeof event.action === "string" && event.action.length > 500) throw new Error();
+          if (event.personName != null && (typeof event.personName !== "string" || event.personName.length > 120)) throw new Error();
           if (event.billet != null && (typeof event.billet !== "number" || !Number.isFinite(event.billet) || event.billet < 0)) throw new Error();
           if (event.type === "fix" && (typeof event.downtimeId !== "string" || !event.downtimeId ||
             !Number.isSafeInteger(event.index) || event.index < 0)) throw new Error();
@@ -93,6 +96,7 @@ export function createEventStore(db) {
           if (open) {
             stored.crewId ??= open.crewId ?? null;
             stored.personId ??= open.personId ?? null;
+            if (stored.personName == null && open.personName != null) stored.personName = open.personName;
           }
         }
         insert.run(event.id, event.type, at, receivedMs, stored.device, JSON.stringify(stored),
@@ -123,6 +127,14 @@ export function createEventStore(db) {
       .map((p) => ({ ...p, ...classify(p, refs, refs.settings) }));
     const openSegments = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
     const openStartMs = built.open ? Math.min(...openSegments.map((s) => s.startMs)) : null;
+    const dayRange = periodRange("day", nowMs, refs.settings.schedule);
+    const day = {
+      fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * MINUTE,
+      segments: built.segments.map((segment) => ({
+        ...segment, startMs: Math.max(segment.startMs, dayRange.fromMs),
+        endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * MINUTE),
+      })).filter((segment) => segment.endMs > segment.startMs),
+    };
     return {
       running: built.open === null,
       open: built.open ? {
@@ -133,8 +145,9 @@ export function createEventStore(db) {
         handovers: handoversSince(events, openStartMs),
       } : null,
       shift,
-      crew: lastCrew ? { crewId: lastCrew.crewId ?? null, personId: lastCrew.personId ?? null, at: lastCrew.at } : null,
+      crew: lastCrew ? { crewId: lastCrew.crewId ?? null, personId: lastCrew.personId ?? null, personName: lastCrew.personName ?? null, at: lastCrew.at } : null,
       segments,
+      day,
       summary: summarizeDay(segments, [shift], { [shift.shiftNo]: ownEvents.length > 0 || !!ping }),
       closed: ownEvents.some((e) => e.type === "shift_close"),
       dataFromMs: firstEventMs(events),

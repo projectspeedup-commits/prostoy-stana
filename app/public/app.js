@@ -1,7 +1,10 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
 import * as core from "./core/core.js";
+import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
+import { dayCells } from "./core/zones.js";
+import { dayScale } from "./timeline.js";
 
 const STORE_KEY = "stan.deviceKey";
 const QUEUE_KEY = "stan.queue";
@@ -102,7 +105,7 @@ const ui = {
   focusNote: false,  // поставить курсор в поле «своими словами»
   keyError: null,
 };
-const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "stillDown", "closeAction"];
+const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "stillDown", "closeAction", "fio"];
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
@@ -148,7 +151,7 @@ function queueEvent(type, fields = {}) {
   const who = type === "shift_open" ? null : buildView()?.crew;
   const { at, ...rest } = fields;
   const e = {
-    ...(who ? { crewId: who.crewId, personId: who.personId } : {}),
+    ...(who ? { crewId: who.crewId, personId: who.personId, ...(who.personName ? { personName: who.personName } : {}) } : {}),
     id: crypto.randomUUID(),
     type,
     at: at || new Date(nowMs()).toISOString(),
@@ -420,14 +423,14 @@ function applyEvent(v, e) {
       }
       break;
     case "shift_open":
-      v.crew = { crewId: e.crewId, personId: e.personId, at: e.at };
+      v.crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
       v.closed = false;
       break;
     case "shift_close":
       if (v.open && t >= (v.open.since ?? v.open.startMs) &&
           !(v.open.handovers || []).some((x) => x.at === e.at && x.crewId === (e.crewId ?? null))) {
         v.open.handovers = [...(v.open.handovers || []),
-          { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, action: e.action ?? null, note: e.note ?? null }];
+          { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }];
       }
       if (v.crew && core.toMs(v.crew.at) > t) break;
       v.crew = null;
@@ -760,9 +763,26 @@ function personName(id) {
   const p = (refs.people || []).find((x) => x.id === id);
   return p ? p.name : "—";
 }
+// ФИО мастера: введённое при приёме смены, иначе из списка
+function personLabel(id, name) {
+  return typeof name === "string" && name.trim() ? name.trim() : personName(id);
+}
 function crewTitle(id) {
   const c = (refs.crews || []).find((x) => x.id === id);
-  return c ? c.title : "—";
+  return c ? c.title : id != null && id !== "" ? `Смена ${id}` : "—";
+}
+// Смена по часам: дневная — «Смена 1», ночная — «Смена 2». Если в справочнике
+// другое число смен, смену выбирают плиткой, как раньше
+function autoCrewId(view) {
+  const crews = refs.crews || [];
+  const id = String(view.shift.shiftNo);
+  const count = refs.settings?.schedule?.shifts?.length ?? 2;
+  return crews.length === count && crews.some((c) => c.id === id) ? id : null;
+}
+// ФИО полностью: три слова и больше, без инициалов с точками
+function fullName(name) {
+  const parts = String(name || "").trim().split(/\s+/);
+  return parts.length >= 3 && parts.every((p) => p.length >= 2 && !p.includes("."));
 }
 
 function needCrew(view) {
@@ -915,10 +935,53 @@ function renderLoading(main) {
 }
 
 // Приём смены: шаг 1 — бригада, шаг 2 — человек
+function acceptShift(crewId, personId, personName) {
+  ui.fio = null;
+  if (ui.repair?.event.type === "shift_open") {
+    Object.assign(ui.repair.event, { crewId, personId, personName });
+    ui.crewId = null;
+    return go("repair");
+  }
+  send("shift_open", { crewId, personId, personName });
+  ui.crewId = null;
+  ui.crewBack = false;
+  go("auto");
+}
+
+// Фамилия, имя и отчество мастера — обязательно полностью
+function renderFio(main, view) {
+  const fio = ui.fio;
+  const fields = [["last", "Фамилия"], ["first", "Имя"], ["middle", "Отчество"]];
+  const ok = (v) => /^[А-ЯЁа-яёA-Za-z][А-ЯЁа-яёA-Za-z\u2019' -]{1,39}$/.test(String(v || "").trim());
+  const cap = (v) => String(v || "").trim().replace(/\s+/g, " ").replace(/(^|[ -])([а-яёa-z])/g, (m, p, c) => p + c.toUpperCase());
+  const error = h("p", { class: "error-text", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
+  error.hidden = true;
+  const submit = h("button", { class: "btn primary", onclick: () => {
+    if (!fields.every(([k]) => ok(fio[k]))) { error.hidden = false; return; }
+    acceptShift(fio.crewId, fio.personId, fields.map(([k]) => cap(fio[k])).join(" "));
+  } }, "Принять смену");
+  const update = () => { submit.disabled = !fields.every(([k]) => ok(fio[k])); };
+  const inputs = fields.map(([k, label]) => {
+    const input = h("input", { type: "text", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "40" });
+    input.value = fio[k] || "";
+    input.addEventListener("input", () => { fio[k] = input.value; error.hidden = true; update(); persistClient(); });
+    return [h("label", { for: `fio-${k}`, text: label }), input];
+  });
+  update();
+  fill(main, backBtn("К списку мастеров", () => { ui.fio = null; render(); }),
+    question("Фамилия, имя и отчество мастера"),
+    h("p", { class: "muted", text: `${crewTitle(fio.crewId)} · ${periodLabel(view.shift)}. Полностью, как в документах: так мастер будет записан в приёме смены.` }),
+    ...inputs.flat(), error, submit);
+  if (!fio.last) main.querySelector("#fio-last")?.focus();
+  else if (!fio.first) main.querySelector("#fio-first")?.focus();
+}
+
 function renderCrew(main, view) {
+  if (ui.fio) return renderFio(main, view);
   const crews = refs.crews || [];
+  const auto = autoCrewId(view);
   const single = crews.length === 1 ? crews[0].id : null;
-  const chosen = ui.crewId || single;
+  const chosen = ui.crewId || auto || single;
   const kids = [];
   if (!chosen) {
     if (ui.crewBack) kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
@@ -928,32 +991,57 @@ function renderCrew(main, view) {
     ));
     kids.push(metrics());
   } else {
-    if (!single) {
+    if (!single && !auto) {
       kids.push(backBtn("К выбору смены", () => { ui.crewId = null; render(); }));
     } else if (ui.crewBack) {
       kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
     }
-    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question("Кто принимает смену?"), h("p", { class: "muted", text: crewTitle(chosen) }));
-    const people = (refs.people || []).filter((p) => p.crewId === chosen);
-    kids.push(h("div", { class: "tiles" },
-      people.map((p) => h("button", {
-        class: "tile",
-        onclick: () => {
-          if (ui.repair?.event.type === "shift_open") {
-            ui.repair.event.crewId = chosen;
-            ui.repair.event.personId = p.id;
-            ui.crewId = null;
-            return go("repair");
-          }
-          send("shift_open", { crewId: chosen, personId: p.id });
-          ui.crewId = null;
-          ui.crewBack = false;
-          go("auto");
-        },
-      }, p.name))
-    ));
+    if (auto) kids.push(board(view));
+    // У кого в списке только инициалы — ФИО дописывают при приёме
+    const pick = (p) => {
+      if (fullName(p.name)) return acceptShift(chosen, p.id, p.name.trim().replace(/\s+/g, " "));
+      ui.fio = { crewId: chosen, personId: p.id, last: p.name.trim().split(/\s+/)[0] || "", first: "", middle: "" };
+      render();
+    };
+    const tile = (p) => h("button", { class: "tile", onclick: () => pick(p) }, p.name);
+    const people = refs.people || [];
+    const own = people.filter((p) => p.crewId === chosen);
+    const others = people.filter((p) => p.crewId !== chosen);
+    kids.push(question("Мастер, который принимает смену"),
+      h("p", { class: "muted", text: `${crewTitle(chosen)} · ${periodLabel(view.shift)}` }),
+      h("div", { class: "tiles" }, own.map(tile)),
+      others.length ? h("p", { class: "muted", text: "Мастера другой смены" }) : null,
+      others.length ? h("div", { class: "tiles" }, others.map(tile)) : null,
+      h("button", { class: "btn", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"));
+    if (auto) kids.push(metrics());
   }
   fill(main, ...kids);
+}
+
+// Шкала суток: 48 получасовых ячеек текущих производственных суток (08:00–08:00).
+// Прошлая смена этих суток — с сервера, текущая — с учётом ещё не отправленных нажатий
+function scaleFor(view) {
+  try {
+    const HOUR = 3_600_000;
+    const now = nowMs();
+    const shiftFrom = view.shift.startMs;
+    const fromMs = serverState?.day?.fromMs ?? (view.shift.shiftNo === 1 ? shiftFrom : shiftFrom - 12 * HOUR);
+    const endOf = (s) => (s.open || s.endMs == null ? now : s.endMs);
+    const earlier = (serverState?.day?.segments || [])
+      .filter((s) => s.startMs < shiftFrom)
+      .map((s) => ({ startMs: s.startMs, endMs: Math.min(endOf(s), shiftFrom), reason: s.reason ?? null }));
+    const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
+    if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
+    const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock });
+  } catch (e) {
+    console.error("Шкала суток:", e);
+    return null;
+  }
+}
+// Главный экран: шкала слева (на узком экране — под кнопками), справа всё остальное
+function withScale(view, ...kids) {
+  return h("div", { class: "with-scale" }, scaleFor(view), h("div", { class: "with-scale__main" }, ...kids));
 }
 
 // Главный экран: стан работает
@@ -961,7 +1049,7 @@ function renderRun(main, view) {
   const dts = shiftDowntimes(view);
   // С последнего пуска, даже если он был в прошлую смену; до первой записи о стане ничего не известно
   const lastStart = Math.min(nowMs(), runningSince(view));
-  fill(main,
+  fill(main, withScale(view,
     h("div", { class: "bar green" },
       "Стан работает · ",
       h("span", { dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
@@ -979,7 +1067,7 @@ function renderRun(main, view) {
     }, "СТАН ВСТАЛ"),
     h("p", { class: "hint", text: "Нажмите, как только стан остановился" }),
     shiftBlock(view)
-  );
+  ));
 }
 
 // --- Метрики работы стана за период (первый экран) ---
@@ -1005,19 +1093,36 @@ function barValue(r, total) {
   if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
   return parts.join(" · ");
 }
-function barList(title, rows, total, label) {
+function barList(title, rows, total, label, zone = null) {
   if (!rows || !rows.length) return null;
   const max = Math.max(...rows.map((r) => r.minutes), 1);
   return h("div", { class: "m-block" },
     h("div", { class: "m-title", text: title }),
     rows.slice(0, 8).map((r) => h("div", { class: "m-bar" },
       h("div", { class: "m-bar-head" },
-        h("span", { class: "m-bar-name", text: label(r) }),
+        h("span", { class: "m-bar-name" }, zone ? zoneMark(zone(r)) : null, label(r)),
         h("span", { class: "m-bar-val", text: barValue(r, total) })),
       h("div", { class: "m-track" }, h("div", { class: "m-fill", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
 }
+function zoneMark(zone) {
+  return h("span", { class: "reason-zone-mark reason-zone-" + zone, "aria-hidden": "true" });
+}
+function zoneMetrics(st) {
+  const labels = { work: "Работа", plan: "Перевалка и плановые",
+    unplanned: "Внеплановый простой", failure: "Аварийный простой" };
+  return h("section", { class: "m-block zone-metrics", "aria-label": "Простой по зонам" },
+    h("div", { class: "m-title", text: "Простой по зонам" }),
+    Object.entries(labels).map(([zone, label]) => {
+      const row = (st.byZone || []).find((item) => item.zone === zone);
+      return h("div", { class: "zone-metric-row" },
+        h("span", { class: "zone-metric-name" }, zoneMark(zone), label),
+        h("span", { class: "zone-metric-value",
+          text: row ? row.minutes + " мин · " + row.stops + " ост. · " + pct(row.share) : "—" }));
+    }),
+    h("p", { class: "hint", text: "Доля — от времени учёта за выбранный период. Остановка со сменой зоны учитывается в каждой из этих зон." }));
+}
 function metrics() {
-  const period = ui.statsPeriod || "day";
+  const period = ui.statsPeriod || "shift";
   loadStats(period);
   const c = (ui.stats || {})[period] || {};
   const st = c.data;
@@ -1044,6 +1149,9 @@ function metrics() {
   return h("div", { class: "metrics" },
     h("div", { class: "m-head", text: "Работа стана" }),
     tabs,
+    zoneMetrics(st),
+    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? reasonLabel(r.reason) : "Без причины"),
+      (r) => zoneOf(r.reason, refs)),
     h("div", { class: "board-stats m-kpi" },
       kpi(pct(st.availability), "доступность", st.availability !== null && st.availability < 0.85 ? "bad" : "good"),
       kpi(mins(st.workMin), "работа", "good"),
@@ -1056,7 +1164,6 @@ function metrics() {
       kpi(mins(st.mttrMin), "время на ремонт")),
     st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
     warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
-    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? reasonLabel(r.reason) : "Без причины")),
     st.byGroup && st.byGroup.length ? h("div", { class: "m-block" },
       h("div", { class: "m-title", text: "Простой по группам причин" }),
       donut(st.byGroup.map((g) => ({ name: g.group, minutes: g.minutes })), "простой")) : null,
@@ -1080,8 +1187,9 @@ function shiftBlock(view) {
     h("span", { text: title }), h("span", { class: "action-help", text: help }));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
     h("div", { class: "shift-person" },
-      h("h2", { text: c ? personName(c.personId) : "Смена не принята" }),
-      c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)}` }) : null,
+      c ? h("p", { class: "muted", text: "Мастер смены" }) : null,
+      h("h2", { text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
+      c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
       c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null),
     h("div", { class: "shift-time" },
       h("span", { text: `${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)} · МСК` }),
@@ -1131,7 +1239,7 @@ function renderHandoverCard(open) {
       const at = core.toMs(x.at);
       const text = handoverText(x);
       return h("div", null,
-        h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personName(x.personId)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
+        h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
         h("div", { class: "card-note", text: text ? `«${text}»` : "без записи" }));
     }));
 }
@@ -1201,7 +1309,7 @@ function renderStop(main, view) {
     );
   }
 
-  fill(main, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view));
+  fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
 }
 
 // Закрытие смены начинается со сверки записи на планшете с состоянием стана.
@@ -1296,16 +1404,10 @@ function renderForgotStop(main, view) {
   }
   if (fw.step === 2 || fw.step === 3) {
     const group = fw.step === 2;
-    const tile = (refs.tiles || []).find((t) => t.id === fw.group);
     fill(main, ...top(), question(group ? "Почему стоит?" : "Что именно?"),
-      h("div", { class: "tiles" }, group
-        ? (refs.tiles || []).map((t) => h("button", { class: "tile" + (fw.group === t.id ? " sel" : ""), onclick: () => {
-          fw.group = t.id; fw.unknown = false; next();
-        } }, t.title))
-        : (tile?.codes || []).map((code) => h("button", { class: "tile" + (fw.reason === code ? " sel" : ""), onclick: () => {
-          fw.reason = code; next();
-        } }, reasonLabel(code))),
-      group ? h("button", { class: "tile unknown", onclick: () => { fw.unknown = true; fw.step = 5; render(); } }, "Пока не знаю") : null));
+      group ? reasonGroups(fw, next) : reasonChoices(fw, next),
+      group ? h("button", { class: "btn btn-flat reason-later",
+        onclick: () => { fw.unknown = true; fw.step = 5; render(); } }, "Пока не знаю") : null);
     return;
   }
   if (fw.step === 4) {
@@ -1320,11 +1422,12 @@ function renderForgotStop(main, view) {
       submit.disabled = isOther(fw.reason) && !validAction(ta.value);
       error.hidden = !submit.disabled || !touched;
     };
-    ta.addEventListener("input", () => { touched = true; update(); });
+    ta.addEventListener("input", () => { touched = true; fw.noteEdited = true; update(); });
     update();
     fill(main, ...top(), question("Расскажите своими словами"),
       h("p", { class: "muted", text: reasonLabel(fw.reason) }), ta, error,
       h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit);
+    focusReasonNote(ta);
     return;
   }
   const error = forgottenStopError(view, fw);
@@ -1421,6 +1524,42 @@ function renderConfirmChange(main, view) {
   );
 }
 
+// Один выбор причины во всех мастерах. Ключ отличает пункты с одинаковым кодом.
+function reasonItems(tile) {
+  return tile?.items || (tile?.codes || []).map((code) => ({ code, label: reasonLabel(code), text: "" }));
+}
+function reasonItemKey(tile, item) { return JSON.stringify([tile.id, item.code, item.label]); }
+function chooseReasonItem(draft, tile, item) {
+  const ownText = draft.noteEdited || (!!draft.note && draft.note !== draft.autoNote);
+  draft.itemKey = reasonItemKey(tile, item);
+  draft.reason = item.code;
+  draft.noteEdited = !!ownText;
+  if (!ownText) {
+    draft.note = isOther(item.code) ? "" : item.text;
+    draft.autoNote = draft.note;
+  }
+  ui.focusNote = true;
+}
+function reasonGroups(draft, next) {
+  return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
+    h("button", { class: "tile reason-group reason-zone-" + tile.zone + (draft.group === tile.id ? " sel" : ""),
+      onclick: () => { draft.group = tile.id; draft.unknown = false; next(); } },
+    h("span", { class: "reason-group-title", text: tile.title }),
+    h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
+}
+function reasonChoices(draft, next) {
+  const tile = (refs.tiles || []).find((item) => item.id === draft.group);
+  return h("div", { class: "tiles" }, reasonItems(tile).map((item) =>
+    h("button", { class: "tile" + (draft.itemKey === reasonItemKey(tile, item) ? " sel" : ""),
+      onclick: () => { chooseReasonItem(draft, tile, item); next(); } }, item.label)));
+}
+function focusReasonNote(ta) {
+  if (!ui.focusNote) return;
+  ui.focusNote = false;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
 // Мастер выбора причины: группа → причина → своими словами
 function renderReasonWizard(main, view) {
   const wz = ui.wz;
@@ -1447,40 +1586,24 @@ function renderReasonWizard(main, view) {
       backBtn(...back1),
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      h("div", { class: "tiles" },
-        (refs.tiles || []).map((t) =>
-          h("button", { class: "tile" + (wz.group === t.id ? " sel" : ""), onclick: () => { wz.group = t.id; wz.step = 2; render(); } }, t.title)
-        ),
-        !restarting ? h("button", {
-          class: "tile unknown",
-          onclick: () => {
-            if (wz.mode === "past") go("recorded"); // «Укажу позже»
-            else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
-          },
-        }, wz.mode === "past" ? "Укажу позже" : "Пока не знаю") : null
-      )
+      reasonGroups(wz, () => { wz.step = 2; render(); }),
+      !restarting ? h("button", {
+        class: "btn btn-flat reason-later",
+        onclick: () => {
+          if (wz.mode === "past") go("recorded");
+          else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
+        },
+      }, wz.mode === "past" ? "Укажу позже" : "Пока не знаю") : null
     );
     return;
   }
 
   if (wz.step === 2) {
-    const tile = (refs.tiles || []).find((t) => t.id === wz.group);
-    const codes = tile ? tile.codes : [];
     fill(main,
       backBtn("К выбору группы", () => { wz.step = 1; render(); }),
       stepLine(2 + offset, total),
       question("Что именно?"),
-      h("div", { class: "tiles" },
-        codes.map((code) => {
-          return h("button", {
-            class: "tile" + (wz.reason === code ? " sel" : ""),
-            onclick: () => { wz.reason = code; wz.step = 3; ui.focusNote = true; render(); },
-          },
-            reasonLabel(code),
-            null
-          );
-        })
-      )
+      reasonChoices(wz, () => { wz.step = 3; render(); })
     );
     return;
   }
@@ -1497,7 +1620,7 @@ function renderReasonWizard(main, view) {
   const must = isOther(wz.reason);
   const needText = h("p", { class: "error-text", text: "Опишите причину своими словами" });
   const upd = () => { needText.hidden = !must || validAction(ta.value); };
-  ta.addEventListener("input", () => { wz.note = ta.value; upd(); });
+  ta.addEventListener("input", () => { wz.note = ta.value; wz.noteEdited = true; upd(); });
   upd();
   const done = (withNote) => {
     if (must && !validAction(ta.value)) { ta.focus(); return; }
@@ -1514,10 +1637,7 @@ function renderReasonWizard(main, view) {
     h("button", { class: "btn primary", onclick: () => done(true) }, restarting ? "Далее" : "Сохранить"),
     must ? null : h("button", { class: "btn", onclick: () => done(false) }, "Без описания")
   );
-  if (ui.focusNote) {
-    ui.focusNote = false;
-    ta.focus();
-  }
+  focusReasonNote(ta);
 }
 
 function finishReasonWizard(rawNote) {
@@ -1746,11 +1866,8 @@ function renderManual(main, view) {
   }
   if (mw.step === 3 || mw.step === 4) {
     const group = mw.step === 3;
-    const tile = (refs.tiles || []).find((t) => t.id === mw.group);
     fill(main, ...top(), question(group ? "Почему стоял?" : "Что именно?"),
-      h("div", { class: "tiles" }, group
-        ? (refs.tiles || []).map((t) => h("button", { class: "tile" + (mw.group === t.id ? " sel" : ""), onclick: () => { mw.group = t.id; next(); } }, t.title))
-        : (tile?.codes || []).map((code) => h("button", { class: "tile" + (mw.reason === code ? " sel" : ""), onclick: () => { mw.reason = code; next(); } }, reasonLabel(code)))));
+      group ? reasonGroups(mw, next) : reasonChoices(mw, next));
     return;
   }
   const action = mw.step === 6;
@@ -1771,12 +1888,13 @@ function renderManual(main, view) {
     error.hidden = !submit.disabled || !touched;
   };
   let touched = !!ta.value;
-  ta.addEventListener("input", () => { touched = true; update(); });
+  ta.addEventListener("input", () => { touched = true; if (!action) mw.noteEdited = true; update(); });
   update();
-  fill(main, ...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Что случилось?"),
+  fill(main, ...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Расскажите своими словами"),
     h("p", { class: "muted", text: reasonLabel(mw.reason) }), ta, error,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit,
-    !must ? h("button", { class: "btn", onclick: () => { mw.note = ""; next(); } }, "Без описания") : null);
+    !must ? h("button", { class: "btn", onclick: () => { mw.note = ""; mw.noteEdited = true; next(); } }, "Без описания") : null);
+  if (!action) focusReasonNote(ta);
 }
 
 function renderManualCheck(main, view) {
