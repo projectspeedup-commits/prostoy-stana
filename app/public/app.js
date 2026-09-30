@@ -17,7 +17,6 @@ const storageName = (name) => DEMO && name !== STORE_KEY ? `demo.${name}` : name
 const STATE_POLL_MS = 30_000;
 const QUEUE_RETRY_MS = 10_000;
 const FETCH_TIMEOUT_MS = 30_000;
-const LONG_STOP_MS = 4 * 3_600_000;
 const NOTE_MAX = 500;
 
 const $ = (id) => document.getElementById(id);
@@ -100,12 +99,11 @@ const ui = {
   bl: null,          // шаг заготовки: {downtimeId, index, custom}
   rec: null,         // экран «Простой записан»: {downtimeId}
   closedInfo: null,  // итоги для экрана «Смена сдана»
-  stillDown: {},     // «Да, в ремонте» нажато: ключи «простой|сутки|номер смены»
   closeAction: null, // черновик «что сделали по ремонту» при сдаче смены: {key, text}
   focusNote: false,  // поставить курсор в поле «своими словами»
   keyError: null,
 };
-const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "stillDown", "closeAction", "fio"];
+const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio"];
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
@@ -1033,7 +1031,7 @@ function scaleFor(view) {
     const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
     if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
     const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
-    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock });
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock, fmtDate: () => fmtDate(fromMs) });
   } catch (e) {
     console.error("Шкала суток:", e);
     return null;
@@ -1206,23 +1204,9 @@ function renderStats(main, view) {
   fill(main, backBtn("На главный экран", () => go("auto")), board(view), metrics());
 }
 
-// Вопрос «Он всё ещё в ремонте?»: после 4 часов простоя, один раз на смену.
-// Ответ помним по простою, суткам и номеру смены (в том же состоянии, что и черновики); на сервер не шлём
+// Ключ простоя в пределах смены: черновик «что сделали по ремонту» относится к своему простою и своей смене
 function stopShiftKey(view) {
   return `${view.open.downtimeId}|${view.shift.day}|${view.shift.shiftNo}`;
-}
-function longStopAsk(view) {
-  if (!view.open || nowMs() - (view.open.since ?? view.open.startMs) <= LONG_STOP_MS) return false;
-  return !ui.stillDown?.[stopShiftKey(view)];
-}
-function confirmStillDown() {
-  const view = buildView();
-  if (!view?.open) return;
-  // Ответы по прежним простоям не копим
-  const own = `${view.open.downtimeId}|`;
-  const kept = Object.fromEntries(Object.entries(ui.stillDown || {}).filter(([k]) => k.startsWith(own)));
-  ui.stillDown = { ...kept, [stopShiftKey(view)]: true };
-  render();
 }
 
 // Что передали прошлые смены по ремонту: текст сдачи смены или пусто
@@ -1257,12 +1241,6 @@ function renderStop(main, view) {
       h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
       h("span", { class: "timer", dataset: { since: String(since) } }, fmtTimer(elapsed))
     ),
-    longStopAsk(view)
-      ? h("div", { class: "banner-warn long-ask" },
-        h("p", { text: "Стан стоит больше 4 часов. Он всё ещё в ремонте?" }),
-        h("button", { class: "btn", onclick: confirmStillDown }, "Да, в ремонте"),
-        h("p", { class: "hint", text: "Если стан уже работает — нажмите «Стан пошёл»" }))
-      : null,
     h("button", {
       class: "btn primary btn-go",
       onclick: () => {
@@ -2307,11 +2285,6 @@ function tick() {
     const since = Number(el.dataset.since);
     el.textContent = el.dataset.fmt === "durs" ? fmtDurSec((now - since) / 1000)
       : el.dataset.fmt === "dur" ? fmtDurMin((now - since) / 60000) : fmtTimer(now - since);
-  }
-  // Простой перевалил за 4 часа или началась новая смена — перерисовать с вопросом «в ремонте?»
-  if (serverState && refs && ui.screen === "auto" && document.querySelector(".stop-grid") && !document.querySelector(".long-ask")) {
-    const view = buildView();
-    if (view && longStopAsk(view)) render();
   }
 }
 
