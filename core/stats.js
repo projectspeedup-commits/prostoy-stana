@@ -64,6 +64,59 @@ function hasText(value) {
   return typeof value === "string" && value.trim() !== "";
 }
 
+// Дежурство бригады: с её shift_open до ближайшего из — следующий приём смены,
+// следующая сдача смены, конец производственной смены, в которой был приём
+function dutyIntervals(events, schedule) {
+  const timed = [];
+  events.forEach((e, index) => {
+    if (e.type !== "shift_open" && e.type !== "shift_close") return;
+    try { timed.push({ e, index, t: toMsValue(e.at) }); } catch { /* пропускаем битое время */ }
+  });
+  timed.sort((a, b) => a.t - b.t || a.index - b.index);
+  const duties = [];
+  timed.forEach(({ e, t }, i) => {
+    if (e.type !== "shift_open") return;
+    const next = timed[i + 1];
+    const endMs = Math.min(next ? next.t : Infinity, shiftOf(t, schedule).endMs);
+    if (endMs > t) duties.push({ startMs: t, endMs, crewId: e.crewId ?? null });
+  });
+  return duties;
+}
+
+// Режет отрезок простоя по дежурствам: кусок в дежурстве — дежурной бригаде,
+// кусок вне любого дежурства — запасной (той, что нажала «Стан встал»)
+function cutByDuty(segment, duties, fallbackCrew) {
+  const pieces = [];
+  const push = (crewId, fromMs, endMs, duty) => {
+    if (endMs > fromMs) pieces.push({ crewId, ms: endMs - fromMs, duty });
+  };
+  let cur = segment.startMs;
+  for (const duty of duties) {
+    if (duty.endMs <= cur) continue;
+    if (duty.startMs >= segment.endMs) break;
+    push(fallbackCrew, cur, duty.startMs, false);
+    const endMs = Math.min(duty.endMs, segment.endMs);
+    push(duty.crewId, Math.max(cur, duty.startMs), endMs, true);
+    cur = endMs;
+  }
+  push(fallbackCrew, cur, segment.endMs, false);
+  return pieces;
+}
+
+// Минуты по строкам так, чтобы сумма совпала с общим итогом (больший остаток получает лишнюю минуту)
+function apportionMinutes(msList, totalMin) {
+  const out = msList.map((ms) => Math.floor(ms / MINUTE));
+  const rest = msList.map((ms, i) => ms - out[i] * MINUTE);
+  let left = totalMin - out.reduce((sum, value) => sum + value, 0);
+  const order = rest.map((_, i) => i).sort((a, b) => rest[b] - rest[a] || a - b);
+  for (const i of order) {
+    if (left <= 0) break;
+    out[i] += 1;
+    left -= 1;
+  }
+  return out;
+}
+
 /** Границы запрошенного периода по производственному расписанию. */
 export function periodRange(period, nowMs, schedule) {
   const now = toMs(nowMs);
@@ -143,17 +196,35 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     groupRow.ids.add(segment.downtimeId);
   }
 
+  // Простой по бригадам: минуты — тому, кто был на посту (дежурство от shift_open),
+  // stops — начатые бригадой в периоде, carried — принятые уже стоящими на своём дежурстве
+  const duties = dutyIntervals(events, refs.settings.schedule);
   const crewRows = new Map();
-  for (const row of visibleByDowntime.values()) {
-    const whole = allByDowntime.get(row.downtimeId);
-    const crewId = whole?.crewId ?? row.crewId ?? null;
-    let crewRow = crewRows.get(crewId);
-    if (!crewRow) {
-      crewRow = { crewId, ms: 0, ids: new Set() };
-      crewRows.set(crewId, crewRow);
+  const crewRow = (crewId) => {
+    let row = crewRows.get(crewId);
+    if (!row) {
+      row = { crewId, ms: 0, stops: 0, carried: 0 };
+      crewRows.set(crewId, row);
     }
-    crewRow.ms += row.segments.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
-    crewRow.ids.add(row.downtimeId);
+    return row;
+  };
+  for (const row of visibleByDowntime.values()) {
+    const whole = allByDowntime.get(row.downtimeId) || row;
+    const stopper = whole.crewId ?? null;
+    // Бригада в простое не записана — начавшей считаем ту, что была на посту в момент остановки
+    const starter = stopper ?? duties.find((d) => d.startMs <= whole.startMs && whole.startMs < d.endMs)?.crewId ?? null;
+    const onDuty = new Set();
+    for (const segment of row.segments) {
+      for (const piece of cutByDuty(segment, duties, stopper)) {
+        crewRow(piece.crewId).ms += piece.ms;
+        if (piece.duty) onDuty.add(piece.crewId);
+      }
+    }
+    const startedHere = whole.startMs >= from;
+    if (startedHere) crewRow(starter).stops += 1;
+    for (const crewId of onDuty) {
+      if (!(startedHere && crewId === starter)) crewRow(crewId).carried += 1;
+    }
   }
 
   const days = [];
@@ -190,6 +261,8 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const rounded = (value) => minutes(value);
   const totalMin = rounded(totalMs);
   const downMin = rounded(downMs);
+  const crewList = [...crewRows.values()];
+  const crewMinutes = apportionMinutes(crewList.map((row) => row.ms), downMin);
   return {
     fromMs: from,
     toMs: to,
@@ -210,7 +283,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     longest: longest && { downtimeId: longest.downtimeId, minutes: rounded(longest.ms), reason: longest.reason, startMs: longest.startMs },
     byReason: [...reasonRows.values()].map((row) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: rounded(row.ms), stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
     byGroup: [...groupRows.values()].map((row) => ({ group: row.group, minutes: rounded(row.ms), stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
-    byCrew: [...crewRows.values()].map((row) => ({ crewId: row.crewId, minutes: rounded(row.ms), stops: row.ids.size })).sort((a, b) => compareRows(a, b, "crewId")),
+    byCrew: crewList.map((row, i) => ({ crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried })).sort((a, b) => compareRows(a, b, "crewId")),
     byDay: days,
     quality: { noReason, noAction, otherShare: downMs ? otherMs / downMs : 0 },
   };

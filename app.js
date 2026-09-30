@@ -95,10 +95,12 @@ const ui = {
   bl: null,          // шаг заготовки: {downtimeId, index, custom}
   rec: null,         // экран «Простой записан»: {downtimeId}
   closedInfo: null,  // итоги для экрана «Смена сдана»
+  stillDown: {},     // «Да, в ремонте» нажато: ключи «простой|сутки|номер смены»
+  closeAction: null, // черновик «что сделали по ремонту» при сдаче смены: {key, text}
   focusNote: false,  // поставить курсор в поле «своими словами»
   keyError: null,
 };
-const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack"];
+const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "stillDown", "closeAction"];
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
@@ -293,6 +295,7 @@ function buildView() {
       note: last && last.note !== undefined ? last.note : null,
       action: last && last.action !== undefined ? last.action : null,
       index: last ? last.index : 0,
+      handovers: Array.isArray(s.open.handovers) ? s.open.handovers.slice() : [],
     };
   }
   const v = {
@@ -364,6 +367,7 @@ function applyEvent(v, e) {
           since: v.open.since ?? v.open.startMs,
           reason: e.reason ?? null,
           note: e.note !== undefined ? e.note : null,
+          handovers: v.open.handovers,
         };
       }
       break;
@@ -415,6 +419,11 @@ function applyEvent(v, e) {
       v.closed = false;
       break;
     case "shift_close":
+      if (v.open && t >= (v.open.since ?? v.open.startMs) &&
+          !(v.open.handovers || []).some((x) => x.at === e.at && x.crewId === (e.crewId ?? null))) {
+        v.open.handovers = [...(v.open.handovers || []),
+          { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, action: e.action ?? null, note: e.note ?? null }];
+      }
       if (v.crew && core.toMs(v.crew.at) > t) break;
       v.crew = null;
       v.closed = true;
@@ -480,6 +489,8 @@ function shiftDowntimes(view) {
       startMs: first.startMs,
       endMs: isOpen ? null : last.endMs,
       open: isOpen,
+      // Начался в прошлую смену: часть продолжения или открытый простой старше начала смены
+      continued: !!first.continued || (isOpen && !!view.open && (view.open.since ?? view.open.startMs) < shift.startMs),
       minutes: Math.round(g.segs.reduce((a, s) => a + ((s.open || s.endMs === null ? nowMs() : s.endMs) - s.startMs), 0) / 60000),
       reason: last.reason ?? null,
       note: last.note ?? null,
@@ -513,6 +524,10 @@ function fmtDate(ms) {
   const d = new Date(ms + off * 60000);
   return String(d.getUTCDate()).padStart(2, "0") + "." + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
+// Начало простоя: если оно раньше начала текущей смены — с датой («28.09 21:12»)
+function fmtSince(ms, shift) {
+  return ms < shift.startMs ? `${fmtDate(ms)} ${fmtClock(ms)}` : fmtClock(ms);
+}
 
 // Работа за смену: от начала смены, а если учёт начался позже — от первой записи.
 // Записей нет совсем — о стане ничего не известно, работу не считаем
@@ -535,7 +550,7 @@ function board(view) {
       h("span", { class: "board-clock", text: fmtClock(nowMs()) }),
       h("span", { class: "board-date", text: `${fmtDate(nowMs())} · Москва` })),
     h("div", { class: "board-state " + (stopped ? "stopped" : "running"),
-      text: stopped ? `Стан стоит с ${fmtClock(view.open.since ?? view.open.startMs)}` : "Стан работает" }),
+      text: stopped ? `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, shift)}` : "Стан работает" }),
     h("div", { class: "board-period muted", text: `${periodLabel(shift)} · с начала периода${refs.demo ? " · демо-данные" : ""}` }),
     h("div", { class: "board-stats" },
       h("div", { class: "board-stat good" }, h("span", { class: "v", text: fmtHM(workMin) }), "работа"),
@@ -563,11 +578,28 @@ function fmtDurMin(min) {
   const m = min % 60;
   return h ? `${h} ч ${m} мин` : `${m} мин`;
 }
-function fmtTimer(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
+// Долгий простой: от суток — «1 сут 10 ч 21 мин», меньше — как fmtDurMin
+function fmtDurLong(min) {
+  min = Math.max(0, Math.round(min));
+  const days = Math.floor(min / 1440);
+  return days ? `${days} сут ${Math.floor((min % 1440) / 60)} ч ${min % 60} мин` : fmtDurMin(min);
+}
+// Сколько работает стан, с секундами: «6 ч 34 мин 12 с», «34 мин 12 с», «12 с»
+function fmtDurSec(sec) {
+  const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const ss = s % 60;
+  return h ? `${h} ч ${m} мин ${ss} с` : m ? `${m} мин ${ss} с` : `${ss} с`;
+}
+function fmtTimer(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  // От суток: «1 сут 02:30:12»
+  if (days) return `${days} сут ${two(h)}:${two(m)}:${two(ss)}`;
   return h ? `${h}:${two(m)}:${two(ss)}` : `${two(m)}:${two(ss)}`;
 }
 function plural(n, one, few, many) {
@@ -923,7 +955,7 @@ function renderRun(main, view) {
   fill(main,
     h("div", { class: "bar green" },
       "Стан работает · ",
-      h("span", { dataset: { since: String(lastStart), fmt: "dur" } }, fmtDurMin((nowMs() - lastStart) / 60000)),
+      h("span", { dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
       h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })
     ),
     h("button", {
@@ -956,6 +988,14 @@ function loadStats(period) {
 }
 const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 100)}%`);
 const mins = (x) => (x === null || x === undefined ? "—" : fmtHM(x));
+// Подпись строки: время · остановки · доля · принят стоящим (у смен, принявших простой уже стоящим)
+function barValue(r, total) {
+  const parts = [fmtHM(r.minutes)];
+  if (r.stops || !r.carried) parts.push(`${r.stops} ост.`);
+  if (total) parts.push(`${Math.round((r.minutes / total) * 100)}%`);
+  if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
+  return parts.join(" · ");
+}
 function barList(title, rows, total, label) {
   if (!rows || !rows.length) return null;
   const max = Math.max(...rows.map((r) => r.minutes), 1);
@@ -964,7 +1004,7 @@ function barList(title, rows, total, label) {
     rows.slice(0, 8).map((r) => h("div", { class: "m-bar" },
       h("div", { class: "m-bar-head" },
         h("span", { class: "m-bar-name", text: label(r) }),
-        h("span", { class: "m-bar-val", text: `${fmtHM(r.minutes)} · ${r.stops} ост.${total ? ` · ${Math.round((r.minutes / total) * 100)}%` : ""}` })),
+        h("span", { class: "m-bar-val", text: barValue(r, total) })),
       h("div", { class: "m-track" }, h("div", { class: "m-fill", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
 }
 function metrics() {
@@ -1039,7 +1079,7 @@ function shiftBlock(view) {
       h("span", null, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))),
     ui.resume ? action("Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
     action("Забыл отметить простой", "Добавить остановку, которая уже закончилась", () => startManualWizard(view.open ? "stop" : "run")),
-    action("Закрыть смену", view.open ? "Проверить записи; стоящий стан перейдёт следующей смене" : "Проверить записи и закрыть смену", () => go("shift")),
+    action("Закрыть смену", view.open ? "Стан не запустится до конца смены? Закройте смену — ремонт продолжит следующая смена" : "Проверить записи и закрыть смену", () => go("shift")),
     action("Простои за смену", `${dts.length} ${plural(dts.length, "простой", "простоя", "простоев")} · ${fmtDurMin(down)} · посмотреть или исправить`, () => go("shift")),
     action("Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
   );
@@ -1048,6 +1088,44 @@ function shiftBlock(view) {
 // Экран «Показатели стана»: табло и метрики за период, доступен в любой момент
 function renderStats(main, view) {
   fill(main, backBtn("На главный экран", () => go("auto")), board(view), metrics());
+}
+
+// Вопрос «Он всё ещё в ремонте?»: после 4 часов простоя, один раз на смену.
+// Ответ помним по простою, суткам и номеру смены (в том же состоянии, что и черновики); на сервер не шлём
+function stopShiftKey(view) {
+  return `${view.open.downtimeId}|${view.shift.day}|${view.shift.shiftNo}`;
+}
+function longStopAsk(view) {
+  if (!view.open || nowMs() - (view.open.since ?? view.open.startMs) <= LONG_STOP_MS) return false;
+  return !ui.stillDown?.[stopShiftKey(view)];
+}
+function confirmStillDown() {
+  const view = buildView();
+  if (!view?.open) return;
+  // Ответы по прежним простоям не копим
+  const own = `${view.open.downtimeId}|`;
+  const kept = Object.fromEntries(Object.entries(ui.stillDown || {}).filter(([k]) => k.startsWith(own)));
+  ui.stillDown = { ...kept, [stopShiftKey(view)]: true };
+  render();
+}
+
+// Что передали прошлые смены по ремонту: текст сдачи смены или пусто
+function handoverText(item) {
+  return typeof item?.action === "string" ? item.action.trim() : "";
+}
+// Карточка «Ремонт по сменам»: три последние передачи, новая сверху. Только для чтения
+function renderHandoverCard(open) {
+  const list = (open.handovers || []).slice(-3).reverse();
+  if (!list.length) return null;
+  return h("div", { class: "card" },
+    h("div", { class: "card-title", text: "Ремонт по сменам" }),
+    list.map((x) => {
+      const at = core.toMs(x.at);
+      const text = handoverText(x);
+      return h("div", null,
+        h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personName(x.personId)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
+        h("div", { class: "card-note", text: text ? `«${text}»` : "без записи" }));
+    }));
 }
 
 // Экран «Стан стоит»
@@ -1059,12 +1137,15 @@ function renderStop(main, view) {
 
   const left = h("div", null,
     h("div", { class: "bar red" },
-      `Стан стоит с ${fmtClock(since)}`,
+      `Стан стоит с ${fmtSince(since, view.shift)}`,
       h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
       h("span", { class: "timer", dataset: { since: String(since) } }, fmtTimer(elapsed))
     ),
-    elapsed > LONG_STOP_MS
-      ? h("div", { class: "banner-warn", text: "Стан всё ещё стоит? Если уже работает — нажмите зелёную кнопку" })
+    longStopAsk(view)
+      ? h("div", { class: "banner-warn long-ask" },
+        h("p", { text: "Стан стоит больше 4 часов. Он всё ещё в ремонте?" }),
+        h("button", { class: "btn", onclick: confirmStillDown }, "Да, в ремонте"),
+        h("p", { class: "hint", text: "Если стан уже работает — нажмите «Стан пошёл»" }))
       : null,
     h("button", {
       class: "btn primary btn-go",
@@ -1110,7 +1191,7 @@ function renderStop(main, view) {
     );
   }
 
-  fill(main, h("div", { class: "stop-grid" }, left, card), shiftBlock(view));
+  fill(main, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view));
 }
 
 function restartBack() {
@@ -1342,6 +1423,8 @@ function renderRestartAction(main, view) {
   ta.addEventListener("input", () => { touched = true; update(); });
   update();
   const total = rw.route === "reason" ? 4 : 2;
+  // Что по этому простою уже сделали прошлые смены (последние три записи)
+  const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
   fill(main,
     backBtn(rw.route === "reason" ? "К описанию причины" : "К причине", () => {
       if (rw.route === "reason") { ui.wz.step = 3; go("reason"); }
@@ -1351,6 +1434,9 @@ function renderRestartAction(main, view) {
     question("Что сделали, чтобы запустить стан?"),
     h("p", { class: "muted", text: `Время пуска: ${fmtClock(rw.startMs)} МСК — по первому нажатию` }),
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(rw.reason) })),
+    earlier.length ? h("div", { class: "earlier" },
+      h("p", { class: "hint", text: "Раньше по этому простою:" }),
+      earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
     ta,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
     error,
@@ -1378,7 +1464,8 @@ function finishRestart(rawAction) {
     } });
   }
   events.push({ type: "start", fields: { downtimeId: rw.downtimeId, action, at } });
-  ui.rec = { downtimeId: rw.downtimeId };
+  const openNow = buildView().open;
+  ui.rec = { downtimeId: rw.downtimeId, sinceMs: openNow.since ?? openNow.startMs, endMs: rw.startMs };
   ui.rw = null;
   ui.wz = null;
   ui.screen = "recorded";
@@ -1553,13 +1640,17 @@ function renderRecorded(main, view) {
   const original = list.map((r) => r.event);
   const action = d ? d.action : original.findLast((e) => e.action !== undefined)?.action;
   const note = d ? d.note : original.findLast((e) => e.note !== undefined)?.note;
+  // Простой начался до этой смены — показываем его целиком и отдельно часть этой смены
+  const longRec = Number.isFinite(ui.rec.sinceMs) && Number.isFinite(ui.rec.endMs) && ui.rec.sinceMs < view.shift.startMs;
   fill(main, question(status),
     h("p", { class: "muted", text: status === "Принято сервером" ? "Запись простоя принята."
       : status === "Нужно исправить" ? "Сервер не принял часть записи. Ответы сохранены ниже."
       : status === "На планшете не сохранено" ? "Не закрывайте страницу. Повторите сохранение."
       : "Запись уйдёт сама, когда появится связь. Можно продолжать работу." }),
     h("div", { class: "card" },
-      d ? h("div", { class: "card-title", text: `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }) : null,
+      d && longRec ? h("div", { class: "card-title", text: `${fmtDate(ui.rec.sinceMs)} ${fmtClock(ui.rec.sinceMs)} – ${fmtDate(ui.rec.endMs)} ${fmtClock(ui.rec.endMs)} · ${fmtDurLong((ui.rec.endMs - ui.rec.sinceMs) / 60000)}` }) : null,
+      d && longRec ? h("div", { class: "card-line", text: `В эту смену: ${fmtDurMin(d.minutes)}` }) : null,
+      d && !longRec ? h("div", { class: "card-title", text: `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }) : null,
       h("div", { class: "card-line", text: reasonLabel(d?.reason || original.findLast((e) => e.reason)?.reason) }),
       h("div", { class: "card-note", text: `Что случилось: ${note || "не указано"}` }),
       h("div", { class: "card-note", text: `Что сделали: ${action || "не указано"}` })),
@@ -1598,18 +1689,19 @@ function renderShift(main, view) {
     view.open ? h("p", { class: "handover-note", text: "Стан стоит. После закрытия смены простой продолжится у следующей смены. Пуск отмечать не нужно." }) : null,
     gaps.length ? h("p", { class: "handover-note", text: `Нужно дополнить записи: ${gaps.length}. Откройте их ниже или закройте смену с пометкой.` }) : null,
     h("h2", { text: "Простои смены" }),
-    dts.length ? h("div", { class: "segs" }, dts.map(downtimeRow)) : h("p", { class: "muted", text: "Простоев не было." }),
+    dts.length ? h("div", { class: "segs" }, dts.map((d) => downtimeRow(d, view.shift))) : h("p", { class: "muted", text: "Простоев не было." }),
     h("button", { class: "btn", onclick: () => startManualWizard("shift") }, "Забыл отметить простой"),
     h("button", { class: "btn primary", disabled: view.closed || !view.crew, onclick: () => go("closeConfirm") }, "Перейти к закрытию смены"));
 }
 
-function downtimeRow(d) {
+function downtimeRow(d, shift) {
   const missing = d.open ? [] : [...new Set(d.segs.flatMap(missingFields))];
   return h("button", { class: "seg" + (d.open ? " open" : ""), onclick: () => openDetail(d.downtimeId) },
-    h("span", { class: "when", text: `${fmtClock(d.startMs)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
+    h("span", { class: "when", text: `${fmtSince(d.startMs, shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
     h("span", null,
       h("span", { class: "why", text: reasonLabel(d.reason) || "Причина не указана" }),
       d.segs.length > 1 ? h("span", { class: "manual-tag", text: `Причина менялась · частей: ${d.segs.length}` }) : null,
+      d.continued ? h("span", { class: "manual-tag", text: "Начался в прошлую смену" }) : null,
       d.open ? h("span", { class: "manual-tag", text: "Простой продолжается · передаётся следующей смене" }) : null,
       missing.length ? h("span", { class: "badge-need", text: "Дополнить: " + missing.join(", ") }) : null,
       h("span", { class: "manual-tag", text: "Открыть запись" })),
@@ -1714,17 +1806,40 @@ function renderBillet(main, view) {
     } }, "Сохранить"));
 }
 
+// Черновик «что сделали по ремонту» относится к своему простою и своей смене
+function closeActionDraft(view) {
+  const d = ui.closeAction;
+  return view.open && d && d.key === stopShiftKey(view) && typeof d.text === "string" ? d.text : "";
+}
 function renderCloseConfirm(main, view) {
   const gaps = handoverGaps(view);
   const trouble = records.filter((r) => r.status === "rejected").length;
+  let repairWorkField = null;
+  if (view.open) {
+    const ta = h("textarea", {
+      class: "note-input",
+      id: "close-action",
+      rows: "4",
+      maxlength: String(NOTE_MAX),
+      placeholder: "Например: сняли редуктор, ждём подшипник со склада",
+    });
+    ta.value = closeActionDraft(view);
+    ta.addEventListener("input", () => { ui.closeAction = { key: stopShiftKey(view), text: ta.value }; });
+    repairWorkField = [
+      h("label", { for: "close-action", text: "Что сделали по ремонту за смену и что осталось?" }),
+      ta,
+      h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
+    ];
+  }
   fill(main, backBtn("К итогу смены", () => go("shift")), question("Закрыть смену?"),
-    h("p", { text: view.open ? "Стан стоит. Простой передадим следующей смене без пуска. Запись о выполненных работах сейчас не обязательна."
+    h("p", { text: view.open ? "Стан стоит. Простой перейдёт следующей смене, пуск отмечать не нужно. Напишите, что успели сделать по ремонту, — следующей смене будет проще."
       : "Стан работает. Закроем смену с записанными итогами." }),
     gaps.length ? h("div", { class: "handover-note" },
       h("p", { text: "Есть незаполненные записи. Дополните их или закройте смену с пометкой — ничего выдумывать не нужно." }),
       gaps.map((s) => h("button", { class: "btn", onclick: () => openDetail(s.downtimeId, s.index) },
         `${fmtClock(s.startMs)} · дополнить: ${s.missing.join(", ")}`))) : h("p", { class: "muted", text: "У закрытых простоев указаны причина и выполненные работы." }),
     trouble ? h("p", { class: "error-text", text: `Есть записи, которые сервер не принял: ${trouble}. Они останутся на планшете для исправления.` }) : null,
+    repairWorkField,
     h("button", { class: "btn primary", disabled: !view.crew || view.closed, onclick: () => doCloseShift(gaps.length > 0 || trouble > 0) },
       gaps.length || trouble ? "Закрыть смену с пометкой" : "Закрыть смену"));
 }
@@ -1738,7 +1853,9 @@ function shiftCloseEvents(view, withGaps) {
     gaps.map((s) => `${fmtClock(s.startMs)}: ${s.missing.join(", ")}`).join("; "));
   const rejected = records.filter((r) => r.status === "rejected").length;
   if (rejected) lines.push(`Не приняты сервером записи: ${rejected}. Требуется исправление на планшете.`);
-  return [{ type: "shift_close", fields: { note: lines.join(" ").slice(0, NOTE_MAX) } }];
+  // Что сделали по ремонту: необязательно; пустое не отправляем
+  const action = view.open ? closeActionDraft(view).trim().slice(0, NOTE_MAX) : "";
+  return [{ type: "shift_close", fields: { note: lines.join(" ").slice(0, NOTE_MAX), ...(action ? { action } : {}) } }];
 }
 function doCloseShift(withGaps = false) {
   const view = buildView();
@@ -1749,9 +1866,10 @@ function doCloseShift(withGaps = false) {
   const downMin = sum.plannedMinutes + sum.unplannedMinutes + sum.shortMinutes;
   const workMin = shiftWorkMin(view, downMin);
   ui.closedInfo = { workMin, downMin, stops: shiftDowntimes(view).length, open: !!view.open,
-    note: events[0].fields.note, gaps: handoverGaps(view), at: nowMs() };
+    note: events[0].fields.note, action: events[0].fields.action || "", gaps: handoverGaps(view), at: nowMs() };
   ui.screen = "closed";
   ui.resume = null;
+  ui.closeAction = null;
   const sent = sendBatch(events);
   ui.closedInfo.eventIds = sent.map((e) => e.id);
   persistClient();
@@ -1768,6 +1886,9 @@ function renderClosed(main, view) {
       h("div", { class: "stat good" }, "Работа", h("span", { class: "v", text: fmtDurMin(info.workMin) })),
       h("div", { class: "stat bad" }, "Простои", h("span", { class: "v", text: `${info.stops} · ${fmtDurMin(info.downMin)}` }))) : null,
     info?.note ? h("p", { class: "handover-note", text: info.note }) : null,
+    info?.action ? h("div", { class: "card" },
+      h("div", { class: "card-title", text: "Передали по ремонту" }),
+      h("div", { class: "card-note", text: `«${info.action}»` })) : null,
     info?.open ? h("p", { class: "muted", text: "Следующий работник примет смену со стоящим станом. Простой продолжается." }) : null,
     h("button", { class: "btn primary", onclick: () => { ui.crewId = null; ui.crewBack = false; go("crew"); } }, "Принять смену"));
 }
@@ -1882,14 +2003,13 @@ function tick() {
   for (const el of document.querySelectorAll(".board-clock")) el.textContent = fmtClock(now);
   for (const el of document.querySelectorAll("[data-since]")) {
     const since = Number(el.dataset.since);
-    el.textContent = el.dataset.fmt === "dur" ? fmtDurMin((now - since) / 60000) : fmtTimer(now - since);
+    el.textContent = el.dataset.fmt === "durs" ? fmtDurSec((now - since) / 1000)
+      : el.dataset.fmt === "dur" ? fmtDurMin((now - since) / 60000) : fmtTimer(now - since);
   }
-  // Простой перевалил за 4 часа — перерисовать с плашкой
-  if (serverState && refs && ui.screen === "auto") {
+  // Простой перевалил за 4 часа или началась новая смена — перерисовать с вопросом «в ремонте?»
+  if (serverState && refs && ui.screen === "auto" && document.querySelector(".stop-grid") && !document.querySelector(".long-ask")) {
     const view = buildView();
-    if (view && view.open && now - (view.open.since ?? view.open.startMs) > LONG_STOP_MS && !document.querySelector(".banner-warn")) {
-      render();
-    }
+    if (view && longStopAsk(view)) render();
   }
 }
 

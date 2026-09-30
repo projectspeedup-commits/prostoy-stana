@@ -97,13 +97,23 @@ function computeState() {
   segments.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
 
   const openSegs = built.open ? segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
+  // Начало всего простоя (не последнего отрезка) — как у сервера
+  const openStartMs = built.open
+    ? Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs))
+    : null;
   const dayParts = allParts.filter((p) => p.day === shift.day);
   const summary = core.summarizeDay(dayParts, shiftsOfDay(shift.day, schedule), {});
 
   return {
     running: !built.open,
     open: built.open
-      ? { downtimeId: built.open.downtimeId, startMs: built.open.startMs, segments: openSegs }
+      ? {
+        downtimeId: built.open.downtimeId,
+        startMs: openStartMs,
+        segments: openSegs,
+        // Что передали прошлые смены по ремонту, как у сервера
+        handovers: core.handoversSince(events, openStartMs),
+      }
       : null,
     shift,
     crew,
