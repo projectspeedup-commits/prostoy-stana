@@ -106,6 +106,82 @@ if (process.env.STATS_TZ_CHILD === "1") {
     if (results.includes(null)) return;
     assert.equal(results[0], results[1]);
   });
+
+  const crewRow = (result, crewId) => result.byCrew.find((row) => row.crewId === crewId);
+  const sumCrew = (result) => result.byCrew.reduce((sum, row) => sum + row.minutes, 0);
+
+  test("byCrew: простой, начатый Сменой 1, делится с бригадой, принявшей смену стоящим", () => {
+    const result = stats([
+      { id: "o1", type: "shift_open", at: "2026-01-01T09:00:00Z", crewId: "1", personId: "p1" },
+      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d", reason: "U1", crewId: "1", personId: "p1" },
+      { id: "o2", type: "shift_open", at: "2026-01-01T12:00:00Z", crewId: "2", personId: "p4" },
+      { id: "e", type: "start", at: "2026-01-01T15:00:00Z", downtimeId: "d", action: "заменили", crewId: "2", personId: "p4" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.equal(result.downMin, 300);
+    assert.deepEqual(crewRow(result, "1"), { crewId: "1", minutes: 120, stops: 1, carried: 0 });
+    assert.deepEqual(crewRow(result, "2"), { crewId: "2", minutes: 180, stops: 0, carried: 1 });
+    assert.equal(sumCrew(result), result.downMin);
+  });
+
+  test("byCrew: сдача смены и конец производственной смены обрывают дежурство", () => {
+    // Сдача: Смена 1 держит пост с 09:00 до 11:00, до приёма Смены 2 (13:00) простой остаётся за нажавшей
+    const closed = stats([
+      { id: "o1", type: "shift_open", at: "2026-01-01T09:00:00Z", crewId: "1", personId: "p1" },
+      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d", crewId: "1", personId: "p1" },
+      { id: "c", type: "shift_close", at: "2026-01-01T11:00:00Z", crewId: "1", personId: "p1", action: "ждём подшипник" },
+      { id: "o2", type: "shift_open", at: "2026-01-01T13:00:00Z", crewId: "2", personId: "p4" },
+      { id: "e", type: "start", at: "2026-01-01T14:00:00Z", downtimeId: "d", action: "заменили" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.equal(crewRow(closed, "1").minutes, 180);
+    assert.equal(crewRow(closed, "2").minutes, 60);
+    assert.equal(sumCrew(closed), closed.downMin);
+    // Ночная смена кончается в 05:00 UTC (08:00 по Москве) — приём в 00:00 не тянется дальше
+    const night = stats([
+      { id: "o1", type: "shift_open", at: "2026-01-01T00:00:00Z", crewId: "1", personId: "p1" },
+      { id: "s", type: "stop", at: "2026-01-01T04:00:00Z", downtimeId: "d", crewId: "1", personId: "p1" },
+      { id: "o2", type: "shift_open", at: "2026-01-01T06:00:00Z", crewId: "2", personId: "p4" },
+      { id: "e", type: "start", at: "2026-01-01T08:00:00Z", downtimeId: "d", action: "заменили" },
+    ], "2026-01-01T00:00:00Z", "2026-01-01T12:00:00Z");
+    assert.equal(crewRow(night, "1").minutes, 120);
+    assert.equal(crewRow(night, "2").minutes, 120);
+    assert.equal(crewRow(night, "2").stops, 0);
+    assert.equal(sumCrew(night), night.downMin);
+  });
+
+  test("byCrew: простой, начатый до периода, у принявшей смену бригады — принят стоящим, без остановок", () => {
+    const result = stats([
+      { id: "o1", type: "shift_open", at: "2025-12-31T21:00:00Z", crewId: "1", personId: "p1" },
+      { id: "s", type: "stop", at: "2025-12-31T22:00:00Z", downtimeId: "d", crewId: "1", personId: "p1" },
+      { id: "o2", type: "shift_open", at: "2026-01-01T05:00:00Z", crewId: "2", personId: "p4" },
+      { id: "e", type: "start", at: "2026-01-01T09:00:00Z", downtimeId: "d", action: "заменили" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.deepEqual(result.byCrew, [{ crewId: "2", minutes: 240, stops: 0, carried: 1 }]);
+    assert.equal(result.downMin, 240);
+  });
+
+  test("byCrew: без единого shift_open простой целиком у бригады, нажавшей «Стан встал»", () => {
+    const result = stats([
+      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d", reason: "U1", crewId: "1" },
+      { id: "x", type: "split", at: "2026-01-01T11:00:00Z", downtimeId: "d", reason: "U2", crewId: "2" },
+      { id: "e", type: "start", at: "2026-01-01T12:00:00Z", downtimeId: "d", action: "заменили", crewId: "2" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.deepEqual(result.byCrew, [{ crewId: "1", minutes: 120, stops: 1, carried: 0 }]);
+    const noCrew = stats([
+      { id: "m", type: "manual", from: "2026-01-01T08:00:00Z", to: "2026-01-01T09:00:00Z", at: "2026-01-01T08:00:00Z", reason: "U1" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.deepEqual(noCrew.byCrew, [{ crewId: null, minutes: 60, stops: 1, carried: 0 }]);
+  });
+
+  test("byCrew: сумма минут равна общему простою и при долях минуты", () => {
+    const result = stats([
+      { id: "o1", type: "shift_open", at: "2026-01-01T09:00:00Z", crewId: "1", personId: "p1" },
+      { id: "s", type: "stop", at: "2026-01-01T10:00:20Z", downtimeId: "d", crewId: "1", personId: "p1" },
+      { id: "o2", type: "shift_open", at: "2026-01-01T12:00:40Z", crewId: "2", personId: "p4" },
+      { id: "e", type: "start", at: "2026-01-01T14:00:50Z", downtimeId: "d", action: "заменили" },
+    ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
+    assert.equal(result.downMin, 241);
+    assert.equal(sumCrew(result), result.downMin);
+  });
 }
 
 if (process.env.STATS_TZ_CHILD !== "1") test("computeStats: время до первого события не считается работой", async () => {

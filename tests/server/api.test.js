@@ -245,3 +245,75 @@ test("state: dataFromMs — начало учёта, у ручного прос�
     await app.close();
   }
 });
+
+test("events: ремонт через смены — shift_close с action виден новой смене, пуск закрывает один простой", async () => {
+  const { app, base } = await start();
+  try {
+    const action = "сняли редуктор, ждём подшипник со склада";
+    // Старая сдача смены до простоя в передачи не попадает
+    await postEvents(base, [
+      { id: "old-close", type: "shift_close", at: "2025-12-31T16:59:00Z", crewId: "3", personId: "p7", action: "до простоя" },
+      { id: "open-1", type: "shift_open", at: "2025-12-31T17:30:00Z", crewId: "1", personId: "p1" },
+      { id: "stop-1", type: "stop", at: "2025-12-31T23:00:00Z", downtimeId: "d1" },
+    ]);
+    // Сдача смены при стоящем стане: бригада и человек берутся из приёма смены
+    const closed = await postEvents(base, [
+      { id: "close-1", type: "shift_close", at: "2026-01-01T04:50:00Z", action, note: "Стан стоит." },
+    ]);
+    assert.deepEqual(closed.body.rejected, []);
+    assert.equal(closed.body.state.running, false);
+    assert.equal(closed.body.state.open.downtimeId, "d1");
+    assert.deepEqual(closed.body.state.open.handovers, [
+      { at: "2026-01-01T04:50:00Z", crewId: "1", personId: "p1", action, note: "Стан стоит." },
+    ]);
+    // Другая бригада принимает смену: стан стоит, передача на месте, простой не менялся
+    const opened = await postEvents(base, [
+      { id: "open-2", type: "shift_open", at: "2026-01-01T05:10:00Z", crewId: "2", personId: "p4" },
+    ]);
+    const { state } = opened.body;
+    assert.equal(state.running, false);
+    assert.equal(state.crew.crewId, "2");
+    assert.equal(state.open.downtimeId, "d1");
+    assert.equal(state.open.startMs, Date.parse("2025-12-31T23:00:00Z"));
+    assert.equal(state.open.handovers.length, 1);
+    assert.equal(state.open.handovers[0].action, action);
+    const fromState = await fetch(`${base}/api/state`, { headers: HEAD }).then((r) => r.json());
+    assert.deepEqual(fromState.state.open.handovers, state.open.handovers);
+    // Новая бригада указывает причину и пускает стан: это тот же простой, а не новый
+    const done = await postEvents(base, [
+      { id: "reason-1", type: "reason", at: "2026-01-01T05:30:00Z", downtimeId: "d1", reason: "В-М-01", crewId: "2", personId: "p4" },
+      { id: "start-1", type: "start", at: "2026-01-01T11:00:00Z", downtimeId: "d1", action: "заменили подшипник", crewId: "2", personId: "p4" },
+    ]);
+    assert.deepEqual(done.body.rejected, []);
+    assert.equal(done.body.state.running, true);
+    assert.equal(done.body.state.open, null);
+    const own = done.body.state.segments.filter((x) => x.downtimeId === "d1");
+    assert.equal(own.length, 1);
+    assert.equal(own[0].reason, "В-М-01");
+    assert.equal(own[0].action, "заменили подшипник");
+    // action из shift_close в простой не попал
+    assert.notEqual(own[0].action, action);
+    // Итоги суток: один простой, минуты — тому, кто был на посту
+    const stats = (await fetch(`${base}/api/stats?period=day`, { headers: HEAD }).then((r) => r.json())).stats;
+    assert.equal(stats.stops, 1);
+    assert.equal(stats.downMin, 360);
+    assert.deepEqual(stats.byCrew.find((row) => row.crewId === "2"), { crewId: "2", minutes: 350, stops: 0, carried: 1 });
+    assert.equal(stats.byCrew.reduce((sum, row) => sum + row.minutes, 0), stats.downMin);
+  } finally {
+    await app.close();
+  }
+});
+
+test("events: shift_close с action длиннее 500 знаков отклоняется, ровно 500 принимается", async () => {
+  const { app, base } = await start();
+  try {
+    const { body } = await postEvents(base, [
+      { id: "c-ok", type: "shift_close", at: "2026-01-01T11:00:00Z", crewId: "1", action: "а".repeat(500) },
+      { id: "c-long", type: "shift_close", at: "2026-01-01T11:01:00Z", crewId: "1", action: "а".repeat(501) },
+    ]);
+    assert.deepEqual(body.saved, ["c-ok"]);
+    assert.deepEqual(body.rejected, [{ id: "c-long", error: "bad_request" }]);
+  } finally {
+    await app.close();
+  }
+});

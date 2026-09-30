@@ -1,4 +1,4 @@
-import { buildDowntimes, classify, DEFAULT_SCHEDULE, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
+import { buildDowntimes, classify, DEFAULT_SCHEDULE, handoversSince, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
 
 const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
 const MINUTE = 60_000;
@@ -117,12 +117,15 @@ export function createEventStore(db) {
       .filter((p) => p.day === shift.day && p.shiftNo === shift.shiftNo)
       .map((p) => ({ ...p, ...classify(p, refs, refs.settings) }));
     const openSegments = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
+    const openStartMs = built.open ? Math.min(...openSegments.map((s) => s.startMs)) : null;
     return {
       running: built.open === null,
       open: built.open ? {
         downtimeId: built.open.downtimeId,
-        startMs: Math.min(...openSegments.map((s) => s.startMs)),
+        startMs: openStartMs,
         segments: openSegments,
+        // Что передали прошлые смены по ремонту: все сдачи смены с начала этого простоя
+        handovers: handoversSince(events, openStartMs),
       } : null,
       shift,
       crew: lastCrew ? { crewId: lastCrew.crewId ?? null, personId: lastCrew.personId ?? null, at: lastCrew.at } : null,

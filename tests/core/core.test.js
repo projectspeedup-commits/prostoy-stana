@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_SCHEDULE, shiftOf, splitByShifts, buildDowntimes, classify, summarizeDay, workIntervals,
+  DEFAULT_SCHEDULE, shiftOf, splitByShifts, buildDowntimes, classify, summarizeDay, workIntervals, handoversSince,
 } from "../../app/core/core.js";
 
 // Московское время 2026 года -> мс UTC (по умолчанию сентябрь)
@@ -211,4 +211,41 @@ test("buildDowntimes: start сохраняет, что сделали для п�
   assert.equal(r.segments[0].action, "заменили ножи");
   assert.equal(r.segments[0].note, "ножи тупые");
   assert.equal(r.segments[0].endMs, Date.parse("2026-09-28T10:14:00+03:00"));
+});
+
+test("buildDowntimes: action из shift_close не попадает в простой", () => {
+  const events = [
+    { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d", reason: "В-М-03" },
+    { id: "b", type: "shift_close", at: "2026-09-28T19:50:00+03:00", crewId: "1", action: "сняли редуктор, ждём подшипник", note: "Стан стоит." },
+  ];
+  // Простой ещё открыт: передача смены его не закрывает и текст в него не пишет
+  const open = buildDowntimes(events, Date.parse("2026-09-28T21:00:00+03:00"));
+  assert.equal(open.open?.downtimeId, "d");
+  assert.equal(open.segments.length, 1);
+  assert.equal(open.segments[0].action, null);
+  assert.equal(open.segments[0].note, null);
+  assert.deepEqual(open.ignored, ["b"]);
+  // После пуска у простоя только то, что сказано в start
+  const closed = buildDowntimes([
+    ...events,
+    { id: "c", type: "start", at: "2026-09-29T09:00:00+03:00", downtimeId: "d", action: "заменили подшипник" },
+  ], Date.parse("2026-09-29T12:00:00+03:00"));
+  assert.equal(closed.segments.length, 1);
+  assert.equal(closed.segments[0].action, "заменили подшипник");
+  assert.equal(closed.segments[0].note, null);
+});
+
+test("handoversSince: сдачи смены не раньше начала простоя, по возрастанию времени", () => {
+  const events = [
+    { id: "x0", type: "shift_close", at: "2026-09-28T08:00:00+03:00", crewId: "1", action: "до простоя" },
+    { id: "s", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d" },
+    { id: "x2", type: "shift_close", at: "2026-09-29T08:00:00+03:00", crewId: "2", personId: "p4", action: "ждём подшипник", note: "Стан стоит." },
+    { id: "x1", type: "shift_close", at: "2026-09-28T20:00:00+03:00", crewId: "1", personId: "p1" },
+    { id: "o", type: "shift_open", at: "2026-09-28T20:05:00+03:00", crewId: "2", personId: "p4" },
+  ];
+  const list = handoversSince(events, msk(28, 10));
+  assert.deepEqual(list.map((x) => x.crewId), ["1", "2"]);
+  assert.deepEqual(list[0], { at: "2026-09-28T20:00:00+03:00", crewId: "1", personId: "p1", action: null, note: null });
+  assert.equal(list[1].action, "ждём подшипник");
+  assert.deepEqual(handoversSince(events, msk(30, 0)), []);
 });

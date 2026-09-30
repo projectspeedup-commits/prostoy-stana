@@ -223,6 +223,18 @@ export function buildDowntimes(events, nowMs) {
   return { segments, ignored, open: openSeg };
 }
 
+/**
+ * Передачи смены для открытого простоя: все shift_close не раньше начала простоя,
+ * по возрастанию времени. Только читает события — на расчёт простоев не влияет
+ * (action из shift_close не попадает в простой).
+ */
+export function handoversSince(events, sinceMs) {
+  return events
+    .filter((e) => e.type === "shift_close" && toMs(e.at) >= sinceMs)
+    .sort((a, b) => toMs(a.at) - toMs(b.at))
+    .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, action: e.action ?? null, note: e.note ?? null }));
+}
+
 /** Режим и группа отрезка. */
 export function classify(segment, refs, settings) {
   const reason = segment.reason;
