@@ -1,4 +1,4 @@
-import { buildDowntimes, classify, DEFAULT_SCHEDULE, handoversSince, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
+import { buildDowntimes, classify, DEFAULT_SCHEDULE, eventTimeError, handoversSince, lastRunningMs, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
 
 const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
 const MINUTE = 60_000;
@@ -78,6 +78,11 @@ export function createEventStore(db) {
           reject("overlap");
           continue;
         }
+        const timeError = eventTimeError(accepted, event, receivedMs);
+        if (timeError) {
+          reject(timeError);
+          continue;
+        }
         const stored = { ...event, device: event.device ?? device };
         // Кто нажал: если устройство не прислало бригаду и человека,
         // берём их из последнего приёма смены в той же смене.
@@ -133,6 +138,7 @@ export function createEventStore(db) {
       summary: summarizeDay(segments, [shift], { [shift.shiftNo]: ownEvents.length > 0 || !!ping }),
       closed: ownEvents.some((e) => e.type === "shift_close"),
       dataFromMs: firstEventMs(events),
+      runningSinceMs: lastRunningMs(events, nowMs),
     };
   }
 
