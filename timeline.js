@@ -1,7 +1,8 @@
 // Шкала суток: 48 ячеек по 30 минут, состояние стана цветом.
 // ES-модуль без зависимостей. Стили — только классами из timeline.css,
-// размеры цветных частей — через el.style.flexBasis (работает в обеих
-// ориентациях: в строке это ширина, в столбике — высота).
+// размеры цветных частей и положение метки «сейчас» — через el.style
+// (flexBasis у частей, --nowpos у черты и плашки): работает в обеих
+// ориентациях, атрибут style не используется.
 
 const STATES = [
   ["work", "работа"],
@@ -39,14 +40,18 @@ function detailsText(cell, fmtClock) {
   return range + ": " + parts.join(", ");
 }
 
-export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock }) {
+export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDate }) {
+  const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
+
   const root = document.createElement("section");
   root.className = "day-scale";
   root.setAttribute("aria-label", "Состояние стана за сутки");
 
   const title = document.createElement("h2");
   title.className = "day-scale__title";
-  title.textContent = "Сутки по 30 минут";
+  title.textContent = fmtDate
+    ? "Сутки " + fmtDate(cells[0].startMs) + " по 30 минут"
+    : "Сутки по 30 минут";
   root.appendChild(title);
 
   const rows = document.createElement("div");
@@ -60,32 +65,41 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock }) {
   let selected = null;
 
   cells.forEach((cell) => {
-    // Черта границы смены — перед ячейкой, с которой начинается новая смена.
-    if (cell.startMs === shiftToMs) {
-      const line = document.createElement("div");
-      line.className = "ds-shift";
-      const lineLabel = document.createElement("span");
-      lineLabel.className = "ds-shift__label";
-      lineLabel.textContent = "Смена 2";
-      line.appendChild(lineLabel);
-      rows.appendChild(line);
+    const clock = fmtClock(cell.startMs);
+    const isHour = clock.slice(3) === "00";
+    const hour = parseInt(clock.slice(0, 2), 10);
+
+    // Заголовок смены — перед строками 08:00 и 20:00.
+    if (isHour && (hour === 8 || hour === 20)) {
+      const header = document.createElement("div");
+      header.className = "ds-shift";
+      if (cell.startMs <= nowMs && nowMs < cell.startMs + shiftLen) {
+        header.classList.add("ds-shift--active");
+      }
+      const name = document.createElement("span");
+      name.className = "ds-shift__name";
+      name.textContent = hour === 8 ? "Смена 1" : "Смена 2";
+      header.appendChild(name);
+      const times = document.createElement("span");
+      times.className = "ds-shift__times";
+      times.textContent = "· " + clock + "–" + fmtClock(cell.startMs + shiftLen);
+      header.appendChild(times);
+      rows.appendChild(header);
     }
 
     const row = document.createElement("button");
     row.type = "button";
     row.className = "ds-row";
 
-    const clock = fmtClock(cell.startMs);
-    const isHour = clock.slice(3) === "00";
     if (isHour) {
       row.classList.add("ds-row--tick");
-      const hour = parseInt(clock.slice(0, 2), 10);
       if (hour % 4 === 0) row.classList.add("ds-row--tick4");
+    } else {
+      row.classList.add("ds-row--half");
     }
     if (cell.future) row.classList.add("ds-row--future");
-    if (cell.startMs <= nowMs && nowMs < cell.endMs) {
-      row.classList.add("ds-row--now");
-    }
+    const isNow = cell.startMs <= nowMs && nowMs < cell.endMs;
+    if (isNow) row.classList.add("ds-row--now");
 
     const text = detailsText(cell, fmtClock);
     row.title = text;
@@ -108,6 +122,23 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock }) {
         track.appendChild(seg);
       }
     }
+
+    // Метка текущего времени: черта поперёк полосы в точной доле ячейки
+    // и плашка с часами слева (в горизонтали — над столбиком).
+    if (isNow) {
+      const len = Math.max(1, cell.endMs - cell.startMs);
+      const pos = Math.min(1, Math.max(0, (nowMs - cell.startMs) / len)) * 100 + "%";
+      const line = document.createElement("span");
+      line.className = "ds-nowline";
+      line.style.setProperty("--nowpos", pos);
+      track.appendChild(line);
+      const badge = document.createElement("span");
+      badge.className = "ds-nowbadge";
+      badge.style.setProperty("--nowpos", pos);
+      badge.textContent = fmtClock(nowMs);
+      row.appendChild(badge);
+    }
+
     row.appendChild(track);
 
     row.addEventListener("click", () => {
@@ -141,15 +172,25 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock }) {
 
   const legend = document.createElement("div");
   legend.className = "day-scale__legend";
+  const legendTitle = document.createElement("div");
+  legendTitle.className = "day-scale__legend-title";
+  legendTitle.textContent = "За смену";
+  legend.appendChild(legendTitle);
   for (const [key, name] of LEGEND) {
     const item = document.createElement("span");
     item.className = "ds-legend__item";
+    if (sums[key] <= 0) item.classList.add("ds-legend__item--zero");
     const chip = document.createElement("span");
     chip.className = "ds-legend__chip z-" + key;
     item.appendChild(chip);
     const caption = document.createElement("span");
-    caption.textContent = name + " — " + fmtDuration(sums[key]);
+    caption.className = "ds-legend__name";
+    caption.textContent = name;
     item.appendChild(caption);
+    const value = document.createElement("span");
+    value.className = "ds-legend__val";
+    value.textContent = fmtDuration(sums[key]);
+    item.appendChild(value);
     legend.appendChild(item);
   }
   root.appendChild(legend);

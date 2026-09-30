@@ -213,10 +213,6 @@ input {
   font-weight: 800;
   text-align: center;
 }
-/* Вопрос «Он всё ещё в ремонте?»: раз за смену, кнопка и мелкая подсказка внутри жёлтой плашки */
-.long-ask p { margin: 0; }
-.long-ask .btn { margin-top: 12px; background: #1a1c20; border-color: #1a1c20; color: #f2f4f8; }
-.long-ask .hint { margin-top: 10px; color: #3b2f0a; font-weight: 700; }
 .earlier { margin-top: 12px; }
 .earlier .hint { margin-top: 4px; }
 .earlier-text { overflow-wrap: anywhere; white-space: pre-wrap; }
