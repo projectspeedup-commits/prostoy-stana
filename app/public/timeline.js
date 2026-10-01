@@ -40,7 +40,7 @@ function detailsText(cell, fmtClock) {
   return range + ": " + parts.join(", ");
 }
 
-export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDate }) {
+export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDate, icon }) {
   const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
 
   const root = document.createElement("section");
@@ -53,6 +53,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDa
     ? "Сутки " + fmtDate(cells[0].startMs) + " по 30 минут"
     : "Сутки по 30 минут";
   root.appendChild(title);
+  if (icon) title.prepend(icon("calendar"));
 
   const rows = document.createElement("div");
   rows.className = "day-scale__rows";
@@ -79,6 +80,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDa
       const name = document.createElement("span");
       name.className = "ds-shift__name";
       name.textContent = hour === 8 ? "Смена 1" : "Смена 2";
+      if (icon) name.prepend(icon(hour === 8 ? "sun" : "moon"));
       header.appendChild(name);
       const times = document.createElement("span");
       times.className = "ds-shift__times";

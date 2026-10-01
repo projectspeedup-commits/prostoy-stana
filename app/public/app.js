@@ -650,6 +650,31 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// Единые контурные иконки: SVG строится через DOM, без inline-кода и стилей.
+function icon(name) {
+  const paths = {
+    pulse: "M2 12h5l3-8 4 16 3-8h5",
+    clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2",
+    helmet: "M4 11a8 8 0 0 1 16 0M3 11h18M9 3v5M15 3v5M7 12v2a5 5 0 0 0 10 0v-2M3 22v-2c0-2 4-3 6-3l3 3 3-3c2 0 6 1 6 3v2",
+    check: "m5 12 4 4L19 6M20 12v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h10",
+    bars: "M4 20V10h3v10M10.5 20V4h3v16M17 20V8h3v12M2 20h20",
+    chart: "M3 3v18h18M6 16l4-5 4 2 6-8",
+    info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v6M12 7v.1",
+    chevron: "m9 5 7 7-7 7",
+    sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M1 12h2M21 12h2M4 4l1.5 1.5M18.5 18.5 20 20M4 20l1.5-1.5M18.5 5.5 20 4",
+    moon: "M20.5 14a9 9 0 0 1-10.5-10.5A9 9 0 1 0 20.5 14Z",
+    calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ico");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(svg.namespaceURI, "path");
+  path.setAttribute("d", paths[name]);
+  svg.append(path);
+  return svg;
+}
+
 // Кнопка «Назад»: первая строка вложенного экрана, во всю ширину, серая рамка
 function backBtn(label, onclick) {
   return h("button", { class: "btn back", onclick }, "← " + label);
@@ -678,7 +703,7 @@ function renderTopbar() {
     conn.addEventListener("click", () => { if (key && refs) { ui.contactBack = ui.screen; go("contact"); } });
   }
   conn.className = "pill";
-  conn.textContent = "Связаться";
+  conn.querySelector(".pill-text").textContent = "Связаться";
   const status = $("save-status");
   if (status) {
     const rejected = records.filter((r) => r.status === "rejected").length;
@@ -1024,7 +1049,7 @@ function scaleFor(view) {
     const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
     if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
     const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
-    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock, fmtDate: () => fmtDate(fromMs) });
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock, fmtDate: () => fmtDate(fromMs), icon });
   } catch (e) {
     console.error("Шкала суток:", e);
     return null;
@@ -1036,17 +1061,26 @@ function withScale(view, ...kids) {
 }
 
 // Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
-function millPanel({ running, info, onGo, onStop }) {
+function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
   const btn = (kind, on, label, onclick) => h("button", {
     class: `mill-btn mill-${kind}${on ? " is-on" : ""}`,
     "aria-pressed": on ? "true" : "false",
+    "aria-label": "СТАН " + label,
     onclick: on ? () => showToast(running ? "Стан уже работает" : "Стан уже стоит") : onclick,
-  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }), h("span", { class: "mill-label", text: label }), on ? info : null);
-  return h("div", null,
-    h("p", { class: "mill-clock" }, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })),
+  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }),
+    h("span", { class: "mill-label" }, h("span", { text: "СТАН" }), h("span", { text: label })));
+  return h("div", { class: "mill-console" },
+    h("div", { class: "mill-status " + (running ? "is-run" : "is-stop") },
+      h("div", { class: "mill-state" }, icon("pulse"),
+        h("div", null, h("div", { class: "mill-state-title" }, running ? "Стан работает · " : "Стан стоит · ", info),
+          subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
+      h("div", { class: "mill-clock" }, icon("clock"),
+        h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
+          h("p", { class: "mill-subtitle", text: fmtDate(nowMs()) })))),
     h("div", { class: "mill-panel" },
-      btn("go", running, "СТАН РАБОТАЕТ", onGo),
-      btn("stop", !running, "СТАН ВСТАЛ", onStop)));
+      btn("go", running, "РАБОТАЕТ", onGo),
+      btn("stop", !running, "ВСТАЛ", onStop),
+      hint ? h("p", { class: "mill-hint" }, icon("info"), h("span", { text: hint })) : null));
 }
 
 // Главный экран: стан работает
@@ -1058,6 +1092,8 @@ function renderRun(main, view) {
     millPanel({
       running: true,
       info: h("span", { class: "mill-info", dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
+      subtitle: Number.isFinite(lastStart) ? `с ${fmtClock(lastStart)}` : null,
+      hint: "Нажмите красную кнопку, как только стан остановился",
       onStop: () => {
         const downtimeId = crypto.randomUUID();
         send("stop", { downtimeId });
@@ -1066,7 +1102,6 @@ function renderRun(main, view) {
         go("reason");
       },
     }),
-    h("p", { class: "hint", text: "Нажмите красную кнопку, как только стан остановился" }),
     shiftBlock(view)
   ));
 }
@@ -1181,24 +1216,33 @@ function metrics() {
 // Блок смены: кто принял, время смены, остаток, закрытие. Одинаков при работающем и стоящем стане
 function shiftBlock(view) {
   const c = view.crew;
-  const dts = shiftDowntimes(view);
-  const sum = shiftSummary(view);
-  const down = sum.plannedMinutes + sum.unplannedMinutes + sum.shortMinutes;
-  const action = (title, help, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { text: title }), h("span", { class: "action-help", text: help }));
+  let downtimeHelp = "Посмотреть или исправить простои за смену";
+  try {
+    const n = shiftDowntimes(view).length;
+    const sum = shiftSummary(view);
+    const downMin = sum.plannedMinutes + sum.unplannedMinutes + sum.shortMinutes;
+    downtimeHelp = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(downMin)} · посмотреть или исправить` : "Простоев не было";
+  } catch { /* Сводка не должна мешать управлению станом. */ }
+  const action = (name, title, help, onclick) => h("button", { class: "btn shift-action", onclick },
+    h("span", { class: "action-ico" }, icon(name)),
+    h("span", { class: "action-copy" }, h("span", { text: title }), h("span", { class: "action-help", text: help })), icon("chevron"));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
+    h("div", { class: "shift-card" },
     h("div", { class: "shift-person" },
+      h("div", { class: "shift-avatar" }, icon("helmet")),
+      h("div", { class: "shift-person-copy" },
       c ? h("p", { class: "muted", text: "Мастер смены" }) : null,
       h("h2", { text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
       c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
-      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null),
+      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null)),
     h("div", { class: "shift-time" },
+      icon("clock"),
       h("span", { text: `${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)} · МСК` }),
-      h("span", null, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))),
-    ui.resume ? action("Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
-    action("Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
-    action("Простои за смену", `${dts.length} ${plural(dts.length, "простой", "простоя", "простоев")} · ${fmtDurMin(down)} · посмотреть или исправить`, () => go("shift")),
-    action("Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
+      h("span", { class: "shift-remaining" }, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000))), icon("chevron"))),
+    ui.resume ? action("info", "Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
+    action("check", "Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
+    action("bars", "Простои за смену", downtimeHelp, () => go("shift")),
+    action("chart", "Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
   );
 }
 
@@ -1241,8 +1285,9 @@ function renderStop(main, view) {
   const left = h("div", null,
     millPanel({
       running: false,
-      info: h("span", { class: "mill-info" }, `стоит с ${fmtSince(since, view.shift)}`,
-        h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
+      info: h("span", { class: "mill-info" }, h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
+      subtitle: `стоит с ${fmtSince(since, view.shift)}`,
+      hint: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу.",
       onGo: () => {
         // Возврат на главную не сбрасывает уже зафиксированное время пуска.
         if (restartMatches(view, ui.rw)) {
@@ -1261,8 +1306,7 @@ function renderStop(main, view) {
         if (open.reason) go("restartConfirm");
         else startRestartReasonWizard();
       },
-    }),
-    h("p", { class: "hint", text: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу." })
+    })
   );
 
   let card;
