@@ -1152,3 +1152,6 @@ main:has(.adm-card) { max-width: 1100px; }
 @media (max-width: 480px) { .mill-label { padding-inline: 4px; letter-spacing: 0; } }
 /* Во всю ширину монитора клавиши растут вместе с пультом (до 560 px) */
 @media (min-width: 1400px) { .mill-lamp, .mill-label { max-width: 560px; } }
+/* Клавиши — максимально большие (владелец, 01.10.2026): вся ширина своей половины пульта */
+.mill-lamp, .mill-label { max-width: none; }
+.mill-lamp { width: 100%; }
