@@ -107,6 +107,7 @@ const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "c
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
+settleRejected();
 function persistClient() {
   const draft = Object.fromEntries(DRAFT_FIELDS.map((field) => [field, ui[field]]));
   return writeStore(SESSION_KEY, JSON.stringify({ state: serverState, stateAt, queue, records, clockOffset, draft }));
@@ -116,7 +117,38 @@ function acceptState(state, time) {
   serverState = state;
   stateAt = time || new Date(nowMs()).toISOString();
   updateClock(time);
+  settleRejected();
   persistClient();
+}
+// Отклонённая запись больше не нужна, если сервер уже принял то же самое другой отправкой:
+// дошло исправление из той же цепочки или остановка с этим номером простоя уже записана.
+// Иначе копии одной остановки висят карточками, а повторная отправка снова получает отказ.
+function settleRejected() {
+  const byId = new Map(records.map((r) => [r.event.id, r]));
+  const rootOf = (r) => {
+    const seen = new Set();
+    let cur = r;
+    while (cur.replaces && !seen.has(cur.replaces)) {
+      seen.add(cur.replaces);
+      const prev = byId.get(cur.replaces);
+      if (!prev) return cur.replaces;
+      cur = prev;
+    }
+    return cur.event.id;
+  };
+  const savedRoots = new Set(records.filter((r) => r.status === "saved" && r.replaces).map(rootOf));
+  const known = new Set([...(serverState?.day?.segments || []), ...(serverState?.segments || [])].map((x) => x.downtimeId));
+  if (serverState?.open) known.add(serverState.open.downtimeId);
+  let n = 0;
+  for (const r of records) {
+    if (r.status !== "rejected") continue;
+    if (savedRoots.has(rootOf(r)) || (r.event.type === "stop" && known.has(r.event.downtimeId))) {
+      r.status = "replaced";
+      n += 1;
+    }
+  }
+  if (ui.repair && byId.get(ui.repair.id)?.status === "replaced") ui.repair = null;
+  return n;
 }
 
 function loadQueue() {
@@ -624,7 +656,7 @@ function plural(n, one, few, many) {
   return many;
 }
 function fmtTons(v) {
-  return String(v).replace(".", ",") + " т";
+  return String(v).replace(".", ",") + " тн";
 }
 
 // --- DOM ---
@@ -1993,7 +2025,7 @@ function renderRestartAction(main, view) {
       earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
     ta,
     h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, т" }) : null,
+    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, тн" }) : null,
     billet,
     billetError,
     submit
@@ -2368,21 +2400,21 @@ function renderBillet(main, view) {
   const bl = ui.bl;
   if (!bl) return go("detail");
   const save = (value) => {
-    if (!Number.isFinite(value) || value < 0) return;
+    if (!validBillet(value)) return;
     ui.bl = null;
     ui.screen = "detail";
     send("fix", { downtimeId: bl.downtimeId, index: bl.index, billet: value });
   };
-  const input = h("input", { type: "number", min: "0", step: "0.1", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
+  const input = h("input", { type: "text", maxlength: "8", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
   input.value = bl.value;
   input.addEventListener("input", () => { bl.value = input.value; });
   fill(main, backBtn("К записи простоя", () => go("detail")), question("Сколько заготовки ушло в брак?"),
-    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 т." }),
+    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 тн." }),
     h("div", { class: "tiles" }, [0, 0.5, 1, 2, 5].map((v) => h("button", { class: "tile", onclick: () => save(v) }, fmtTons(v)))),
-    h("label", { for: "billet-value", text: "Другое количество, т" }),
+    h("label", { for: "billet-value", text: "Другое количество, тн" }),
     Object.assign(input, { id: "billet-value" }),
     h("button", { class: "btn primary", onclick: () => {
-      if (input.value.trim()) save(Number(input.value.replace(",", ".")));
+      if (validBillet(input.value)) save(Number(input.value.trim().replace(",", ".")));
     } }, "Сохранить"));
 }
 
