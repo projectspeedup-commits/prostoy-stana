@@ -1,0 +1,97 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { eventBatch, deliverBatch, pruneRecords, settleRecords } from '../../app/public/queue.js';
+
+test('P1: очередь ограничена байтами UTF-8, порядком и 50 событиями', () => {
+  const q = Array.from({ length: 230 }, (_, id) => ({ id: String(id), note: 'Я'.repeat(500) }));
+  const batch = eventBatch(q);
+  assert.ok(batch.length < 50);
+  assert.ok(Buffer.byteLength(JSON.stringify({ events: batch })) <= 40 * 1024);
+  assert.deepEqual(batch, q.slice(0, batch.length));
+  assert.equal(eventBatch(q.map(({ id }) => ({ id }))).length, 50);
+  assert.equal(eventBatch([{ id: 's', type: 'stop' }, { id: 'r', type: 'reason' }]).length, 1);
+});
+
+test('P1: 413 уменьшает пачку, 400 выделяет отказ и сохраняет последующие события', async () => {
+  const q = Array.from({ length: 10 }, (_, id) => ({ id: String(id) }));
+  const sizes = [];
+  const { data } = await deliverBatch(async (_, { body }) => {
+    const events = JSON.parse(body).events;
+    sizes.push(events.length);
+    if (events.length > 2) throw { status: 413 };
+    return { saved: events.map((e) => e.id) };
+  }, q);
+  assert.deepEqual(sizes, [10, 5, 3, 2]);
+  assert.deepEqual(data.saved, ['0', '1']);
+  const rejected = await deliverBatch(async () => { throw { status: 400, data: { error: 'bad_request' } }; }, q);
+  assert.deepEqual(rejected.batch, [q[0]]);
+  assert.equal(rejected.data.rejected[0].id, '0');
+  assert.equal(q.length, 10);
+});
+
+test('P2: подтверждённые записи — 3 суток и 300, очередь и отказы сохраняются', () => {
+  const now = Date.now();
+  const make = (id, status, age = 0) => ({ event: { id, at: new Date(now - age).toISOString() }, status });
+  const q = Array.from({ length: 700 }, (_, i) => make(`q${i}`, 'pending', 10 * 86400000));
+  const records = [...Array.from({ length: 400 }, (_, i) => make(`s${i}`, 'saved')), make('old', 'saved', 4 * 86400000), make('bad', 'rejected'), ...q];
+  const pruned = pruneRecords(records, now);
+  assert.equal(pruned.filter((r) => r.status === 'saved').length, 300);
+  assert.deepEqual(pruned.filter((r) => r.status === 'pending'), q);
+  assert.equal(pruned.some((r) => r.event.id === 'old'), false);
+  assert.equal(pruned.some((r) => r.event.id === 'bad'), true);
+});
+
+test('P2: SW возвращает кеш при 500/502/503/504, API не кешируется', async () => {
+  const source = fs.readFileSync(new URL('../../app/public/sw.js', import.meta.url), 'utf8');
+  const listeners = {};
+  let status = 500;
+  const cached = new Response('cached');
+  const context = { URL, Request, Response, self: { location: { origin: 'http://local' }, addEventListener: (type, fn) => { listeners[type] = fn; } },
+    caches: { match: async () => cached }, fetch: async () => new Response('failed', { status }) };
+  vm.runInNewContext(source, context);
+  for (status of [500, 502, 503, 504]) {
+    let result;
+    listeners.fetch({ request: new Request('http://local/index.html'), respondWith: (p) => { result = p; } });
+    assert.equal(await result, cached);
+  }
+  let called = false;
+  listeners.fetch({ request: new Request('http://local/api/state'), respondWith: () => { called = true; } });
+  assert.equal(called, false);
+});
+
+test('main: принятая цепочка и известный stop заменяют отклонённые копии', () => {
+  const at = new Date().toISOString();
+  const record = (id, status, replaces, fields = {}) => ({ event: { id, type: 'fix', at, ...fields }, status, replaces });
+  const records = [record('a', 'rejected'), record('b', 'rejected', 'a'), record('c', 'saved', 'b'),
+    record('known', 'rejected', null, { type: 'stop', downtimeId: 'server-open' }), record('unrelated', 'rejected'),
+    record('adopt-root', 'rejected'), record('adopt-copy', 'adopted', 'adopt-root')];
+  assert.equal(settleRecords(records, { open: { downtimeId: 'server-open' } }), 4);
+  assert.deepEqual(records.map((r) => r.status), ['replaced', 'replaced', 'saved', 'replaced', 'rejected', 'replaced', 'adopted']);
+  assert.equal(settleRecords(records, {}), 0);
+});
+
+test('main: новая очередь помнит принятую цепочку после удаления старых квитанций', () => {
+  const old = new Date(Date.now() - 4 * 86400000).toISOString();
+  const records = [
+    { event: { id: 'root', type: 'fix', at: old }, status: 'rejected' },
+    { event: { id: 'ok', type: 'fix', at: old }, status: 'saved', replaces: 'root' },
+    { event: { id: 'pending', type: 'fix', at: old }, status: 'pending', replaces: 'ok' },
+  ];
+  settleRecords(records, {});
+  const retained = pruneRecords(records, Date.now());
+  assert.equal(retained.length, 1);
+  const restored = JSON.parse(JSON.stringify(retained));
+  restored[0].status = 'rejected';
+  assert.equal(settleRecords(restored, {}), 1);
+  assert.equal(restored[0].status, 'replaced');
+});
+
+test('main: dismissed/replaced сохраняются с ограничением истории, не возвращаются в rejected', () => {
+  const now = Date.now();
+  const records = ['dismissed', 'replaced'].map((status) => ({ status, event: { id: status, type: 'stop', at: new Date(now).toISOString() } }));
+  settleRecords(records, {});
+  assert.deepEqual(pruneRecords(records, now).map((r) => r.status), ['dismissed', 'replaced']);
+  assert.equal(pruneRecords(records, now + 4 * 86400000).length, 0);
+});

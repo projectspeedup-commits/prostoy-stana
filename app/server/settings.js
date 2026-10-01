@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { validateSettings } from "../core/settings.js";
 
 export function fileSignature(filename) {
   if (!filename) return "missing";
@@ -30,6 +31,7 @@ export function createSettingsStore(filename) {
   let memory = null;
   return {
     signature: () => filename ? fileSignature(filename) : JSON.stringify(memory),
+    readBackup: () => filename ? JSON.parse(fs.readFileSync(`${filename}.bak`, "utf8").replace(/^\uFEFF/, "")) : null,
     read() {
       if (!filename) return memory;
       try {
@@ -53,8 +55,17 @@ export function createSettingsStore(filename) {
         try { previous = await fs.promises.readFile(filename); }
         catch (e) { if (e.code !== "ENOENT") throw e; }
         if (previous !== undefined) {
-          await fs.promises.writeFile(backupTemporary, previous, { flag: "wx" });
-          await renameWithRetry(backupTemporary, `${filename}.bak`);
+          let valid = false;
+          try {
+            const parsed = JSON.parse(previous.toString("utf8").replace(/^\uFEFF/, ""));
+            if (parsed?.version === 1) { validateSettings(parsed, parsed.people); valid = true; }
+          } catch { /* повреждённый файл не должен вытеснять исправную резервную копию */ }
+          if (valid) {
+            await fs.promises.writeFile(backupTemporary, previous, { flag: "wx" });
+            await renameWithRetry(backupTemporary, `${filename}.bak`);
+          } else {
+            await fs.promises.writeFile(`${filename}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}`, previous, { flag: "wx" });
+          }
         }
         await renameWithRetry(temporary, filename);
       } finally {

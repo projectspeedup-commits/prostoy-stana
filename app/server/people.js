@@ -17,18 +17,42 @@ function demoPeople() {
 export function createRefsReader(filename, settingsStore) {
   let signature;
   let cached;
-  return () => {
-    const peopleSignature = fileSignature(filename);
-    const next = `${settingsStore?.signature() ?? "missing"}|${peopleSignature}`;
+  let health = "ok";
+  const reader = () => {
+    let peopleSignature, next;
+    try {
+      peopleSignature = fileSignature(filename);
+      next = `${settingsStore?.signature() ?? "missing"}|${peopleSignature}`;
+    } catch (e) {
+      health = "fallback";
+      console.error("Не удалось прочитать настройки:", e.code || e.name);
+      if (cached) return cached;
+      peopleSignature = "missing";
+      next = "unreadable";
+    }
     if (next !== signature) {
       let data = demoPeople();
-      const saved = settingsStore?.read();
-      if (saved != null) {
+      let settings;
+      const validated = (saved) => {
+        if (saved == null) return null;
         if (saved.version !== 1 || !Array.isArray(saved.people) ||
           !saved.people.every((p) => p && typeof p.id === "string" && p.id.length > 0)) {
           throw new Error("Некорректный файл настроек");
         }
-        const settings = validateSettings(saved, saved.people);
+        return validateSettings(saved, saved.people);
+      };
+      try {
+        settings = validated(settingsStore?.read());
+        health = "ok";
+      } catch (e) {
+        health = "fallback";
+        console.error("Ошибка settings.json, используется резервный снимок:", e.code || e.name);
+        signature = next;
+        if (cached) return cached;
+        try { settings = validated(settingsStore?.readBackup()); }
+        catch (backupError) { console.error("Ошибка резервных настроек:", backupError.code || backupError.name); }
+      }
+      if (settings != null) {
         data = {
           crews: SETTINGS_CREWS,
           people: settings.people,
@@ -40,20 +64,25 @@ export function createRefsReader(filename, settingsStore) {
           },
         };
       } else if (peopleSignature !== "missing") {
-        const parsed = JSON.parse(fs.readFileSync(filename, "utf8").replace(/^\uFEFF/, ""));
-        const id = (v) => (typeof v === "string" && v.length > 0) || Number.isSafeInteger(v);
-        if (!parsed || !Array.isArray(parsed.crews) || !Array.isArray(parsed.people) ||
-          !parsed.crews.every((c) => c && id(c.id) && typeof c.title === "string") ||
-          !parsed.people.every((p) => p && id(p.id) && typeof p.name === "string" && parsed.crews.some((c) => c.id === p.crewId)) ||
-          new Set(parsed.crews.map((c) => c.id)).size !== parsed.crews.length ||
-          new Set(parsed.people.map((p) => p.id)).size !== parsed.people.length) {
-          throw new Error("Некорректный справочник людей");
+        try {
+          const parsed = JSON.parse(fs.readFileSync(filename, "utf8").replace(/^\uFEFF/, ""));
+          const id = (v) => (typeof v === "string" && v.length > 0) || Number.isSafeInteger(v);
+          if (!parsed || !Array.isArray(parsed.crews) || !Array.isArray(parsed.people) ||
+            !parsed.crews.every((c) => c && id(c.id) && typeof c.title === "string") ||
+            !parsed.people.every((p) => p && id(p.id) && typeof p.name === "string" && parsed.crews.some((c) => c.id === p.crewId)) ||
+            new Set(parsed.crews.map((c) => c.id)).size !== parsed.crews.length ||
+            new Set(parsed.people.map((p) => p.id)).size !== parsed.people.length) {
+            throw new Error("Некорректный справочник людей");
+          }
+          data = {
+            crews: SETTINGS_CREWS,
+            people: parsed.people.map(({ id, name, crewId }) => ({ id: String(id), name, crewId: String(crewId), phone: "" })),
+            demo: false,
+          };
+        } catch (e) {
+          health = "fallback";
+          console.error("Ошибка справочника людей:", e.code || e.name);
         }
-        data = {
-          crews: SETTINGS_CREWS,
-          people: parsed.people.map(({ id, name, crewId }) => ({ id: String(id), name, crewId: String(crewId), phone: "" })),
-          demo: false,
-        };
       }
       const refs = { ...DEFAULT_REFS, ...data };
       const refsVersion = crypto.createHash("sha256").update(JSON.stringify(refs)).digest("hex").slice(0, 12);
@@ -62,4 +91,6 @@ export function createRefsReader(filename, settingsStore) {
     }
     return cached;
   };
+  reader.status = () => { reader(); return health; };
+  return reader;
 }

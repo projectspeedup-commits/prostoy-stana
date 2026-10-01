@@ -1,5 +1,6 @@
 // Сервер учёта простоев и пробы связи.
 // Только встроенные модули Node; база — node:sqlite.
+import { pipeline } from "node:stream";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,10 +69,13 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   const settingsStore = createSettingsStore(dataDir === ":memory:" ? null : path.join(dataDir, "settings.json"));
   const readRefs = createRefsReader(peopleFile, settingsStore);
   let settingsWrites = Promise.resolve();
-  function updateSettings(input) {
+  function updateSettings(input, refsVersion) {
     // Проверяем ID и возвращаем версию внутри очереди: следующий PUT видит завершённый предыдущий.
     const update = settingsWrites.then(async () => {
-      const settings = validateSettings(input, readRefs().refs.people);
+      if (!input || typeof input !== "object" || Array.isArray(input)) throw Object.assign(new Error("Некорректные настройки."), { code: "bad_request" });
+      const current = readRefs();
+      if (refsVersion !== current.refsVersion) throw Object.assign(new Error("Настройки уже изменили на другом устройстве. Обновите экран и повторите."), { code: "conflict" });
+      const settings = validateSettings(input, current.refs.people);
       await settingsStore.write(settings);
       return { ok: true, settings, refsVersion: readRefs().refsVersion };
     });
@@ -117,6 +121,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   const timer = setInterval(beat, 60_000);
   timer.unref();
 
+  const failures = new Map();
   const windows = new Map(); // имя устройства -> { minute, count }
   function allowed(name) {
     const minute = Math.floor(clock().getTime() / 60_000);
@@ -195,7 +200,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
 
   async function handleApi(req, res, pathname, searchParams) {
     if (pathname === "/api/health" && req.method === "GET") {
-      return send(res, 200, { ok: true });
+      return send(res, 200, { ok: true, settings: readRefs.status() });
     }
     const isPing = pathname === "/api/ping" && req.method === "POST";
     const isSummary = pathname === "/api/probe-summary" && req.method === "GET";
@@ -206,8 +211,18 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isAdminGet = pathname === "/api/admin/settings" && req.method === "GET";
     const isAdminPut = pathname === "/api/admin/settings" && req.method === "PUT";
 
+    const address = clientAddress(req);
+    const ms = clock().getTime();
+    for (const [ip, window] of failures) if (ms >= window.until) failures.delete(ip);
+    const failed = failures.get(address);
+    if (failed?.count >= 10) return send(res, 429, { ok: false, error: "busy" });
     const device = identify(req);
-    if (!device) return send(res, 401, { ok: false, error: "bad_key" });
+    if (!device) {
+      // При заполнении карты новые адреса получают 429, действующие окна не вытесняются.
+      if (!failed && failures.size >= 4096) return send(res, 429, { ok: false, error: "busy" });
+      failures.set(address, { count: (failed?.count || 0) + 1, until: failed?.until ?? ms + 10 * 60_000 });
+      return send(res, 401, { ok: false, error: "bad_key" });
+    }
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
     if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
 
@@ -249,8 +264,9 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       });
     }
     if (isAdminPut) {
-      try { return send(res, 200, await updateSettings(data?.settings)); }
+      try { return send(res, 200, await updateSettings(data?.settings, data?.refsVersion)); }
       catch (e) {
+        if (e.code === "conflict") return send(res, 409, { ok: false, message: e.message });
         if (e.code !== "bad_request") throw e;
         return send(res, 400, { ok: false, error: "bad_request", message: e.message });
       }
@@ -310,7 +326,12 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
         "Content-Length": st.size,
       });
       if (req.method === "HEAD") return res.end();
-      fs.createReadStream(full).pipe(res);
+      pipeline(fs.createReadStream(full), res, (error) => {
+        if (error) {
+          console.error("Ошибка чтения статического файла:", error.code || error.name);
+          if (!res.destroyed) res.destroy();
+        }
+      });
     });
   }
 
@@ -347,6 +368,17 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   }
 
   return { server, db, close };
+}
+
+// Адрес клиента для лимита неверных ключей. На бою запрос идёт через nginx и туннель: у сокета
+// у всех один внутренний адрес, настоящий nginx кладёт в X-Real-IP, затирая присланный клиентом.
+// Заголовку верим только от локального или внутреннего адреса. CF-Connecting-IP не берём:
+// Cloudflare снят, и этот заголовок клиент подделал бы, обходя лимит.
+export function clientAddress(req) {
+  const socket = String(req.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
+  const internal = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd])/i.test(socket);
+  const real = req.headers["x-real-ip"];
+  return internal && typeof real === "string" && real.trim() ? real.trim() : socket;
 }
 
 // Кому открыт «Администратор»: список имён из STAN_ADMIN_DEVICES, иначе устройство owner, если оно есть

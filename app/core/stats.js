@@ -1,5 +1,5 @@
 // Метрики простоев за производственный период. Работает и в браузере, и в Node.
-import { buildDowntimes, classify, shiftOf, toMs } from "./core.js";
+import { apportionMinutes, buildDowntimes, classify, shiftOf, toMs, withDowntimeDuration } from "./core.js";
 import { zoneOf } from "./zones.js";
 
 const MINUTE = 60_000;
@@ -31,7 +31,7 @@ function clippedSegments(segments, fromMs, toMs, refs) {
     const endMs = Math.min(segment.endMs, toMs);
     if (endMs <= startMs) return [];
     const clipped = { ...segment, startMs, endMs };
-    return [{ ...clipped, ...classify(clipped, refs, refs.settings) }];
+    return [{ ...clipped, ...classify(segment, refs, refs.settings) }];
   });
 }
 
@@ -104,20 +104,6 @@ function cutByDuty(segment, duties, fallbackCrew) {
   return pieces;
 }
 
-// Минуты по строкам так, чтобы сумма совпала с общим итогом (больший остаток получает лишнюю минуту)
-function apportionMinutes(msList, totalMin) {
-  const out = msList.map((ms) => Math.floor(ms / MINUTE));
-  const rest = msList.map((ms, i) => ms - out[i] * MINUTE);
-  let left = totalMin - out.reduce((sum, value) => sum + value, 0);
-  const order = rest.map((_, i) => i).sort((a, b) => rest[b] - rest[a] || a - b);
-  for (const i of order) {
-    if (left <= 0) break;
-    out[i] += 1;
-    left -= 1;
-  }
-  return out;
-}
-
 /** Границы запрошенного периода по производственному расписанию. */
 export function periodRange(period, nowMs, schedule) {
   const now = toMs(nowMs);
@@ -157,6 +143,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const now = toMsValue(nowMs);
   if (to < from) throw new Error("Некорректный период");
   const built = buildDowntimes(events, now);
+  built.segments = withDowntimeDuration(built.segments);
   // Учёт начинается с первого события: раньше данных нет, и считать это время работой нельзя
   let firstAt = Infinity;
   for (const e of events) {
@@ -277,6 +264,10 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   }));
   byZone.push({ zone: "work", minutes: Math.max(0, totalMin - downMin), stops: 0,
     share: totalMs ? workMs / totalMs : 0 });
+  const reasonList = [...reasonRows.values()], groupList = [...groupRows.values()];
+  const reasonMinutes = apportionMinutes(reasonList.map((r) => r.ms), downMin);
+  const groupMinutes = apportionMinutes(groupList.map((r) => r.ms), downMin);
+  const modeMinutes = apportionMinutes([modeMs.planned, modeMs.unplanned, modeMs.short], downMin);
   return {
     fromMs: from,
     toMs: to,
@@ -286,9 +277,9 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     workMin: Math.max(0, totalMin - downMin),
     downMin,
     byZone,
-    plannedMin: rounded(modeMs.planned),
-    unplannedMin: rounded(modeMs.unplanned),
-    shortMin: rounded(modeMs.short),
+    plannedMin: modeMinutes[0],
+    unplannedMin: modeMinutes[1],
+    shortMin: modeMinutes[2],
     stops,
     unplannedStops: unplannedIds.size,
     availability: denominator > 0 ? Math.max(0, Math.min(1, workMs / denominator)) : null,
@@ -296,8 +287,8 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     mtbfMin: unplannedIds.size ? rounded(workMs / unplannedIds.size) : null,
     mttrMin: unplannedIds.size ? rounded(modeMs.unplanned / unplannedIds.size) : null,
     longest: longest && { downtimeId: longest.downtimeId, minutes: rounded(longest.ms), reason: longest.reason, startMs: longest.startMs },
-    byReason: [...reasonRows.values()].map((row) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: rounded(row.ms), stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
-    byGroup: [...groupRows.values()].map((row) => ({ group: row.group, minutes: rounded(row.ms), stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
+    byReason: reasonList.map((row, i) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: reasonMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
+    byGroup: groupList.map((row, i) => ({ group: row.group, minutes: groupMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
     byCrew: crewList.map((row, i) => ({ crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried })).sort((a, b) => compareRows(a, b, "crewId")),
     byDay: days,
     quality: { noReason, noAction, otherShare: downMs ? otherMs / downMs : 0 },

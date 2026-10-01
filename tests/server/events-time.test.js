@@ -39,12 +39,10 @@ test("stop раньше записанного закрытого простоя
   assert.equal(s.state().segments.length, 1);
 });
 
-test("stop раньше последнего start без простоя отклоняется как overlap", (t) => {
+test("start без открытого простоя отклоняется, не меняя историю", (t) => {
   const s = fixture(t);
-  s.save(event("r1", "start", "10:00"));
-  assert.deepEqual(s.save(event("s1", "stop", "09:00")), {
-    saved: [], rejected: [{ id: "s1", error: "overlap" }],
-  });
+  assert.deepEqual(s.save(event("r1", "start", "10:00")), { saved: [], rejected: [{ id: "r1", error: "not_open" }] });
+  assert.deepEqual(s.save(event("s1", "stop", "09:00")), { saved: ["s1"], rejected: [] });
 });
 
 test("start в прошлом после смены причины закрывает простой выбранным временем", (t) => {
@@ -78,16 +76,16 @@ test("start раньше последней смены причины откло
   assert.equal(s.state().open.segments.at(-1).startMs, Date.parse(at("10:30")));
 });
 
-test("лишний stop внутри текущего и закрытого простоя принимается без изменения простоя", (t) => {
+test("stop внутри открытого — already_stopped с номером открытого, раньше его начала или внутри закрытого — overlap", (t) => {
   const s = fixture(t);
   s.save(event("s1", "stop", "09:00"));
-  assert.deepEqual(s.save(event("extra1", "stop", "09:10", "other")), { saved: ["extra1"], rejected: [] });
-  assert.equal(s.state().open.downtimeId, "d1");
+  const inside = s.save(event("s2", "stop", "09:30", "d2"));
+  assert.deepEqual(inside.saved, []);
+  assert.equal(inside.rejected[0].error, "already_stopped");
+  assert.equal(inside.rejected[0].downtimeId, "d1");
+  assert.deepEqual(s.save(event("s0", "stop", "08:30", "d0")), { saved: [], rejected: [{ id: "s0", error: "overlap" }] });
   s.save(event("r1", "start", "10:00"));
-  assert.deepEqual(s.save(event("extra2", "stop", "09:30", "another")), { saved: ["extra2"], rejected: [] });
-  assert.equal(s.state().running, true);
-  assert.equal(s.state().segments.length, 1);
-  assert.equal(s.state().segments[0].downtimeId, "d1");
+  assert.deepEqual(s.save(event("s3", "stop", "09:30", "d3")), { saved: [], rejected: [{ id: "s3", error: "overlap" }] });
 });
 
 test("stop раньше конца ручного простоя отклоняется как overlap", (t) => {
