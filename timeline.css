@@ -412,3 +412,68 @@
   .ds-row { height: 10px; }
   .ds-row__label { font-size: 11px; line-height: 10px; }
 }
+
+/* --- Монитор: главный экран целиком в высоту окна, без прокрутки (владелец, 01.10.2026) ---
+   Шкала сжимает 48 строк под высоту, пульт забирает остаток справа, клавиши считаются
+   от высоты пульта (cqh), три кнопки смены — в один ряд. Планшет и телефон — как раньше. */
+@media (min-width: 1100px) and (min-height: 600px) {
+  body:has(#main .with-scale) { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  body:has(#main .with-scale) > .topbar { flex: none; width: 100%; box-sizing: border-box; padding-block: 12px; }
+  body:has(#main .with-scale) > #main { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box;
+    padding-top: 4px; padding-bottom: 14px; overflow: auto; }
+  body:has(#main .with-scale) > .rejects:not([hidden]) { flex: none; max-height: 30vh; overflow: auto; }
+  .with-scale { height: 100%; align-items: stretch; gap: 18px; }
+
+  /* Шкала: строки делят высоту поровну */
+  .with-scale > .day-scale { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; padding: 12px; }
+  .with-scale > .day-scale > :not(.day-scale__rows) { flex: none; }
+  .day-scale__title { margin-bottom: 6px; }
+  .day-scale__rows { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .day-scale__rows > .ds-shift { flex: none; margin: 1px 0 2px; padding-block: 3px; }
+  .day-scale__rows > .ds-row { flex: 1 1 0; height: auto; min-height: 5px; max-height: 16px; margin-bottom: 1px; }
+  .day-scale__legend { margin-top: 6px; padding-top: 6px; gap: 2px; }
+
+  /* Правая колонка: состояние, пульт (растягивается), смена */
+  .with-scale__main { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
+  .with-scale__main > .mill-console, .with-scale__main > div:has(> .mill-console) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .with-scale__main > .stop-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 260px;
+    gap: 14px; align-items: stretch; }
+  .stop-grid > :first-child { display: flex; flex-direction: column; min-height: 0; }
+  .stop-grid > :first-child > .mill-console { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .stop-grid > :last-child { min-height: 0; overflow: auto; }
+  .mill-status { flex: none; min-height: 0; padding-block: 12px; margin-bottom: 12px; }
+  .mill-panel { flex: 1 1 auto; min-height: 0; container-type: size; grid-template-rows: minmax(0, 1fr) auto;
+    padding: 18px 18px 12px; gap: 10px 0; }
+  /* Табличка сбоку от клавиши: так клавиша получает почти всю высоту пульта */
+  .mill-btn { min-height: 0; height: 100%; flex-direction: row; justify-content: center; align-items: center; gap: 14px; padding: 0 10px; }
+  /* Клавиша 4:3 по высоте пульта (минус подсказка и отступы ~70 px), но не шире 58% своей половины */
+  .mill-lamp { width: min(58%, 560px, max(96px, calc((100cqh - 70px) * 4 / 3))); max-width: none; flex: none; }
+  .mill-label { width: auto; max-width: 42%; flex: 0 1 auto; padding: 8px 12px; text-align: left; font-size: clamp(12px, 1.9cqi, 28px); letter-spacing: .02em; }
+
+  /* Смена: карточка мастера во всю ширину, кнопки — в ряд */
+  .shift-block { flex: none; margin-top: 0; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .shift-block > .shift-card { grid-column: 1 / -1; padding: 12px 18px 10px; }
+  .shift-person { grid-template-columns: 56px minmax(0, 1fr); gap: 14px; }
+  .shift-avatar { width: 56px; height: 60px; }
+  .shift-avatar .ico { width: 36px; height: 36px; }
+  .shift-person h2 { font-size: 20px; }
+  .shift-person p { margin: 1px 0; }
+  .shift-block .shift-time { margin-top: 8px; padding-block: 7px; }
+  .btn.shift-action { min-height: 0; padding: 10px 14px; gap: 12px; grid-template-columns: 40px minmax(0, 1fr) 18px; font-size: 17px; }
+  .action-ico { width: 40px; height: 40px; }
+  .action-ico .ico { width: 22px; height: 22px; }
+  .shift-action .action-help { font-size: 12.5px; margin-top: 2px; }
+}
+/* Низкий монитор (ноутбук 1366×768 и т.п.): убираем второстепенные строки, чтобы клавиши не мельчали */
+@media (min-width: 1100px) and (min-height: 600px) and (max-height: 760px) {
+  .mill-status { padding-block: 8px; margin-bottom: 8px; }
+  .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
+  .shift-avatar, .shift-person p.muted, .shift-action .action-help { display: none; }
+  .shift-person { grid-template-columns: minmax(0, 1fr); }
+  .shift-person h2 { font-size: 18px; margin: 0; }
+  .shift-block .shift-time { margin-top: 6px; padding-block: 5px; }
+  .btn.shift-action { padding-block: 8px; }
+  .action-ico { width: 32px; height: 32px; }
+  .btn.shift-action { grid-template-columns: 32px minmax(0, 1fr) 16px; font-size: 16px; }
+  .mill-panel { padding: 12px 14px 8px; }
+}
