@@ -26,8 +26,8 @@
     var next = current() === "light" ? "dark" : "light";
     var btn = document.getElementById("theme");
     if (btn) {
-      btn.setAttribute("aria-label", next === "light" ? "Светлая тема" : "Тёмная тема");
-      btn.setAttribute("aria-pressed", next === "dark" ? "true" : "false");
+      btn.setAttribute("aria-label", next === "light" ? "Переключить на светлую тему" : "Переключить на тёмную тему");
+      btn.setAttribute("aria-pressed", current() === "dark" ? "true" : "false");
       btn.title = next === "light" ? "Переключить на светлую тему" : "Переключить на тёмную тему";
     }
     var meta = document.querySelector('meta[name="theme-color"]');

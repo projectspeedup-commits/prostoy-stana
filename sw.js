@@ -1,9 +1,10 @@
 // Офлайн-кеш страницы рабочего. /api/* не кешируется никогда.
-const CACHE = "stan-v57";
+const CACHE = "stan-v59";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
+  "./queue.js",
   "./app.css",
   "./theme.js",
   "./core/core.js",
@@ -43,10 +44,14 @@ self.addEventListener("fetch", (e) => {
   // а свежая выкладка видна сразу, без ожидания срока кэша браузера
   e.respondWith(
     fetch(new Request(e.request.url, { cache: "no-cache", credentials: "same-origin" }))
-      .then((r) => {
+      .then(async (r) => {
         if (r.ok) {
           const copy = r.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        if ([500, 502, 503, 504].includes(r.status)) {
+          const cached = await caches.match(e.request) || (e.request.mode === "navigate" ? await caches.match("./index.html") : null);
+          if (cached) return cached;
         }
         return r;
       })

@@ -1,5 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
+import { deliverBatch, pruneRecords, settleRecords } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -72,11 +73,17 @@ async function realApi(path, options = {}) {
 let key = null;
 let refs = null;          // справочники (кешируются)
 let refsVersion = null;
+let canAdmin = true;      // открыт ли этому ключу «Администратор» (сервер говорит в /api/refs)
 const restored = readJSON(SESSION_KEY, {});
 let serverState = restored.state || null;
 let stateAt = restored.stateAt || null;
-let queue = Array.isArray(restored.queue) ? restored.queue : loadQueue();
+let queueStoredSeparately = restored.queueSeparated === true || !Array.isArray(restored.queue);
+let queue = queueStoredSeparately ? loadQueue() : restored.queue;
 let records = Array.isArray(restored.records) ? restored.records : [];
+for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
+  const receipt = restored.pendingReplacements?.find((r) => r.id === event.id);
+  records.push({ event, status: "pending", replaces: receipt?.replaces, rootId: receipt?.rootId, rootAccepted: receipt?.rootAccepted });
+}
 let clockOffset = restored.clockOffset || 0;
 let stateEpoch = 0;
 let loadingState = false;
@@ -109,8 +116,21 @@ for (const field of DRAFT_FIELDS) {
 }
 settleRejected();
 function persistClient() {
+  // При обновлении старой версии сначала переносим очередь, потом убираем её из снимка.
+  if (!queueStoredSeparately) {
+    if (!writeStore(QUEUE_KEY, JSON.stringify(queue))) return false;
+    queueStoredSeparately = true;
+  }
+  settleRejected();
+  records = pruneRecords(records, nowMs());
   const draft = Object.fromEntries(DRAFT_FIELDS.map((field) => [field, ui[field]]));
-  return writeStore(SESSION_KEY, JSON.stringify({ state: serverState, stateAt, queue, records, clockOffset, draft }));
+  // Очередь имеет отдельную запись и не переписывается при каждом вводе текста.
+  const savedRecords = records.filter((r) => r.status !== "pending");
+  const pendingReplacements = records.filter((r) => r.status === "pending" && (r.replaces || r.rootAccepted)).map((r) => ({ id: r.event.id, replaces: r.replaces, rootId: r.rootId, rootAccepted: r.rootAccepted }));
+  const snapshot = (list) => JSON.stringify({ state: serverState, stateAt, records: list, pendingReplacements, clockOffset, draft, queueSeparated: true });
+  if (writeStore(SESSION_KEY, snapshot(savedRecords))) return true;
+  records = records.filter((r) => !["saved", "replaced", "adopted", "dismissed"].includes(r.status));
+  return writeStore(SESSION_KEY, snapshot(records.filter((r) => r.status !== "pending")));
 }
 function acceptState(state, time) {
   if (!state) return;
@@ -124,30 +144,8 @@ function acceptState(state, time) {
 // дошло исправление из той же цепочки или остановка с этим номером простоя уже записана.
 // Иначе копии одной остановки висят карточками, а повторная отправка снова получает отказ.
 function settleRejected() {
-  const byId = new Map(records.map((r) => [r.event.id, r]));
-  const rootOf = (r) => {
-    const seen = new Set();
-    let cur = r;
-    while (cur.replaces && !seen.has(cur.replaces)) {
-      seen.add(cur.replaces);
-      const prev = byId.get(cur.replaces);
-      if (!prev) return cur.replaces;
-      cur = prev;
-    }
-    return cur.event.id;
-  };
-  const savedRoots = new Set(records.filter((r) => r.status === "saved" && r.replaces).map(rootOf));
-  const known = new Set([...(serverState?.day?.segments || []), ...(serverState?.segments || [])].map((x) => x.downtimeId));
-  if (serverState?.open) known.add(serverState.open.downtimeId);
-  let n = 0;
-  for (const r of records) {
-    if (r.status !== "rejected") continue;
-    if (savedRoots.has(rootOf(r)) || (r.event.type === "stop" && known.has(r.event.downtimeId))) {
-      r.status = "replaced";
-      n += 1;
-    }
-  }
-  if (ui.repair && byId.get(ui.repair.id)?.status === "replaced") ui.repair = null;
+  const n = settleRecords(records, serverState);
+  if (ui.repair && records.find((r) => r.event.id === ui.repair.id)?.status === "replaced") ui.repair = null;
   return n;
 }
 
@@ -159,7 +157,16 @@ function loadQueue() {
   return [];
 }
 function persistQueue() {
-  return persistClient();
+  const json = JSON.stringify(queue);
+  let stored = writeStore(QUEUE_KEY, json);
+  if (!stored) {
+    // Сначала освобождаем место, занятое восстанавливаемым снимком, затем повторяем очередь.
+    try { localStorage.removeItem(storageName(SESSION_KEY)); } catch { /* предупреждение уже видно */ }
+    stored = writeStore(QUEUE_KEY, json);
+  }
+  if (stored) queueStoredSeparately = true;
+  persistClient();
+  return stored;
 }
 function nextSeq() {
   const n = (Number(readStore(SEQ_KEY)) || 0) + 1;
@@ -213,36 +220,51 @@ async function flush() {
   flushing = true;
   stateEpoch++;
   try {
-    const batch = queue.slice();
-    const d = await api("/api/events", { method: "POST", body: JSON.stringify({ events: batch }) });
-    const saved = new Set(d.saved || []);
-    const rejected = d.rejected || [];
-    const rejectedIds = new Set(rejected.map((r) => r.id));
-    for (const event of batch) {
-      let record = records.find((r) => r.event.id === event.id);
-      if (!record) records.push((record = { event, status: "pending" }));
-      if (saved.has(event.id)) {
-        record.status = "saved";
-        if (record.replaces) {
-          const old = records.find((r) => r.event.id === record.replaces);
-          if (old) old.status = "replaced";
+    while (queue.length) {
+      const { batch, data: d } = await deliverBatch(api, queue);
+      const saved = new Set(d.saved || []);
+      const rejected = d.rejected || [];
+      const rejectedIds = new Set(rejected.map((r) => r.id));
+      for (const event of batch) {
+        let record = records.find((r) => r.event.id === event.id);
+        if (!record) records.push((record = { event, status: "pending" }));
+        if (saved.has(event.id)) {
+          record.status = "saved";
+          record.confirmedAt = d.serverTime || new Date(nowMs()).toISOString();
+          if (record.replaces) {
+            const old = records.find((r) => r.event.id === record.replaces);
+            if (old) old.status = "replaced";
+          }
+        }
+        if (rejectedIds.has(event.id)) {
+          record.status = "rejected";
+          const rejection = rejected.find((r) => r.id === event.id);
+          record.error = rejection?.error;
+          if (rejection?.error === "already_stopped" && rejection.downtimeId) {
+            record.status = "adopted";
+            record.confirmedAt = d.serverTime || new Date(nowMs()).toISOString();
+            for (const e of queue) if (e.id !== event.id && e.downtimeId === (event.downtimeId || event.id)) e.downtimeId = rejection.downtimeId;
+            for (const field of ["wz", "rw", "fw", "rec", "af", "bl"]) {
+              if (ui[field]?.downtimeId === (event.downtimeId || event.id)) ui[field].downtimeId = rejection.downtimeId;
+            }
+            showToast(`Стан уже остановлен с ${fmtClock(rejection.startMs ?? d.state?.open?.startMs)}`);
+          }
         }
       }
-      if (rejectedIds.has(event.id)) {
-        record.status = "rejected";
-        record.error = rejected.find((r) => r.id === event.id)?.error;
+      // Сначала снимок и квитанции, затем очередь; повтор того же ID безопасен.
+      // Без нового состояния сохраняем очередь: повтор того же ID безопасен на сервере.
+      if (d.state) {
+        queue = queue.filter((e) => !saved.has(e.id) && !rejectedIds.has(e.id));
+        acceptState(d.state, d.serverTime);
+      } else {
+        queue = queue.filter((e) => !rejectedIds.has(e.id));
+        persistClient();
       }
+      persistQueue();
+      setOnline(true);
+      if (!saved.size && !rejected.length) break;
+      if (!d.state && saved.size) break; // подтверждение без снимка повторяем безопасно
     }
-    // Состояние, результат и удаление из очереди сохраняются одной записью.
-    // Без нового состояния сохраняем очередь: повтор того же ID безопасен на сервере.
-    if (d.state) {
-      queue = queue.filter((e) => !saved.has(e.id) && !rejectedIds.has(e.id));
-      acceptState(d.state, d.serverTime);
-    } else {
-      queue = queue.filter((e) => !rejectedIds.has(e.id));
-      persistClient();
-    }
-    setOnline(true);
   } catch (err) {
     if (err && err.status === 401) return badKey();
     setOnline(false);
@@ -280,7 +302,9 @@ async function loadRefs() {
     if (d && d.ok && d.refs) {
       refs = d.refs;
       refsVersion = d.refsVersion || null;
-      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion }));
+      canAdmin = d.canAdmin !== false;
+      if (!canAdmin && ui.screen === "admin") ui.screen = "auto";
+      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
       setOnline(true);
       render();
       return true;
@@ -298,6 +322,7 @@ function loadCachedRefs() {
     if (c && c.refs && c.refs.reasons) {
       refs = c.refs;
       refsVersion = c.refsVersion || null;
+      canAdmin = c.canAdmin !== false;
     }
   } catch { /* кеш пуст */ }
 }
@@ -338,17 +363,12 @@ function buildView() {
     open,
     crew: s.crew ? { ...s.crew } : null,
     closed: !!s.closed,
-    shift: s.shift,
+    shift: refs ? core.shiftOf(nowMs(), refs.settings.schedule) : s.shift,
     dataFromMs: s.dataFromMs ?? null,
     runningSinceMs: s.runningSinceMs ?? null,
     segments: (s.segments || []).filter((x) => !open || x.downtimeId !== open.downtimeId || x.index !== open.index).map((x) => ({ ...x })),
   };
-  // Серверный closed означает «была сдача в этом периоде». Новый местный
-  // приём после неё подтверждён, если сервер вернул именно этого работника.
-  const lastShift = records.filter((r) => r.status === "saved" &&
-    ["shift_open", "shift_close"].includes(r.event.type))
-    .sort((a, b) => core.toMs(a.event.at) - core.toMs(b.event.at) || (a.event.seq || 0) - (b.event.seq || 0)).at(-1)?.event;
-  if (lastShift?.type === "shift_open" && s.crew?.at === lastShift.at) v.closed = false;
+  if (v.shift.startMs !== s.shift.startMs) { v.crew = null; v.closed = false; }
   for (const e of queue) applyEvent(v, e);
   // Первое нажатие ещё не дошло до сервера — учёт начался с него
   for (const e of queue) {
@@ -453,6 +473,7 @@ function applyEvent(v, e) {
       }
       break;
     case "shift_open":
+      if (t < v.shift.startMs || t >= v.shift.endMs) break;
       v.crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
       v.closed = false;
       break;
@@ -462,7 +483,7 @@ function applyEvent(v, e) {
         v.open.handovers = [...(v.open.handovers || []),
           { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }];
       }
-      if (v.crew && core.toMs(v.crew.at) > t) break;
+      if (t < v.shift.startMs || t >= v.shift.endMs || (v.crew && core.toMs(v.crew.at) > t)) break;
       v.crew = null;
       v.closed = true;
       break;
@@ -483,7 +504,7 @@ function shiftSummary(view) {
     const startMs = Math.max(view.open.startMs, shift.startMs);
     const endMs = Math.min(nowMs(), shift.endMs);
     if (endMs > startMs) {
-      segs.push({ downtimeId: view.open.downtimeId, index: view.open.index, startMs, endMs, reason: view.open.reason, manual: false, open: true });
+      segs.push({ downtimeId: view.open.downtimeId, index: view.open.index, startMs, endMs, durationMs: nowMs() - (view.open.since ?? view.open.startMs), reason: view.open.reason, manual: false, open: true });
     }
   }
   const parts = [];
@@ -494,7 +515,7 @@ function shiftSummary(view) {
       }
     } catch { /* битый отрезок — пропускаем */ }
   }
-  const sum = core.summarizeDay(parts, [shift], {});
+  const sum = core.summarizeDay(parts, [shift], { [shift.shiftNo]: view.dataFromMs != null }, { nowMs: nowMs(), dataFromMs: view.dataFromMs ?? nowMs() });
   return sum.shifts[0];
 }
 
@@ -529,7 +550,7 @@ function shiftDowntimes(view) {
       open: isOpen,
       // Начался в прошлую смену: часть продолжения или открытый простой старше начала смены
       continued: !!first.continued || (isOpen && !!view.open && (view.open.since ?? view.open.startMs) < shift.startMs),
-      minutes: Math.round(g.segs.reduce((a, s) => a + ((s.open || s.endMs === null ? nowMs() : s.endMs) - s.startMs), 0) / 60000),
+      minutes: Math.round(g.segs.reduce((a, s) => a + Math.max(0, Math.min(s.open || s.endMs === null ? nowMs() : s.endMs, shift.endMs) - Math.max(s.startMs, shift.startMs)), 0) / 60000),
       reason: last.reason ?? null,
       note: last.note ?? null,
       action: last.action ?? null,
@@ -749,6 +770,7 @@ function renderTopbar() {
       ? "На планшете не сохранено. Не закрывайте страницу. Освободите память и повторите сохранение."
       : rejected ? `Нужно исправить: ${rejected}. Текст сохранён — откройте запись ниже.`
       : queue.length ? `Сохранено на планшете · ждут отправки: ${queue.length}`
+      : ui.screen === "closeConfirm" ? "Закрытие смены ещё не отправлено"
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
       : "Нет связи с сервером";
@@ -777,14 +799,14 @@ function renderTopbar() {
     if (!admin.dataset.bound) {
       admin.dataset.bound = "1";
       admin.addEventListener("click", () => {
-        if (!key || !refs) return;
+        if (!key || !refs || !canAdmin) return;
         if (ui.screen !== "admin") ui.adminBack = ui.screen;
         ui.admin = null;
         window.scrollTo(0, 0);
         go("admin");
       });
     }
-    admin.hidden = !key;
+    admin.hidden = !key || !canAdmin;
     admin.classList.toggle("is-on", ui.screen === "admin");
   }
 }
@@ -799,7 +821,7 @@ function renderRejects() {
   }
   box.hidden = false;
   fill(box,
-    storageErrors.size ? h("button", { class: "btn", onclick: () => { persistClient(); render(); } }, "Повторить сохранение на планшете") : null,
+    storageErrors.size ? h("button", { class: "btn", onclick: () => { persistQueue(); render(); } }, "Повторить сохранение на планшете") : null,
     rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => dismissRejected(rejected.map((r) => r.event.id)) },
       `Убрать все отклонённые записи (${rejected.length})`) : null,
     ...rejected.map((r) => h("div", { class: "reject" },
@@ -826,7 +848,9 @@ function dismissRejected(ids) {
 function humanError(code) {
   const messages = {
     overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в итоге смены.",
-    bad_time: "Время ещё не наступило или пуск указан раньше остановки либо последней смены причины. Проверьте время записи и часы планшета.",
+    bad_time: "Дата должна быть не старше 40 суток, длительность ручного простоя — не больше 7 суток. Пуск не может быть раньше остановки или смены причины. Проверьте время записи.",
+    not_open: "Нет открытого простоя для этого пуска. Обновите состояние стана.",
+    too_large: "Запись слишком большая. Сократите текст и повторите отправку.",
     bad_range: "Конец простоя должен быть позже начала. Исправьте время.",
     bad_request: "Не удалось принять данные. Проверьте время и ответы, затем отправьте запись снова.",
     bad_event: "Не удалось принять запись. Проверьте ответы и отправьте её снова.",
@@ -838,9 +862,12 @@ function eventTitle(e) {
   return ({ stop: "остановка", start: "пуск", reason: "причина", split: "смена причины", fix: "исправление", manual: "простой вручную", shift_open: "приём смены", shift_close: "закрытие смены" })[e.type] || "запись";
 }
 function receiptStatus(list) {
+  const active = list.filter((r) => !["dismissed", "replaced"].includes(r.status));
+  if (list.length && !active.length) return list.some((r) => r.status === "dismissed") ? "Запись убрана с планшета" : "Запись заменена";
+  list = active;
   if (list.some((r) => r.status === "rejected")) return "Нужно исправить";
   if (!list.length || list.some((r) => r.status === "pending")) {
-    return storageErrors.has(SESSION_KEY) ? "На планшете не сохранено" : "Сохранено на планшете";
+    return storageErrors.has(QUEUE_KEY) ? "На планшете не сохранено" : "Сохранено на планшете";
   }
   return "Принято сервером";
 }
@@ -1000,10 +1027,11 @@ function loadAdmin() {
   if (adminReq) return;
   ui.admin = { loading: true };
   adminReq = api("/api/admin/settings")
-    .then((d) => { ui.admin = { settings: adminDraft(d.settings) }; })
+    .then((d) => { ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion }; })
     .catch((err) => {
       if (err && err.status === 401) badKey();
-      ui.admin = { loadError: err && err.status === 404
+      ui.admin = { loadError: err && err.status === 403 ? (err.data?.message || "Раздел «Администратор» открывается только ключом владельца.")
+        : err && err.status === 404
         ? "Сервер ещё не умеет хранить настройки: его нужно обновить."
         : "Нет связи с сервером. Настройки открываются и сохраняются только при связи." };
     })
@@ -1043,8 +1071,8 @@ async function saveAdmin() {
     contacts: s.contacts.map((c) => ({ title: c.title.trim().replace(/\s+/g, " "), tel: c.tel.trim() })),
   };
   try {
-    const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings }) });
-    ui.admin = { settings: adminDraft(d.settings) };
+    const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings, refsVersion: a.refsVersion }) });
+    ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion };
     showToast("Настройки сохранены");
     await loadRefs();
   } catch (err) {
@@ -1057,6 +1085,7 @@ async function saveAdmin() {
   render();
 }
 function renderAdmin(main) {
+  if (!canAdmin) return go("auto");
   const back = ui.adminBack && ui.adminBack !== "admin" ? ui.adminBack : "auto";
   const leave = () => {
     if (ui.admin && ui.admin.dirty && !ui.admin.leaveArmed) {
@@ -1235,18 +1264,36 @@ function renderFio(main, view) {
   else if (!fio.first) main.querySelector("#fio-first")?.focus();
 }
 
+function crewHours(id) {
+  const shifts = refs.settings.schedule.shifts;
+  const i = shifts.findIndex((s) => String(s.no) === String(id));
+  return i < 0 ? "" : `${shifts[i].start}–${shifts[(i + 1) % shifts.length].start}`;
+}
+
 function renderCrew(main, view) {
   if (ui.fio) return renderFio(main, view);
   const crews = refs.crews || [];
   const single = crews.length === 1 ? crews[0].id : null;
   const chosen = ui.crewId || single;
   const kids = [];
+  if (ui.confirmCrew) {
+    const current = core.shiftOf(nowMs(), refs.settings.schedule);
+    return fill(main, question(`Сейчас идёт Смена ${current.shiftNo} (${fmtClock(current.startMs)}–${fmtClock(current.endMs)}). Принять Смену ${ui.confirmCrew}?`),
+      h("button", { class: "btn primary", onclick: () => { ui.crewId = ui.confirmCrew; ui.confirmCrew = null; render(); } }, "Принять выбранную смену"),
+      h("button", { class: "btn", onclick: () => { ui.confirmCrew = null; render(); } }, "Вернуться к выбору"));
+  }
   if (!chosen) {
     if (ui.crewBack) kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
     kids.push(board(view), stepLine(1, 2), question("Выберите вашу смену"),
       h("p", { class: "muted", text: `Сейчас: ${periodLabel(view.shift)}` }));
     kids.push(h("div", { class: "tiles" },
-      crews.map((c) => h("button", { class: "tile", onclick: () => { ui.crewId = c.id; render(); } }, c.title))
+      crews.map((c) => h("button", { class: "tile" + (String(c.id) === String(view.shift.shiftNo) ? " current-shift" : ""),
+        "aria-current": String(c.id) === String(view.shift.shiftNo) ? "true" : null,
+        onclick: () => {
+          if (String(c.id) !== String(core.shiftOf(nowMs(), refs.settings.schedule).shiftNo)) ui.confirmCrew = c.id;
+          else ui.crewId = c.id;
+          render();
+        } }, c.title, String(c.id) === String(view.shift.shiftNo) ? " · сейчас" : ""))
     ));
     kids.push(metrics());
   } else {
@@ -1264,7 +1311,7 @@ function renderCrew(main, view) {
     const tile = (p) => h("button", { class: "tile", onclick: () => pick(p) }, p.name);
     const own = (refs.people || []).filter((p) => p.crewId === chosen);
     kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question("Мастер, который принимает смену"),
-      h("p", { class: "muted", text: `${crewTitle(chosen)} · ${periodLabel(view.shift)}` }),
+      h("p", { class: "muted", text: `${crewTitle(chosen)} · по расписанию ${crewHours(chosen)}` }),
       h("div", { class: "tiles" }, own.map(tile)),
       h("button", { class: "btn", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"));
   }
@@ -1998,7 +2045,7 @@ function renderRestartAction(main, view) {
   // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
   const billet = needBillet ? h("input", { id: "restart-billet", type: "text", maxlength: "8",
     inputmode: "decimal", autocomplete: "off", placeholder: "Тонны, 0 — если брака нет", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
-  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите, сколько заготовки испорчено, в тоннах. Если брака нет — 0." }) : null;
+  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
   if (needBillet) {
     billet.value = rw.billet ?? "";
     billetError.hidden = true;
@@ -2273,6 +2320,7 @@ function billetLine(d, original) {
 function missingFields(segment) {
   const missing = [];
   if (!reasonRef(segment.reason)) missing.push("причина");
+  if (!String(segment.action || "").trim()) missing.push("что сделали");
   if (isOther(segment.reason) && !validAction(segment.note)) missing.push("описание иной причины");
   return missing;
 }
@@ -2400,7 +2448,7 @@ function renderBillet(main, view) {
   const bl = ui.bl;
   if (!bl) return go("detail");
   const save = (value) => {
-    if (!validBillet(value)) return;
+    if (!validBillet(value)) return showToast("Укажите от 0 до 1000 тн.");
     ui.bl = null;
     ui.screen = "detail";
     send("fix", { downtimeId: bl.downtimeId, index: bl.index, billet: value });
@@ -2415,6 +2463,7 @@ function renderBillet(main, view) {
     Object.assign(input, { id: "billet-value" }),
     h("button", { class: "btn primary", onclick: () => {
       if (validBillet(input.value)) save(Number(input.value.trim().replace(",", ".")));
+      else showToast("Укажите от 0 до 1000 тн.");
     } }, "Сохранить"));
 }
 
@@ -2445,13 +2494,14 @@ function renderCloseConfirm(main, view) {
     ];
   }
   fill(main, backBtn("К проверке состояния стана", () => go("closeCheck")), question("Закрыть смену?"),
+    h("p", { class: "receipt", text: "Закрытие смены ещё не отправлено" }),
     receipt.length ? h("p", { class: "receipt", text: receiptStatus(receipt) }) : null,
     receipt.length && receiptStatus(receipt) === "Сохранено на планшете"
       ? h("p", { class: "muted", text: "Запись уйдёт на сервер, когда появится связь." }) : null,
     h("p", { text: view.open ? "Стан стоит. Простой перейдёт следующей смене, пуск отмечать не нужно. Напишите, что успели сделать по ремонту, — следующей смене будет проще."
       : "Стан работает. Закроем смену с записанными итогами." }),
     gaps.length ? h("div", { class: "handover-note" },
-      h("p", { text: "Есть незаполненные записи. Дополните их или закройте смену с пометкой — ничего выдумывать не нужно." }),
+      h("p", { text: `Без причины: ${gaps.filter((s) => s.missing.includes("причина")).length}. Без «что сделали»: ${gaps.filter((s) => s.missing.includes("что сделали")).length}. Дополните записи или закройте смену с пометкой.` }),
       gaps.map((s) => h("button", { class: "btn", onclick: () => openDetail(s.downtimeId, s.index) },
         `${fmtClock(s.startMs)} · дополнить: ${s.missing.join(", ")}`))) : h("p", { class: "muted", text: "У закрытых простоев указаны причина и выполненные работы." }),
     trouble ? h("p", { class: "error-text", text: `Есть записи, которые сервер не принял: ${trouble}. Они останутся на планшете для исправления.` }) : null,
@@ -2546,7 +2596,7 @@ function renderRepairField(main) {
   const time = ["at", "from", "to"].includes(field);
   const labels = { at: "Когда отметили?", from: "Когда стан встал?", to: "Когда стан пошёл?", note: e.type === "shift_close" ? "Пометка при закрытии смены" : "Что случилось?", action: "Что сделали?", billet: "Сколько брака, в тоннах?" };
   const input = time || field === "billet"
-    ? h("input", { type: time ? "datetime-local" : "number", min: field === "billet" ? "0" : null, step: field === "billet" ? "0.1" : null, "aria-label": labels[field] })
+    ? h("input", { type: time ? "datetime-local" : "number", min: field === "billet" ? "0" : null, max: field === "billet" ? "1000" : null, step: field === "billet" ? "0.1" : null, "aria-label": labels[field] })
     : h("textarea", { class: "note-input", maxlength: String(NOTE_MAX), "aria-label": labels[field], placeholder: field === "action" ? actionHint(e.reason) : noteHint(e.reason) });
   input.value = time ? localTimeValue(core.toMs(e[field])) : e[field] ?? "";
   const error = h("p", { class: "error-text", hidden: true });
@@ -2558,15 +2608,15 @@ function renderRepairField(main) {
     repair.values[field] = input.value;
     const value = time ? parseLocalTime(input.value) : field === "billet" ? (input.value.trim() ? Number(input.value) : NaN) : input.value;
     repair.invalid[field] = (time && (!Number.isFinite(value) || value > nowMs())) ||
-      (field === "billet" && (!Number.isFinite(value) || value < 0));
+      (field === "billet" && (!Number.isFinite(value) || value < 0 || value > 1000));
     if (!repair.invalid[field]) e[field] = time ? new Date(value).toISOString() : value;
   });
   fill(main, backBtn("К сохранённой записи", () => go("repair")),
     question(labels[field]), time ? h("p", { class: "muted", text: "Дата и время по Москве. Меняйте время только если оно было указано неверно." }) : null,
     input, error, h("button", { class: "btn primary", onclick: () => {
       const value = time ? parseLocalTime(input.value) : field === "billet" ? (input.value.trim() ? Number(input.value) : NaN) : input.value;
-      if ((time && (!Number.isFinite(value) || value > nowMs())) || (field === "billet" && (!Number.isFinite(value) || value < 0))) {
-        error.textContent = time ? "Укажите прошедшее время." : "Укажите вес от нуля."; error.hidden = false; return;
+      if ((time && (!Number.isFinite(value) || value > nowMs())) || (field === "billet" && (!Number.isFinite(value) || value < 0 || value > 1000))) {
+        error.textContent = time ? "Укажите прошедшее время." : "Укажите вес от 0 до 1000 тн."; error.hidden = false; return;
       }
       e[field] = time ? new Date(value).toISOString() : value;
       repair.invalid[field] = false;
@@ -2661,6 +2711,10 @@ async function boot() {
 }
 
 takeKeyFromHash();
+// Общую ссылку вставили в уже открытую вкладку: страница сама не перезагружается — берём ключ и перезапускаемся
+window.addEventListener("hashchange", () => {
+  if (/(?:^#|&)key=/.test(location.hash)) { takeKeyFromHash(); location.reload(); }
+});
 key = readStore(STORE_KEY) || null;
 loadCachedRefs();
 
