@@ -149,7 +149,8 @@ export function createEventStore(db) {
       segments,
       day,
       summary: summarizeDay(segments, [shift], { [shift.shiftNo]: ownEvents.length > 0 || !!ping }),
-      closed: ownEvents.some((e) => e.type === "shift_close"),
+      // Закрыта, если последним в смене был приём-сдача «сдача»: после повторного приёма смена снова открыта
+      closed: ownEvents.findLast((e) => e.type === "shift_open" || e.type === "shift_close")?.type === "shift_close",
       dataFromMs: firstEventMs(events),
       runningSinceMs: lastRunningMs(events, nowMs),
     };

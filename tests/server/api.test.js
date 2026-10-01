@@ -375,3 +375,23 @@ test("state.day: обе смены, обрезка по суткам, причи
     await app.close();
   }
 });
+
+test("state: повторный приём после сдачи открывает смену для всех устройств", async () => {
+  const { app, base } = await start();
+  try {
+    await postEvents(base, [
+      { id: "so-1", type: "shift_open", at: "2026-01-01T11:00:00Z", crewId: "1", personId: "p1", personName: "Первый" },
+      { id: "sc-1", type: "shift_close", at: "2026-01-01T11:10:00Z", crewId: "1", personId: "p1" },
+    ]);
+    let { state } = await (await fetch(`${base}/api/state`, { headers: HEAD })).json();
+    assert.equal(state.closed, true);
+    await postEvents(base, [
+      { id: "so-2", type: "shift_open", at: "2026-01-01T11:20:00Z", crewId: "1", personId: "p2", personName: "Второй" },
+    ]);
+    ({ state } = await (await fetch(`${base}/api/state`, { headers: HEAD })).json());
+    assert.equal(state.closed, false);
+    assert.equal(state.crew.personName, "Второй");
+  } finally {
+    await app.close();
+  }
+});
