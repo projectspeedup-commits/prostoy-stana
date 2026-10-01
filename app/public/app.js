@@ -2305,10 +2305,10 @@ window.addEventListener("pagehide", persistClient);
 async function boot() {
   if (!key) { render(); return; }
   render();
-  if (!refs) {
-    const ok = await loadRefs();
-    if (!ok && !refs) { render(); return; }
-  }
+  // Справочник берём с сервера при каждом открытии, если есть связь: кэш на устройстве —
+  // только на случай без сети. Иначе после выкладки страница могла работать со старыми причинами
+  const ok = await loadRefs();
+  if (!ok && !refs) { render(); return; }
   await loadState();
   render();
   flush();
