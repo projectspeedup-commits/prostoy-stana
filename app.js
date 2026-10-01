@@ -1369,6 +1369,8 @@ function renderForgotStop(main, view) {
     return;
   }
   if (fw.step === 3) fw.step = 4; // шага «Что именно?» больше нет
+  if (fw.reason) fw.reason = core.reasonKey(fw.reason);
+  if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
   if (fw.step === 2) {
     fill(main, ...top(), question("Почему стоит?"),
       reasonGroups(fw, () => { fw.step = 4; render(); }),
@@ -1454,6 +1456,8 @@ function startRestartReasonWizard() {
 function renderRestartConfirm(main, view) {
   const rw = ui.rw;
   if (!restartMatches(view, rw)) return renderStaleRestart(main);
+  if (rw.reason) rw.reason = core.reasonKey(rw.reason);
+  if (!reasonRef(rw.reason)) return startRestartReasonWizard();
   fill(main,
     restartBack(),
     stepLine(rw.thenClose ? 2 : 1, rw.thenClose ? 3 : 2),
@@ -1565,6 +1569,8 @@ function renderReasonWizard(main, view) {
   }
 
   if (wz.step === 2) wz.step = 3; // шага «Что именно?» больше нет
+  if (wz.reason) wz.reason = core.reasonKey(wz.reason);
+  if (wz.step >= 2 && !reasonRef(wz.reason)) wz.step = 1;
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
@@ -1606,7 +1612,8 @@ function finishReasonWizard(rawNote) {
     showToast("Простой уже изменился. Проверьте стан; текст остаётся в черновике."); return;
   }
   const note = String(rawNote || "").trim();
-  if (!reasonRef(wz.reason) || (needsNote(wz.reason) && !validAction(note))) return;
+  if (!reasonRef(wz.reason)) { wz.step = 1; render(); return; }
+  if (needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
   const noteField = { note };
   if (wz.mode === "repair") {
     ui.repair.event.reason = wz.reason;
@@ -1824,6 +1831,8 @@ function renderManual(main, view) {
     return;
   }
   if (mw.step === 4) mw.step = 5; // шага «Что именно?» больше нет
+  if (mw.reason) mw.reason = core.reasonKey(mw.reason);
+  if (mw.step >= 5 && mw.step <= 6 && !reasonRef(mw.reason)) mw.step = 3;
   if (mw.step === 3) {
     fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, () => { mw.step = 5; mw.error = ""; render(); }));
     return;
