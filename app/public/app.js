@@ -698,6 +698,11 @@ function renderTopbar() {
     home.dataset.bound = "1";
     home.addEventListener("click", () => {
       if (isDraftScreen(ui.screen)) ui.resume = ui.screen;
+      // Приём смены начинается заново: иначе главный экран снова открывал выбор мастера
+      ui.crewId = null;
+      ui.fio = null;
+      ui.crewBack = false;
+      window.scrollTo(0, 0);
       go("auto");
     });
   }
