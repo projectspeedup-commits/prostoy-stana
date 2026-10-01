@@ -1,5 +1,5 @@
 // Офлайн-кеш страницы рабочего. /api/* не кешируется никогда.
-const CACHE = "stan-v28";
+const CACHE = "stan-v29";
 const ASSETS = [
   "./",
   "./index.html",
@@ -19,7 +19,8 @@ const ASSETS = [
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    // Мимо кэша браузера: после выкладки GitHub Pages до 10 минут отдаёт старые копии из него
+    caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting())
   );
 });
 
@@ -36,8 +37,10 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin || url.pathname.includes("/api/")) return;
   // Сеть вперёд, кеш — запасной вариант; удачный ответ обновляет кеш.
+  // Каждый раз сверяемся с сервером (no-cache): неизменённый файл приходит коротким ответом 304,
+  // а свежая выкладка видна сразу, без ожидания срока кэша браузера
   e.respondWith(
-    fetch(e.request)
+    fetch(new Request(e.request.url, { cache: "no-cache", credentials: "same-origin" }))
       .then((r) => {
         if (r.ok) {
           const copy = r.clone();
