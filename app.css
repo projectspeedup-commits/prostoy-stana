@@ -1,12 +1,306 @@
-/* Страница рабочего: тёмная тема, крупные элементы под перчатки.
-   Версия 2: пошаговые экраны, один вопрос — один экран. */
-:root { color-scheme: dark; }
+/* Страница рабочего: две темы (тёмная и светлая), крупные элементы под перчатки.
+   Версия 2: пошаговые экраны, один вопрос — один экран.
+
+   Все цвета — токены (CSS-переменные), заданные только в трёх блоках ниже:
+   тёмная тема (по умолчанию), светлая по настройке устройства и светлая по выбору
+   рабочего (<html data-theme="light">). Вне этих блоков цветов нет — только var(--…).
+   Тема сама ставится скриптом theme.js; кнопка #theme в шапке переключает её. */
+
+/* ===== Тёмная тема: значения прежнего оформления, менять нельзя ===== */
+:root {
+  color-scheme: dark;
+
+  /* Фоны и поверхности */
+  --bg: #14161a;               /* страница, шапка */
+  --surface: #1b1e24;          /* табло, время смены, вкладки, фон графиков */
+  --surface-2: #22252b;        /* поля ввода, плитки, карточки */
+  --stat-bg: #22252b;          /* плашки внутри табло */
+  --meter-track: #22252b;      /* дорожка полос в метриках */
+
+  /* Текст */
+  --text: #f2f4f8;             /* основной */
+  --text-2: #f0f2f5;           /* значения на табло, подписи графиков */
+  --text-soft: #b7bdc7;        /* пояснения, подписи шкалы */
+  --text-sub: #c5cbd5;         /* подзаголовки групп причин, значения зон */
+  --text-muted: #a0a6b1;       /* приглушённый */
+  --text-attn: #ffcf70;        /* строка сохранения: нужно внимание */
+  --text-good: #3fb950;        /* число/состояние: хорошо, работает */
+  --text-bad: #f85149;         /* число плохо, текст ошибки */
+  --text-stopped: #ff6b6b;     /* стан стоит */
+  --blue: #58a6ff;             /* акцент: плановое, выбранная вкладка */
+  --placeholder: #aeb6c4;      /* подсказка в пустом поле */
+
+  /* Рамки и линии */
+  --border: #3a3f4a;           /* рамки блоков, разделители */
+  --border-strong: #4a505c;    /* рамки кнопок, полей, карточек */
+  --border-note: #626b7a;      /* линии вокруг записки смене */
+  --line-soft: #2d333b;        /* тонкие разделители блока метрик */
+  --focus: #8cc8ff;            /* рамка фокуса и каретка */
+  --selection-bg: #245477;     /* выделенный текст: фон */
+  --selection-text: #fff;      /* выделенный текст: цвет */
+
+  /* Насыщенные кнопки и пилюли */
+  --on-solid: #fff;            /* текст на цветных пилюлях и плашке «Записано» */
+  --btn-text: #f2f4f8;         /* текст на больших кнопках «СТАН ВСТАЛ» / «СТАН ПОШЁЛ» */
+  --green-solid: #1a7f37;      /* зелёная кнопка, пилюля, плашка «Записано» */
+  --green-solid-edge: #2ea043; /* рамка зелёной кнопки */
+  --red-solid: #c5221f;        /* красная кнопка, пилюля */
+  --red-solid-edge: #da3633;   /* рамка красной кнопки */
+  --demo-solid: #6e4bd8;       /* пилюля «демо» */
+  --pill-bg: #3a3e46;          /* обычная пилюля («Связаться», переключатель темы) */
+  --pill-home-bg: #2d333b;     /* пилюля «На главный экран» */
+
+  /* Акценты и их фоны */
+  --green: #2ea043;            /* работа, успех: рамки, графики */
+  --green-bg: #14532d;         /* фон полосы «стан работает», выбранной плитки */
+  --red: #da3633;              /* простой, остановка: рамки, графики */
+  --red-bg: #5c1a18;           /* фон полосы «стан стоит», отказов */
+  --warn: #e3b341;             /* предупреждение: плашки и метки */
+  --on-warn: #1a1c20;          /* текст на жёлтом */
+  --warn-edge: #e3b341;        /* рамка жёлтых карточек и кнопок */
+  --warn-bg: #4a3a10;          /* фон жёлтых карточек и кнопок */
+  --tab-on-bg: #1f3350;        /* фон выбранной вкладки метрик */
+
+  /* Нажатие и тень */
+  --press-btn: brightness(1.25);  /* кнопка под пальцем */
+  --press-tile: brightness(1.3);  /* плитка под пальцем */
+  --shadow-toast: 0 6px 24px rgba(0, 0, 0, 0.5);
+
+  /* Графики метрик */
+  --chart-grid: #2d333b;       /* сетка */
+  --chart-axis: #6e7681;       /* ось и рамка «нет данных» в легенде */
+  --chart-0: #da3633;          /* доли кольца по порядку */
+  --chart-1: #e3b341;
+  --chart-2: #58a6ff;
+  --chart-3: #a371f7;
+  --chart-4: #3fb950;
+  --chart-5: #f778ba;
+  --chart-6: #8b949e;
+
+  /* Зоны причин простоя в метриках и на выборе группы */
+  --rz-work: #2ea043;
+  --rz-plan: #ffffff;
+  --rz-unplanned: #e3b341;
+  --rz-failure: #da3633;
+  --mark-border: #808895;      /* рамка квадратика зоны */
+
+  /* Шкала суток (timeline.css) */
+  --ds-bg: #20242b;            /* карточка шкалы */
+  --ds-track: #262a32;         /* фон строки */
+  --ds-faint: #6b7280;         /* подпись будущего часа, пунктир границы смен */
+  --ds-future-border: #3a3f4a; /* рамка будущей клетки (пунктир) */
+  --ds-now: #f2f4f8;           /* рамка и черта «сейчас», плашка времени */
+  --ds-now-text: #16181c;      /* текст на плашке времени */
+  --ds-now-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+  --ds-sel: #6ea8fe;           /* выбранная строка */
+  --ds-shift-bg: #282e38;      /* заголовок смены */
+  --ds-shift-active-bg: #333b48;
+  --ds-shift-active-text: #ffffff;
+  --ds-details-bg: #16181c;    /* подробности по нажатию */
+  --ds-legend-text: #e6e9ee;
+  --z-work: #2fd35f;           /* работает */
+  --z-plan: #f5f7fa;           /* перевалка */
+  --z-plan-edge: transparent;  /* рамка перевалки на шкале: в тёмной теме не нужна */
+  --z-plan-chip-edge: #3a3f4a; /* рамка квадрата перевалки в легенде */
+  --z-unplanned: #ffc93c;      /* внеплановый простой */
+  --z-failure: #ff5252;        /* авария */
+  --z-nodata: #565d66;         /* нет данных */
+}
+
+/* ===== Светлая тема по настройке устройства (если тема не выбрана вручную) =====
+   Значения совпадают с блоком :root[data-theme="light"] ниже — менять в обоих. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #e9edf2;
+    --surface: #ffffff;
+    --surface-2: #ffffff;
+    --stat-bg: #f0f3f7;
+    --meter-track: #d3dae3;
+
+    --text: #12161c;
+    --text-2: #12161c;
+    --text-soft: #3a4250;
+    --text-sub: #414a58;
+    --text-muted: #4a5463;
+    --text-attn: #8a4b00;
+    --text-good: #17702f;
+    --text-bad: #b61f29;
+    --text-stopped: #b4232a;
+    --blue: #0a5fc4;
+    --placeholder: #5a6474;
+
+    --border: #aab3c0;
+    --border-strong: #6c7788;
+    --border-note: #8a94a4;
+    --line-soft: #d3d9e1;
+    --focus: #0969da;
+    --selection-bg: #b9d9fb;
+    --selection-text: #0b1a2b;
+
+    --on-solid: #fff;
+    --btn-text: #ffffff;
+    --green-solid: #1a7f37;
+    --green-solid-edge: #0f5a26;
+    --red-solid: #c5221f;
+    --red-solid-edge: #8f1513;
+    --demo-solid: #6e4bd8;
+    --pill-bg: #d3dae3;
+    --pill-home-bg: #c6cfdb;
+
+    --green: #1f883d;
+    --green-bg: #d3efdb;
+    --red: #cf222e;
+    --red-bg: #f9d3d0;
+    --warn: #f0b429;
+    --on-warn: #1a1c20;
+    --warn-edge: #a8690a;
+    --warn-bg: #fff0bf;
+    --tab-on-bg: #d8e8fb;
+
+    --press-btn: brightness(0.88);
+    --press-tile: brightness(0.88);
+    --shadow-toast: 0 6px 24px rgba(0, 0, 0, 0.28);
+
+    --chart-grid: #dde2e9;
+    --chart-axis: #57606a;
+    --chart-0: #cf222e;
+    --chart-1: #bf8700;
+    --chart-2: #0969da;
+    --chart-3: #8250df;
+    --chart-4: #1a7f37;
+    --chart-5: #bf3989;
+    --chart-6: #6e7781;
+
+    --rz-work: #1faa4b;
+    --rz-plan: #8f99a8;
+    --rz-unplanned: #f2a900;
+    --rz-failure: #e5383b;
+    --mark-border: #5f6978;
+
+    --ds-bg: #ffffff;
+    --ds-track: #e3e8ee;
+    --ds-faint: #5f6877;
+    --ds-future-border: #7d8797;
+    --ds-now: #12161c;
+    --ds-now-text: #ffffff;
+    --ds-now-shadow: 0 0 4px rgba(255, 255, 255, 0.9);
+    --ds-sel: #0969da;
+    --ds-shift-bg: #e3e8ef;
+    --ds-shift-active-bg: #ccd6e3;
+    --ds-shift-active-text: #0b0f15;
+    --ds-details-bg: #f3f5f8;
+    --ds-legend-text: #1f2630;
+    --z-work: #1faa4b;
+    --z-plan: #c9d0da;
+    --z-plan-edge: #5f6978;
+    --z-plan-chip-edge: #5f6978;
+    --z-unplanned: #f2a900;
+    --z-failure: #e5383b;
+    --z-nodata: #98a1ae;
+  }
+}
+
+/* ===== Светлая тема по выбору рабочего (кнопка #theme, theme.js ставит data-theme) ===== */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #e9edf2;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --stat-bg: #f0f3f7;
+  --meter-track: #d3dae3;
+
+  --text: #12161c;
+  --text-2: #12161c;
+  --text-soft: #3a4250;
+  --text-sub: #414a58;
+  --text-muted: #4a5463;
+  --text-attn: #8a4b00;
+  --text-good: #17702f;
+  --text-bad: #b61f29;
+  --text-stopped: #b4232a;
+  --blue: #0a5fc4;
+  --placeholder: #5a6474;
+
+  --border: #aab3c0;
+  --border-strong: #6c7788;
+  --border-note: #8a94a4;
+  --line-soft: #d3d9e1;
+  --focus: #0969da;
+  --selection-bg: #b9d9fb;
+  --selection-text: #0b1a2b;
+
+  --on-solid: #fff;
+  --btn-text: #ffffff;
+  --green-solid: #1a7f37;
+  --green-solid-edge: #0f5a26;
+  --red-solid: #c5221f;
+  --red-solid-edge: #8f1513;
+  --demo-solid: #6e4bd8;
+  --pill-bg: #d3dae3;
+  --pill-home-bg: #c6cfdb;
+
+  --green: #1f883d;
+  --green-bg: #d3efdb;
+  --red: #cf222e;
+  --red-bg: #f9d3d0;
+  --warn: #f0b429;
+  --on-warn: #1a1c20;
+  --warn-edge: #a8690a;
+  --warn-bg: #fff0bf;
+  --tab-on-bg: #d8e8fb;
+
+  --press-btn: brightness(0.88);
+  --press-tile: brightness(0.88);
+  --shadow-toast: 0 6px 24px rgba(0, 0, 0, 0.28);
+
+  --chart-grid: #dde2e9;
+  --chart-axis: #57606a;
+  --chart-0: #cf222e;
+  --chart-1: #bf8700;
+  --chart-2: #0969da;
+  --chart-3: #8250df;
+  --chart-4: #1a7f37;
+  --chart-5: #bf3989;
+  --chart-6: #6e7781;
+
+  --rz-work: #1faa4b;
+  --rz-plan: #8f99a8;
+  --rz-unplanned: #f2a900;
+  --rz-failure: #e5383b;
+  --mark-border: #5f6978;
+
+  --ds-bg: #ffffff;
+  --ds-track: #e3e8ee;
+  --ds-faint: #5f6877;
+  --ds-future-border: #7d8797;
+  --ds-now: #12161c;
+  --ds-now-text: #ffffff;
+  --ds-now-shadow: 0 0 4px rgba(255, 255, 255, 0.9);
+  --ds-sel: #0969da;
+  --ds-shift-bg: #e3e8ef;
+  --ds-shift-active-bg: #ccd6e3;
+  --ds-shift-active-text: #0b0f15;
+  --ds-details-bg: #f3f5f8;
+  --ds-legend-text: #1f2630;
+  --z-work: #1faa4b;
+  --z-plan: #c9d0da;
+  --z-plan-edge: #5f6978;
+  --z-plan-chip-edge: #5f6978;
+  --z-unplanned: #f2a900;
+  --z-failure: #e5383b;
+  --z-nodata: #98a1ae;
+}
+/* ===== Конец блоков токенов ===== */
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
   font: 20px/1.4 system-ui, sans-serif;
-  background: #14161a;
-  color: #f2f4f8;
+  background: var(--bg);
+  color: var(--text);
   min-height: 100dvh;
 }
 
@@ -18,7 +312,7 @@ body {
   gap: 12px;
   align-items: center;
   padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
-  background: #14161a;
+  background: var(--bg);
 }
 .pill {
   display: inline-block;
@@ -26,12 +320,12 @@ body {
   border-radius: 999px;
   font-size: 0.9em;
   font-weight: 700;
-  background: #3a3e46;
+  background: var(--pill-bg);
 }
-.pill.ok { background: #1a7f37; color: #fff; }
-.pill.bad { background: #c5221f; color: #fff; }
-.pill.warn { background: #e3b341; color: #1a1c20; }
-.pill.demo { background: #6e4bd8; color: #fff; }
+.pill.ok { background: var(--green-solid); color: var(--on-solid); }
+.pill.bad { background: var(--red-solid); color: var(--on-solid); }
+.pill.warn { background: var(--warn); color: var(--on-warn); }
+.pill.demo { background: var(--demo-solid); color: var(--on-solid); }
 
 main {
   max-width: 760px;
@@ -41,16 +335,16 @@ main {
 h1 { font-size: 1.5em; margin: 4px 0 16px; }
 h1.q { font-size: 1.6em; font-weight: 800; margin: 12px 0 16px; }
 h2 { font-size: 1.15em; margin: 20px 0 12px; }
-.muted { color: #a0a6b1; }
-.hint { color: #a0a6b1; font-size: 0.85em; margin: 8px 2px 0; }
-.step { color: #a0a6b1; font-size: 0.85em; margin: 12px 0 0; }
+.muted { color: var(--text-muted); }
+.hint { color: var(--text-muted); font-size: 0.85em; margin: 8px 2px 0; }
+.step { color: var(--text-muted); font-size: 0.85em; margin: 12px 0 0; }
 
 button, input, textarea {
   font: inherit;
   color: inherit;
   border-radius: 14px;
-  border: 2px solid #4a505c;
-  background: #22252b;
+  border: 2px solid var(--border-strong);
+  background: var(--surface-2);
 }
 input {
   width: 100%;
@@ -81,25 +375,25 @@ input {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
-.btn:active { filter: brightness(1.25); }
-.btn.primary { background: #1a7f37; border-color: #2ea043; }
-.btn.danger { background: #c5221f; border-color: #da3633; }
-.btn.warn-btn { background: #4a3a10; border-color: #e3b341; }
+.btn:active { filter: var(--press-btn); }
+.btn.primary { background: var(--green-solid); border-color: var(--green-solid-edge); color: var(--btn-text); }
+.btn.danger { background: var(--red-solid); border-color: var(--red-solid-edge); color: var(--btn-text); }
+.btn.warn-btn { background: var(--warn-bg); border-color: var(--warn-edge); }
 .btn:disabled { opacity: 0.45; }
 
 /* Кнопка «Назад»: первая строка вложенного экрана, серая рамка, не путается с действием */
 .btn.back {
   background: transparent;
-  border-color: #4a505c;
-  color: #a0a6b1;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
   text-align: left;
   font-weight: 400;
   margin-top: 0;
 }
 .btn-flat {
   background: transparent;
-  border-color: #4a505c;
-  color: #a0a6b1;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
   font-weight: 400;
 }
 .btn-inline {
@@ -140,8 +434,8 @@ input {
   margin-top: 12px;
   font-weight: 700;
 }
-.bar.green { background: #14532d; border: 2px solid #2ea043; }
-.bar.red { background: #5c1a18; border: 2px solid #da3633; }
+.bar.green { background: var(--green-bg); border: 2px solid var(--green); }
+.bar.red { background: var(--red-bg); border: 2px solid var(--red); }
 .timer {
   display: block;
   font-size: 2.6em;
@@ -165,21 +459,21 @@ input {
   font-weight: 700;
   text-align: center;
   cursor: pointer;
-  background: #22252b;
-  border: 2px solid #4a505c;
+  background: var(--surface-2);
+  border: 2px solid var(--border-strong);
   border-radius: 14px;
   touch-action: manipulation;
 }
-.tile:active { filter: brightness(1.3); }
-.tile.unknown { background: #4a3a10; border-color: #e3b341; }
+.tile:active { filter: var(--press-tile); }
+.tile.unknown { background: var(--warn-bg); border-color: var(--warn-edge); }
 .tile .t-code {
   display: block;
   font-size: 0.75em;
   font-weight: 400;
-  color: #a0a6b1;
+  color: var(--text-muted);
   margin-top: 4px;
 }
-.tile.sel { border-color: #2ea043; background: #14532d; }
+.tile.sel { border-color: var(--green); background: var(--green-bg); }
 
 /* Две обычные кнопки в ряд */
 .row2 {
@@ -194,22 +488,22 @@ input {
   margin-top: 12px;
   padding: 14px 16px;
   border-radius: 14px;
-  background: #22252b;
-  border: 2px solid #4a505c;
+  background: var(--surface-2);
+  border: 2px solid var(--border-strong);
 }
-.card.ok { border-color: #2ea043; }
-.card.none { border-color: #e3b341; background: #4a3a10; }
+.card.ok { border-color: var(--green); }
+.card.none { border-color: var(--warn-edge); background: var(--warn-bg); }
 .card-title { font-weight: 800; font-size: 1.15em; }
 .card-line { font-weight: 700; margin-top: 6px; }
-.card-note { color: #a0a6b1; margin-top: 6px; }
+.card-note { color: var(--text-muted); margin-top: 6px; }
 
 /* Плашка «Стан всё ещё стоит?» */
 .banner-warn {
   margin-top: 12px;
   padding: 14px 16px;
   border-radius: 14px;
-  background: #e3b341;
-  color: #1a1c20;
+  background: var(--warn);
+  color: var(--on-warn);
   font-weight: 800;
   text-align: center;
 }
@@ -225,16 +519,16 @@ input {
   margin-top: 12px;
 }
 .stat {
-  background: #22252b;
-  border: 2px solid #4a505c;
+  background: var(--surface-2);
+  border: 2px solid var(--border-strong);
   border-radius: 14px;
   padding: 14px;
   text-align: center;
 }
 .stat .v { display: block; font-size: 1.4em; font-weight: 800; margin-top: 4px; }
-.stat.good .v { color: #3fb950; }
-.stat.bad .v { color: #f85149; }
-.stat.planned .v { color: #58a6ff; }
+.stat.good .v { color: var(--text-good); }
+.stat.bad .v { color: var(--text-bad); }
+.stat.planned .v { color: var(--blue); }
 
 /* Список простоев смены */
 .segs { margin-top: 12px; display: grid; gap: 12px; }
@@ -247,26 +541,26 @@ input {
   min-height: 64px;
   padding: 12px 14px;
   text-align: left;
-  background: #22252b;
-  border: 2px solid #4a505c;
+  background: var(--surface-2);
+  border: 2px solid var(--border-strong);
   border-radius: 14px;
   cursor: pointer;
 }
 .seg .when { font-weight: 800; font-variant-numeric: tabular-nums; }
-.seg .dur { color: #a0a6b1; font-variant-numeric: tabular-nums; }
+.seg .dur { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .seg .why { font-weight: 700; }
 .badge-need {
   display: inline-block;
-  background: #e3b341;
-  color: #1a1c20;
+  background: var(--warn);
+  color: var(--on-warn);
   border-radius: 8px;
   padding: 2px 10px;
   font-weight: 800;
   font-size: 0.85em;
 }
 .seg .badge-need { margin-top: 6px; }
-.seg.open { border-color: #da3633; }
-.seg .manual-tag { display: block; font-size: 0.75em; color: #a0a6b1; font-weight: 400; }
+.seg.open { border-color: var(--red); }
+.seg .manual-tag { display: block; font-size: 0.75em; color: var(--text-muted); font-weight: 400; }
 
 /* Крупное значение времени в мастере «Забыл отметить простой» */
 .stepval {
@@ -284,13 +578,13 @@ input {
   transform: translateX(-50%);
   bottom: calc(20px + env(safe-area-inset-bottom));
   z-index: 10;
-  background: #1a7f37;
-  border: 2px solid #2ea043;
-  color: #fff;
+  background: var(--green-solid);
+  border: 2px solid var(--green-solid-edge);
+  color: var(--on-solid);
   font-weight: 800;
   padding: 14px 28px;
   border-radius: 999px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-toast);
 }
 
 /* Отказы сервера */
@@ -303,11 +597,11 @@ input {
   margin-top: 8px;
   padding: 10px 14px;
   border-radius: 10px;
-  background: #5c1a18;
-  border: 2px solid #da3633;
+  background: var(--red-bg);
+  border: 2px solid var(--red);
   font-size: 0.9em;
 }
-.error-text { color: #f85149; font-weight: 700; }
+.error-text { color: var(--text-bad); font-weight: 700; }
 
 /* Планшет в горизонтали: только экран «Стан стоит» шире, в две колонки */
 @media (min-width: 900px) and (orientation: landscape) {
@@ -330,19 +624,19 @@ input {
 .seg > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
 
 /* Табло стана на первом экране */
-.board { background: #1b1e24; border: 2px solid #3a3f4a; border-radius: 16px; padding: 14px 16px; margin: 4px 0 16px; }
+.board { background: var(--surface); border: 2px solid var(--border); border-radius: 16px; padding: 14px 16px; margin: 4px 0 16px; }
 .board-top { display: flex; align-items: baseline; gap: 12px; }
 .board-clock { font-size: 2.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
-.board-date { color: #a0a6b1; }
+.board-date { color: var(--text-muted); }
 .board-state { font-weight: 800; font-size: 1.1em; margin-top: 6px; }
-.board-state.running { color: #3fb950; }
-.board-state.stopped { color: #ff6b6b; }
+.board-state.running { color: var(--text-good); }
+.board-state.stopped { color: var(--text-stopped); }
 .board-period { margin: 2px 0 10px; }
 .board-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.board-stat { background: #22252b; border-radius: 12px; padding: 10px; text-align: center; color: #a0a6b1; font-size: 0.85em; }
-.board-stat .v { display: block; white-space: nowrap; font-size: 1.15em; font-weight: 800; color: #f0f2f5; font-variant-numeric: tabular-nums; }
-.board-stat.good .v { color: #3fb950; }
-.board-stat.bad .v { color: #ff6b6b; }
+.board-stat { background: var(--stat-bg); border-radius: 12px; padding: 10px; text-align: center; color: var(--text-muted); font-size: 0.85em; }
+.board-stat .v { display: block; white-space: nowrap; font-size: 1.15em; font-weight: 800; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.board-stat.good .v { color: var(--text-good); }
+.board-stat.bad .v { color: var(--text-stopped); }
 
 /* Московское время справа в полосе состояния */
 .bar { position: relative; }
@@ -350,8 +644,8 @@ input {
 
 /* Время смены под большой кнопкой */
 .shift-time { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 8px; padding: 12px 14px;
-  background: #1b1e24; border: 2px solid #3a3f4a; border-radius: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.shift-time .left { color: #a0a6b1; font-weight: 600; }
+  background: var(--surface); border: 2px solid var(--border); border-radius: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.shift-time .left { color: var(--text-muted); font-weight: 600; }
 
 /* Кнопка «Связаться» в шапке */
 button.pill { cursor: pointer; border: 0; font: inherit; font-weight: 800; }
@@ -361,29 +655,29 @@ a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: c
 
 .shift-block { margin-top: 12px; }
 .shift-block .shift-time { margin: 0 0 8px; }
-.pill.home { background: #2d333b; color: #f0f2f5; }
+.pill.home { background: var(--pill-home-bg); color: var(--text-2); }
 
 /* Смена: спокойный блок под главным действием, одинаковый в обоих режимах. */
-.shift-block { margin-top: 28px; padding-top: 20px; border-top: 2px solid #3a3f4a; }
+.shift-block { margin-top: 28px; padding-top: 20px; border-top: 2px solid var(--border); }
 .shift-person h2 { margin: 0 0 4px; }
 .shift-person p { margin: 4px 0; }
 .shift-block .shift-time { margin: 16px 0; flex-wrap: wrap; font-size: 0.95em; }
 .shift-action { text-align: left; font-size: 1em; }
-.action-help { display: block; margin-top: 5px; color: #b7bdc7; font-size: 0.85em; font-weight: 400; }
-.handover-note { padding: 16px 0; border-block: 1px solid #626b7a; color: #f2f4f8; }
+.action-help { display: block; margin-top: 5px; color: var(--text-soft); font-size: 0.85em; font-weight: 400; }
+.handover-note { padding: 16px 0; border-block: 1px solid var(--border-note); color: var(--text); }
 .receipt { font-weight: 700; }
-.save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: #b7bdc7; font-size: 0.8em; }
-.save-status.attention { color: #ffcf70; }
+.save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: var(--text-soft); font-size: 0.8em; }
+.save-status.attention { color: var(--text-attn); }
 .cancel { margin-top: 28px; }
 .topbar { flex-wrap: wrap; }
 button.pill { min-height: 52px; font-size: 0.8em; white-space: normal; }
 .btn, .tile, .card-note, .action-help, .reject, .handover-note { overflow-wrap: anywhere; }
 .card-note, .action-help { white-space: pre-wrap; }
 .stop-grid > *, .stats > *, .board-stats > * { min-width: 0; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #8cc8ff; outline-offset: 3px; }
-input, textarea { caret-color: #8cc8ff; }
-::selection { background: #245477; color: #fff; }
-input::placeholder, textarea::placeholder { color: #aeb6c4; opacity: 1; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+input, textarea { caret-color: var(--focus); }
+::selection { background: var(--selection-bg); color: var(--selection-text); }
+input::placeholder, textarea::placeholder { color: var(--placeholder); opacity: 1; }
 .btn:disabled, .tile:disabled { cursor: default; }
 label { display: block; margin-top: 20px; }
 @media (max-width: 480px) {
@@ -398,65 +692,67 @@ label { display: block; margin-top: 20px; }
 }
 
 /* Метрики работы стана */
-.metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid #2d333b; }
+.metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid var(--line-soft); }
 .m-head { font-size: 1.2em; font-weight: 800; margin-bottom: 10px; }
 .m-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-.m-tab { min-height: 52px; border-radius: 12px; border: 2px solid #3a3f4a; background: #1b1e24; color: #f0f2f5; font: inherit; font-weight: 700; cursor: pointer; }
-.m-tab.on { border-color: #58a6ff; background: #1f3350; }
+.m-tab { min-height: 52px; border-radius: 12px; border: 2px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-weight: 700; cursor: pointer; }
+.m-tab.on { border-color: var(--blue); background: var(--tab-on-bg); }
 .m-kpi { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
 .m-block { margin: 16px 0; }
 .m-title { font-weight: 800; margin-bottom: 8px; }
 .m-bar { margin: 8px 0; }
 .m-bar-head { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
 .m-bar-name { font-weight: 700; }
-.m-bar-val { color: #a0a6b1; white-space: nowrap; }
-.m-track { height: 12px; background: #22252b; border-radius: 6px; overflow: hidden; margin-top: 4px; display: flex; }
-.m-fill { height: 100%; background: #da3633; }
-.m-fill.work { background: #2ea043; }
-.m-fill.down { background: #da3633; }
+.m-bar-val { color: var(--text-muted); white-space: nowrap; }
+.m-track { height: 12px; background: var(--meter-track); border-radius: 6px; overflow: hidden; margin-top: 4px; display: flex; }
+.m-fill { height: 100%; background: var(--red); }
+.m-fill.work { background: var(--green); }
+.m-fill.down { background: var(--red); }
 
 /* Шапка: кнопки в одну строку, не наезжают на содержимое */
 .pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
 .m-tab { font-size: 0.8em; padding: 0 4px; }
+/* Переключатель темы: справа в шапке, отдельно от рабочих кнопок */
+.theme-toggle { margin-left: auto; }
 
 /* Графики */
-.chart { width: 100%; height: auto; display: block; background: #1b1e24; border-radius: 12px; }
-.chart .grid { stroke: #2d333b; stroke-width: 1; }
-.chart .ax { stroke: #6e7681; stroke-width: 1.5; }
-.chart .tick { fill: #a0a6b1; font-size: 12px; }
-.chart .work { fill: #2ea043; }
-.chart .down { fill: #da3633; }
-.chart .nodata { fill: none; stroke: #4a505c; stroke-dasharray: 3 3; }
-.chart .legend { fill: #f0f2f5; font-size: 13px; }
-.chart .center { fill: #f0f2f5; font-size: 16px; font-weight: 800; }
-.chart .seg-0 { fill: #da3633; stroke: #da3633; } .chart .seg-1 { fill: #e3b341; stroke: #e3b341; }
-.chart .seg-2 { fill: #58a6ff; stroke: #58a6ff; } .chart .seg-3 { fill: #a371f7; stroke: #a371f7; }
-.chart .seg-4 { fill: #3fb950; stroke: #3fb950; } .chart .seg-5 { fill: #f778ba; stroke: #f778ba; }
-.chart .seg-6 { fill: #8b949e; stroke: #8b949e; }
+.chart { width: 100%; height: auto; display: block; background: var(--surface); border-radius: 12px; }
+.chart .grid { stroke: var(--chart-grid); stroke-width: 1; }
+.chart .ax { stroke: var(--chart-axis); stroke-width: 1.5; }
+.chart .tick { fill: var(--text-muted); font-size: 12px; }
+.chart .work { fill: var(--green); }
+.chart .down { fill: var(--red); }
+.chart .nodata { fill: none; stroke: var(--border-strong); stroke-dasharray: 3 3; }
+.chart .legend { fill: var(--text-2); font-size: 13px; }
+.chart .center { fill: var(--text-2); font-size: 16px; font-weight: 800; }
+.chart .seg-0 { fill: var(--chart-0); stroke: var(--chart-0); } .chart .seg-1 { fill: var(--chart-1); stroke: var(--chart-1); }
+.chart .seg-2 { fill: var(--chart-2); stroke: var(--chart-2); } .chart .seg-3 { fill: var(--chart-3); stroke: var(--chart-3); }
+.chart .seg-4 { fill: var(--chart-4); stroke: var(--chart-4); } .chart .seg-5 { fill: var(--chart-5); stroke: var(--chart-5); }
+.chart .seg-6 { fill: var(--chart-6); stroke: var(--chart-6); }
 .chart .ring { fill: none; }
-.chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.8em; color: #a0a6b1; }
+.chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.8em; color: var(--text-muted); }
 .lg::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
-.lg.work::before { background: #2ea043; } .lg.down::before { background: #da3633; } .lg.nodata::before { border: 1px dashed #6e7681; }
+.lg.work::before { background: var(--green); } .lg.down::before { background: var(--red); } .lg.nodata::before { border: 1px dashed var(--chart-axis); }
 
 /* Три блока причин и единые цвета зон в метриках. */
-.reason-zone-work { --reason-zone-color: #2ea043; }
-.reason-zone-plan { --reason-zone-color: #ffffff; }
-.reason-zone-unplanned { --reason-zone-color: #e3b341; }
-.reason-zone-failure { --reason-zone-color: #da3633; }
+.reason-zone-work { --reason-zone-color: var(--rz-work); }
+.reason-zone-plan { --reason-zone-color: var(--rz-plan); }
+.reason-zone-unplanned { --reason-zone-color: var(--rz-unplanned); }
+.reason-zone-failure { --reason-zone-color: var(--rz-failure); }
 .tiles.reason-groups { grid-template-columns: 1fr; }
 .tile.reason-group { display: flex; flex-direction: column; align-items: flex-start;
   justify-content: center; gap: 8px; min-height: 112px; text-align: left;
   border-left: 10px solid var(--reason-zone-color); padding: 18px 20px; }
 .reason-group-title { font-weight: 800; }
-.reason-group-subtitle { font-size: 0.75em; font-weight: 400; line-height: 1.4; color: #c5cbd5; }
+.reason-group-subtitle { font-size: 0.75em; font-weight: 400; line-height: 1.4; color: var(--text-sub); }
 .btn.reason-later { min-height: 48px; padding: 10px 16px; font-size: 0.85em; margin-top: 12px; }
 .reason-zone-mark { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px;
-  border: 1px solid #808895; border-radius: 3px; margin-right: 8px;
+  border: 1px solid var(--mark-border); border-radius: 3px; margin-right: 8px;
   vertical-align: -1px; background: var(--reason-zone-color); }
 .zone-metric-row { display: flex; flex-wrap: wrap; justify-content: space-between;
-  align-items: baseline; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid #3a3f4a; }
+  align-items: baseline; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .zone-metric-name { font-weight: 700; }
-.zone-metric-value { color: #c5cbd5; font-size: 0.85em; font-variant-numeric: tabular-nums; }
+.zone-metric-value { color: var(--text-sub); font-size: 0.85em; font-variant-numeric: tabular-nums; }
 @media (max-width: 480px) {
   .zone-metric-value { flex-basis: 100%; padding-left: 24px; }
 }
