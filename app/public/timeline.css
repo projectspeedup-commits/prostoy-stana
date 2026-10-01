@@ -479,3 +479,10 @@
   .btn.shift-action { grid-template-columns: 32px minmax(0, 1fr) 16px; font-size: 16px; }
   .mill-panel { padding: 12px 14px 8px; }
 }
+/* Монитор: клавиша заполняет всю половину пульта по ширине и высоте, табличка — под ней */
+@media (min-width: 1100px) and (min-height: 600px) {
+  .mill-panel { padding: 16px 16px 10px; gap: 10px 0; }
+  .mill-btn { flex-direction: column; align-items: stretch; justify-content: stretch; gap: 10px; padding: 0 12px; }
+  .mill-lamp { flex: 1 1 auto; width: 100%; height: auto; min-height: 0; max-width: none; aspect-ratio: auto; }
+  .mill-label { flex: none; width: 100%; max-width: none; text-align: center; padding: 6px 10px; font-size: clamp(16px, 2.4cqi, 32px); }
+}
