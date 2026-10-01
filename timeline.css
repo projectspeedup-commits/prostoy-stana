@@ -383,7 +383,8 @@
 }
 .with-scale__main { min-width: 0; }
 :root { --screen-gutter: 24px; }
-.topbar, main:has(.with-scale) { max-width: 1480px; padding-inline: var(--screen-gutter); }
+/* Главный экран — во всю ширину окна на мониторе, планшете и телефоне (владелец, 01.10.2026); отступы — --screen-gutter */
+.topbar, main:has(.with-scale), main:has(.with-scale .stop-grid) { max-width: none; padding-inline: var(--screen-gutter); }
 
 
 /* Узкий экран: шкала полосой под главными кнопками, чтобы не отодвигать их вниз */
