@@ -82,8 +82,10 @@
   border-radius: 3px;
 }
 
-/* Будущее: без заливки, тонкая пунктирная рамка */
-.ds-row--future .ds-row__track {
+/* Будущее и время без данных: без заливки, тонкая пунктирная рамка.
+   Цвета на шкале — только работа, плановый, внеплановый и авария (владелец, 01.10.2026) */
+.ds-row--future .ds-row__track,
+.ds-row--nodata .ds-row__track {
   background: transparent;
   border: 1px dashed var(--ds-future-border);
 }
@@ -103,7 +105,7 @@
 .z-plan { background: var(--z-plan); }           /* плановый простой: синий в обеих темах */
 .z-unplanned { background: var(--z-unplanned); } /* внеплановый — жёлтый */
 .z-failure { background: var(--z-failure); }     /* авария — красный */
-.z-nodata { background: var(--z-nodata); }       /* нет данных — серый */
+.z-nodata { background: transparent; }           /* нет данных — без заливки */
 
 /* Рамка перевалки на шкале (внутрь, размер части не меняется); в тёмной теме прозрачная */
 .ds-seg.z-plan {

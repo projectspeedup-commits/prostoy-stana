@@ -103,6 +103,8 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
       row.classList.add("ds-row--half");
     }
     if (cell.future) row.classList.add("ds-row--future");
+    // Ячейка целиком без данных выглядит пустой, как будущее: серого цвета на шкале нет
+    else if (!STATES.some(([k]) => k !== "nodata" && cell.ms && cell.ms[k] > 0)) row.classList.add("ds-row--nodata");
     const isNow = cell.startMs <= nowMs && nowMs < cell.endMs;
     if (isNow) row.classList.add("ds-row--now");
 
