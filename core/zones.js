@@ -10,8 +10,7 @@ export function zoneOf(reason, refs) {
   if (!reason) return "unplanned";
   const ref = refs?.reasons?.[reason];
   if (["plan", "unplanned", "failure"].includes(ref?.zone)) return ref.zone;
-  if (ref?.planned || String(reason).startsWith("П-")) return "plan";
-  return /^В-[МЭВА]-/.test(reason) ? "failure" : "unplanned";
+  return ref?.planned ? "plan" : "unplanned";
 }
 
 /** 48 получасовых ячеек производственных суток; будущее не считается работой. */
