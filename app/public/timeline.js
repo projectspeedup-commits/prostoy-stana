@@ -6,7 +6,7 @@
 
 const STATES = [
   ["work", "работа"],
-  ["plan", "перевалка"],
+  ["plan", "плановый"],
   ["unplanned", "внеплановый"],
   ["failure", "авария"],
   ["nodata", "нет данных"],
@@ -14,7 +14,7 @@ const STATES = [
 
 const LEGEND = [
   ["work", "Работает"],
-  ["plan", "Перевалка"],
+  ["plan", "Плановый"],
   ["unplanned", "Внеплановый"],
   ["failure", "Авария"],
 ];
