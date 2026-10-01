@@ -768,14 +768,27 @@ function renderRejects() {
   box.hidden = false;
   fill(box,
     storageErrors.size ? h("button", { class: "btn", onclick: () => { persistClient(); render(); } }, "Повторить сохранение на планшете") : null,
+    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => dismissRejected(rejected.map((r) => r.event.id)) },
+      `Убрать все отклонённые записи (${rejected.length})`) : null,
     ...rejected.map((r) => h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: humanError(r.error) }),
       h("button", { class: "btn", onclick: () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
         go("repair");
-      } }, "Открыть сохранённую запись")))
+      } }, "Открыть сохранённую запись"),
+      h("button", { class: "btn btn-flat", onclick: () => dismissRejected([r.event.id]) }, "Убрать запись")))
   );
+}
+// Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
+// На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
+function dismissRejected(ids) {
+  let n = 0;
+  for (const r of records) if (r.status === "rejected" && ids.includes(r.event.id)) { r.status = "dismissed"; n += 1; }
+  if (ui.repair && ids.includes(ui.repair.id)) ui.repair = null;
+  persistClient();
+  showToast(n === 1 ? "Запись убрана" : `Убрано записей: ${n}`);
+  render();
 }
 
 function humanError(code) {
@@ -800,7 +813,7 @@ function receiptStatus(list) {
   return "Принято сервером";
 }
 function receiptFor(downtimeId) {
-  return records.filter((r) => r.status !== "replaced" && (r.event.downtimeId || r.event.id) === downtimeId);
+  return records.filter((r) => r.status !== "replaced" && r.status !== "dismissed" && (r.event.downtimeId || r.event.id) === downtimeId);
 }
 
 function reasonRef(code) {
@@ -1948,7 +1961,21 @@ function renderRestartAction(main, view) {
     "aria-label": "Что сделали, чтобы запустить стан",
   });
   ta.value = rw.action || "";
-  const submit = h("button", { class: "btn primary", onclick: () => finishRestart(ta.value) }, "Сохранить пуск");
+  // После бурёжки и аварии — обязательно, сколько заготовки испорчено (владелец, 01.10.2026)
+  const needBillet = restartNeedsBillet(rw, view);
+  // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
+  const billet = needBillet ? h("input", { id: "restart-billet", type: "text", maxlength: "8",
+    inputmode: "decimal", autocomplete: "off", placeholder: "Тонны, 0 — если брака нет", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
+  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите, сколько заготовки испорчено, в тоннах. Если брака нет — 0." }) : null;
+  if (needBillet) {
+    billet.value = rw.billet ?? "";
+    billetError.hidden = true;
+    billet.addEventListener("input", () => { rw.billet = billet.value; billetError.hidden = true; });
+  }
+  const submit = h("button", { class: "btn primary", onclick: () => {
+    if (needBillet && !validBillet(billet.value)) { billetError.hidden = false; billet.focus(); return; }
+    finishRestart(ta.value);
+  } }, "Сохранить пуск");
   ta.addEventListener("input", () => { rw.action = ta.value; });
   const total = 2 + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
@@ -1966,8 +1993,23 @@ function renderRestartAction(main, view) {
       earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
     ta,
     h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
+    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, т" }) : null,
+    billet,
+    billetError,
     submit
   );
+}
+// Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
+function restartNeedsBillet(rw, view) {
+  const reason = rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open && view.open.reason;
+  const zone = reason ? zoneOf(core.reasonKey(reason), refs) : null;
+  return zone === "unplanned" || zone === "failure";
+}
+function validBillet(v) {
+  const s = String(v ?? "").trim().replace(",", ".");
+  if (!s) return false;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 && n <= 1000;
 }
 
 function finishRestart(rawAction) {
@@ -1991,6 +2033,14 @@ function finishRestart(rawAction) {
   }
   events.push({ type: "start", fields: { downtimeId: rw.downtimeId, action, at } });
   const openNow = buildView().open;
+  // Брак — к последнему отрезку этого простоя (тот же fix, что правка «Брак» в итоге смены)
+  if (restartNeedsBillet(rw, buildView())) {
+    if (!validBillet(rw.billet)) { render(); return; }
+    const segs = openNow.segments || [];
+    const index = segs.length ? segs[segs.length - 1].index : 0;
+    events.push({ type: "fix", fields: { downtimeId: rw.downtimeId, index,
+      billet: Number(String(rw.billet).trim().replace(",", ".")), at } });
+  }
   ui.rec = { downtimeId: rw.downtimeId, sinceMs: openNow.since ?? openNow.startMs, endMs: rw.startMs };
   ui.rw = null;
   ui.wz = null;
@@ -2178,8 +2228,14 @@ function renderRecorded(main, view) {
       d && !longRec ? h("div", { class: "card-title", text: `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }) : null,
       h("div", { class: "card-line", text: reasonLabel(d?.reason || original.findLast((e) => e.reason)?.reason) }),
       h("div", { class: "card-note", text: `Что случилось: ${note || "не указано"}` }),
-      h("div", { class: "card-note", text: `Что сделали: ${action || "не указано"}` })),
+      h("div", { class: "card-note", text: `Что сделали: ${action || "не указано"}` }),
+      billetLine(d, original)),
     h("button", { class: "btn primary", onclick: () => go("auto") }, "На главный экран"));
+}
+// Брак в карточке «Запись принята»: из учтённого простоя, а пока он не пришёл с сервера — из отправленного fix
+function billetLine(d, original) {
+  const b = d && d.billet != null ? d.billet : original.findLast((e) => e.type === "fix" && e.billet != null)?.billet;
+  return b != null ? h("div", { class: "card-note", text: `Испорчено заготовки: ${fmtTons(b)}` }) : null;
 }
 
 function missingFields(segment) {
