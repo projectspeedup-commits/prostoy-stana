@@ -416,7 +416,7 @@
 /* --- Монитор: главный экран целиком в высоту окна, без прокрутки (владелец, 01.10.2026) ---
    Шкала сжимает 48 строк под высоту, пульт забирает остаток справа, клавиши считаются
    от высоты пульта (cqh), три кнопки смены — в один ряд. Планшет и телефон — как раньше. */
-@media (min-width: 1100px) and (min-height: 600px) {
+@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
   body:has(#main .with-scale) { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
   body:has(#main .with-scale) > .topbar { flex: none; width: 100%; box-sizing: border-box; padding-block: 12px; }
   body:has(#main .with-scale) > #main { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box;
@@ -467,7 +467,7 @@
   .shift-action .action-help { font-size: 12.5px; margin-top: 2px; }
 }
 /* Низкий монитор (ноутбук 1366×768 и т.п.): убираем второстепенные строки, чтобы клавиши не мельчали */
-@media (min-width: 1100px) and (min-height: 600px) and (max-height: 760px) {
+@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) and (max-height: 760px) {
   .mill-status { padding-block: 8px; margin-bottom: 8px; }
   .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
   .shift-avatar, .shift-person p.muted, .shift-action .action-help { display: none; }
@@ -480,9 +480,14 @@
   .mill-panel { padding: 12px 14px 8px; }
 }
 /* Монитор: клавиша заполняет всю половину пульта по ширине и высоте, табличка — под ней */
-@media (min-width: 1100px) and (min-height: 600px) {
+@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
   .mill-panel { padding: 16px 16px 10px; gap: 10px 0; }
   .mill-btn { flex-direction: column; align-items: stretch; justify-content: stretch; gap: 10px; padding: 0 12px; }
   .mill-lamp { flex: 1 1 auto; width: 100%; height: auto; min-height: 0; max-width: none; aspect-ratio: auto; }
   .mill-label { flex: none; width: 100%; max-width: none; text-align: center; padding: 6px 10px; font-size: clamp(16px, 2.4cqi, 32px); }
+}
+/* Вертикальный монитор: клавиша не вытягивается в колонну — высота не больше 0,8 ширины половины пульта */
+@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+  .mill-btn { justify-content: center; }
+  .mill-lamp { flex: 0 1 auto; height: 100%; max-height: calc((50cqi - 40px) * 0.8); }
 }
