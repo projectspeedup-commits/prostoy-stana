@@ -786,3 +786,31 @@ label { display: block; margin-top: 20px; }
 @media (max-width: 480px) {
   .zone-metric-value { flex-basis: 100%; padding-left: 24px; }
 }
+
+/* Пульт стана: две одинаковые кнопки, как на станке. Горящая — нынешнее состояние,
+   она «утоплена» и светится; вторая — выпуклая, её и нажимают */
+.mill-clock { margin: 12px 0 6px; text-align: right; font-weight: 800; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.mill-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; container-type: inline-size; }
+.mill-btn {
+  min-height: 40dvh; padding: 16px 10px; border-radius: 22px; border: 4px solid rgba(0, 0, 0, 0.25);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  color: #fff; font: inherit; font-weight: 800; text-align: center; cursor: pointer;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.35); transition: transform 0.05s, box-shadow 0.05s;
+}
+.mill-go { background: #1f883d; }
+.mill-stop { background: #c62828; }
+.mill-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.mill-btn.is-on { transform: translateY(6px); cursor: default; border-color: #fff; }
+.mill-go.is-on { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 26px 6px rgba(46, 160, 67, 0.55); }
+.mill-stop.is-on { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 26px 6px rgba(218, 54, 51, 0.55); }
+/* Размер надписи — от ширины пульта: «РАБОТАЕТ» не рвётся посреди слова */
+.mill-label { font-size: clamp(15px, 6.4cqi, 46px); line-height: 1.15; letter-spacing: 0.02em; }
+.mill-lamp { width: 30px; height: 30px; border-radius: 50%; background: rgba(0, 0, 0, 0.35); border: 3px solid rgba(255, 255, 255, 0.55); }
+.mill-btn.is-on .mill-lamp { background: #fff; border-color: #fff; box-shadow: 0 0 16px 5px rgba(255, 255, 255, 0.9); }
+.mill-info { font-size: 1.05em; font-variant-numeric: tabular-nums; }
+.mill-timer { display: block; margin-top: 6px; font-size: clamp(18px, 6cqi, 40px); }
+@media (max-width: 480px) {
+  .mill-panel { gap: 10px; }
+  .mill-btn { min-height: 32dvh; border-radius: 16px; gap: 10px; }
+  .mill-lamp { width: 24px; height: 24px; }
+}

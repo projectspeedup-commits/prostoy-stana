@@ -5,7 +5,7 @@ import { DEFAULT_SCHEDULE } from "./core.js";
 // Ключ причины — внутреннее имя, рабочему и в таблицу идёт название.
 const reasons = {
   perevalka: {
-    title: "Запланированная перевалка", short: "Запланированная перевалка", group: "Перевалка",
+    title: "Плановая", short: "Плановая", group: "Перевалка",
     planned: true, zone: "plan", noteRequired: true,
     hint: "Например: плановая перевалка валков второй клети",
     actionHint: "Например: установили валки второй клети, выставили зазор",
@@ -27,7 +27,7 @@ const reasons = {
 export const DEFAULT_REFS = {
   reasons,
   tiles: [
-    { id: "plan", title: "Запланированная перевалка", subtitle: "перевалка валков и другие плановые остановки", zone: "plan", reason: "perevalka" },
+    { id: "plan", title: "Плановая", subtitle: "перевалка валков и другие плановые остановки", zone: "plan", reason: "perevalka" },
     { id: "cobble", title: "Бурёжка", subtitle: "заготовка застряла, порыв раската", zone: "unplanned", reason: "burezhka" },
     { id: "failure", title: "Аварийный простой", subtitle: "поломка оборудования, отключение энергии", zone: "failure", reason: "avaria" },
   ].map(({ reason, ...tile }) => ({ ...tile, items: [{ code: reason, label: tile.title, text: "" }], codes: [reason] })),

@@ -1,5 +1,5 @@
 // Офлайн-кеш страницы рабочего. /api/* не кешируется никогда.
-const CACHE = "stan-v35";
+const CACHE = "stan-v36";
 const ASSETS = [
   "./",
   "./index.html",
