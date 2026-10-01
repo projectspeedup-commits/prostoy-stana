@@ -116,7 +116,7 @@
 
   /* Зоны причин простоя в метриках и на выборе группы */
   --rz-work: #2ea043;
-  --rz-plan: #ffffff;
+  --rz-plan: #4f8dff;
   --rz-unplanned: #e3b341;
   --rz-failure: #da3633;
   --mark-border: #808895;      /* рамка квадратика зоны */
@@ -136,9 +136,9 @@
   --ds-details-bg: #16181c;    /* подробности по нажатию */
   --ds-legend-text: #e6e9ee;
   --z-work: #2fd35f;           /* работает */
-  --z-plan: #f5f7fa;           /* перевалка */
-  --z-plan-edge: transparent;  /* рамка перевалки на шкале: в тёмной теме не нужна */
-  --z-plan-chip-edge: #3a3f4a; /* рамка квадрата перевалки в легенде */
+  --z-plan: #4f8dff;           /* плановый простой — синий (владелец, 01.10.2026) */
+  --z-plan-edge: transparent;  /* рамка планового на шкале: не нужна, синий и так виден */
+  --z-plan-chip-edge: #2f6fe0; /* рамка квадрата планового в легенде */
   --z-unplanned: #ffc93c;      /* внеплановый простой */
   --z-failure: #ff5252;        /* авария */
   --z-nodata: #565d66;         /* нет данных */
@@ -245,7 +245,7 @@
     --chart-6: #6e7781;
 
     --rz-work: #1faa4b;
-    --rz-plan: #8f99a8;
+    --rz-plan: #2563eb;
     --rz-unplanned: #f2a900;
     --rz-failure: #e5383b;
     --mark-border: #5f6978;
@@ -264,9 +264,9 @@
     --ds-details-bg: #f3f5f8;
     --ds-legend-text: #1f2630;
     --z-work: #1faa4b;
-    --z-plan: #c9d0da;
-    --z-plan-edge: #5f6978;
-    --z-plan-chip-edge: #5f6978;
+    --z-plan: #3b82f6;
+    --z-plan-edge: transparent;
+    --z-plan-chip-edge: #2563eb;
     --z-unplanned: #f2a900;
     --z-failure: #e5383b;
     --z-nodata: #98a1ae;
@@ -372,7 +372,7 @@
   --chart-6: #6e7781;
 
   --rz-work: #1faa4b;
-  --rz-plan: #8f99a8;
+  --rz-plan: #2563eb;
   --rz-unplanned: #f2a900;
   --rz-failure: #e5383b;
   --mark-border: #5f6978;
@@ -391,9 +391,9 @@
   --ds-details-bg: #f3f5f8;
   --ds-legend-text: #1f2630;
   --z-work: #1faa4b;
-  --z-plan: #c9d0da;
-  --z-plan-edge: #5f6978;
-  --z-plan-chip-edge: #5f6978;
+  --z-plan: #3b82f6;
+  --z-plan-edge: transparent;
+  --z-plan-chip-edge: #2563eb;
   --z-unplanned: #f2a900;
   --z-failure: #e5383b;
   --z-nodata: #98a1ae;

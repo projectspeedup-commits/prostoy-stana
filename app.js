@@ -1345,7 +1345,7 @@ function zoneMark(zone) {
   return h("span", { class: "reason-zone-mark reason-zone-" + zone, "aria-hidden": "true" });
 }
 function zoneMetrics(st) {
-  const labels = { work: "Работа", plan: "Перевалка и плановые",
+  const labels = { work: "Работа", plan: "Плановый простой",
     unplanned: "Внеплановый простой", failure: "Аварийный простой" };
   return h("section", { class: "m-block zone-metrics", "aria-label": "Простой по зонам" },
     h("div", { class: "m-title", text: "Простой по зонам" }),

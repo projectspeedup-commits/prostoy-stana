@@ -100,7 +100,7 @@
 }
 
 .z-work { background: var(--z-work); }           /* работает — зелёный */
-.z-plan { background: var(--z-plan); }           /* перевалка: в тёмной теме белая, в светлой светло-серая с рамкой */
+.z-plan { background: var(--z-plan); }           /* плановый простой: синий в обеих темах */
 .z-unplanned { background: var(--z-unplanned); } /* внеплановый — жёлтый */
 .z-failure { background: var(--z-failure); }     /* авария — красный */
 .z-nodata { background: var(--z-nodata); }       /* нет данных — серый */
