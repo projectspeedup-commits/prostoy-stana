@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_SCHEDULE, shiftOf, splitByShifts, buildDowntimes, classify, summarizeDay, workIntervals, handoversSince,
+  DEFAULT_SCHEDULE, shiftOf, splitByShifts, buildDowntimes, classify, summarizeDay, workIntervals, handoversSince, reasonKey,
 } from "../../app/core/core.js";
 
 // Московское время 2026 года -> мс UTC (по умолчанию сентябрь)
@@ -195,17 +195,17 @@ test("workIntervals: дополнение простоев, слияние пе�
 test("buildDowntimes: reason сохраняет текст рабочего", () => {
   const r = buildDowntimes([
     { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d" },
-    { id: "b", type: "reason", at: "2026-09-28T10:01:00+03:00", downtimeId: "d", reason: "В-Э-02", note: "датчик на ножницах глючит" },
+    { id: "b", type: "reason", at: "2026-09-28T10:01:00+03:00", downtimeId: "d", reason: "avaria", note: "датчик на ножницах глючит" },
     { id: "c", type: "start", at: "2026-09-28T10:15:00+03:00", downtimeId: "d" },
   ], Date.parse("2026-09-28T12:00:00+03:00"));
-  assert.equal(r.segments[0].reason, "В-Э-02");
+  assert.equal(r.segments[0].reason, "avaria");
   assert.equal(r.segments[0].note, "датчик на ножницах глючит");
 });
 
 test("buildDowntimes: start сохраняет, что сделали для пуска", () => {
   const r = buildDowntimes([
     { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d" },
-    { id: "b", type: "reason", at: "2026-09-28T10:14:00+03:00", downtimeId: "d", reason: "В-М-03", note: "ножи тупые" },
+    { id: "b", type: "reason", at: "2026-09-28T10:14:00+03:00", downtimeId: "d", reason: "avaria", note: "ножи тупые" },
     { id: "c", type: "start", at: "2026-09-28T10:14:00+03:00", downtimeId: "d", action: "заменили ножи" },
   ], Date.parse("2026-09-28T12:00:00+03:00"));
   assert.equal(r.segments[0].action, "заменили ножи");
@@ -215,7 +215,7 @@ test("buildDowntimes: start сохраняет, что сделали для п�
 
 test("buildDowntimes: action из shift_close не попадает в простой", () => {
   const events = [
-    { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d", reason: "В-М-03" },
+    { id: "a", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d", reason: "avaria" },
     { id: "b", type: "shift_close", at: "2026-09-28T19:50:00+03:00", crewId: "1", action: "сняли редуктор, ждём подшипник", note: "Стан стоит." },
   ];
   // Простой ещё открыт: передача смены его не закрывает и текст в него не пишет
@@ -248,4 +248,20 @@ test("handoversSince: сдачи смены не раньше начала пр�
   assert.deepEqual(list[0], { at: "2026-09-28T20:00:00+03:00", crewId: "1", personId: "p1", personName: null, action: null, note: null });
   assert.equal(list[1].action, "ждём подшипник");
   assert.deepEqual(handoversSince(events, msk(30, 0)), []);
+});
+
+test("старые коды классификатора читаются как три нынешние причины", () => {
+  assert.equal(reasonKey("П-05"), "perevalka");
+  assert.equal(reasonKey("В-М-01"), "avaria");
+  assert.equal(reasonKey("В-Э-99"), "avaria");
+  assert.equal(reasonKey("В-В-02"), "avaria");
+  assert.equal(reasonKey("В-Т-01"), "burezhka");
+  assert.equal(reasonKey("В-О-03"), "burezhka");
+  assert.equal(reasonKey("burezhka"), "burezhka");
+  assert.equal(reasonKey(null), null);
+  const built = buildDowntimes([
+    { id: "s", type: "stop", at: "2026-09-28T10:00:00+03:00", downtimeId: "d1", reason: "В-М-02" },
+    { id: "e", type: "start", at: "2026-09-28T10:30:00+03:00", downtimeId: "d1" },
+  ], "2026-09-28T11:00:00+03:00");
+  assert.equal(built.segments[0].reason, "avaria");
 });

@@ -135,10 +135,22 @@ export function lastRunningMs(events, nowMs) {
   return ends.length || starts.length ? Math.max(...ends, ...starts) : null;
 }
 
+// Записи, сделанные до 30.09.2026, хранят старые коды классификатора. Читаем их как три
+// нынешние причины: плановые — перевалка; механика, электрика, энергия — аварийный простой;
+// остальные внеплановые — бурёжка
+export function reasonKey(reason) {
+  if (typeof reason !== "string") return reason;
+  if (/^П-\d\d$/.test(reason)) return "perevalka";
+  if (/^В-[МЭВА]-\d\d$/.test(reason)) return "avaria";
+  if (/^В-[ТОП]-\d\d$/.test(reason)) return "burezhka";
+  return reason;
+}
+
 /** Собирает отрезки простоя из событий. */
 export function buildDowntimes(events, nowMs) {
   const now = toMs(nowMs);
   const sorted = events
+    .map((e) => (typeof e.reason === "string" && e.reason !== reasonKey(e.reason) ? { ...e, reason: reasonKey(e.reason) } : e))
     .map((e, i) => ({ e, i, t: toMs(e.at !== undefined && e.at !== null ? e.at : e.from) }))
     .sort((a, b) => a.t - b.t || a.i - b.i);
   const segments = [];

@@ -57,13 +57,13 @@ test("events: stop + reason + start дают часть с причиной", as
   try {
     const { body } = await postEvents(base, [
       { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d1" },
-      { id: "r", type: "reason", at: "2026-01-01T10:05:00Z", downtimeId: "d1", reason: "В-М-01" },
+      { id: "r", type: "reason", at: "2026-01-01T10:05:00Z", downtimeId: "d1", reason: "avaria" },
       { id: "e", type: "start", at: "2026-01-01T10:30:00Z", downtimeId: "d1" },
     ]);
     assert.equal(body.state.running, true);
     assert.equal(body.state.segments.length, 1);
-    assert.equal(body.state.segments[0].reason, "В-М-01");
-    assert.equal(body.state.segments[0].group, "Механическая");
+    assert.equal(body.state.segments[0].reason, "avaria");
+    assert.equal(body.state.segments[0].group, "Аварийный простой");
   } finally {
     await app.close();
   }
@@ -73,12 +73,12 @@ test("events: fix меняет причину закрытого простоя"
   const { app, base } = await start();
   try {
     const { body } = await postEvents(base, [
-      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d1", reason: "В-М-01" },
+      { id: "s", type: "stop", at: "2026-01-01T10:00:00Z", downtimeId: "d1", reason: "burezhka" },
       { id: "e", type: "start", at: "2026-01-01T10:30:00Z", downtimeId: "d1" },
-      { id: "f", type: "fix", at: "2026-01-01T10:40:00Z", downtimeId: "d1", index: 0, reason: "В-Э-01", note: "исправлено" },
+      { id: "f", type: "fix", at: "2026-01-01T10:40:00Z", downtimeId: "d1", index: 0, reason: "avaria", note: "исправлено" },
     ]);
     assert.deepEqual(body.rejected, []);
-    assert.equal(body.state.segments[0].reason, "В-Э-01");
+    assert.equal(body.state.segments[0].reason, "avaria");
     assert.equal(body.state.segments[0].note, "исправлено");
   } finally {
     await app.close();
@@ -127,14 +127,14 @@ test("events: shift_open попадает в state.crew", async () => {
   }
 });
 
-test("refs: 36 причин, 3 блока по одной причине с обязательным описанием, демо-люди", async () => {
+test("refs: три причины без кодов, 3 блока по одной причине с обязательным описанием, демо-люди", async () => {
   const { app, base } = await start();
   try {
     const response = await fetch(`${base}/api/refs`, { headers: HEAD });
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.ok, true);
-    assert.equal(Object.keys(body.refs.reasons).length, 36);
+    assert.deepEqual(Object.keys(body.refs.reasons), ["perevalka", "burezhka", "avaria"]);
     for (const [code, reason] of Object.entries(body.refs.reasons)) {
       for (const field of ["hint", "actionHint"]) {
         assert.equal(typeof reason[field], "string", `${code}: ${field}`);
@@ -147,7 +147,7 @@ test("refs: 36 причин, 3 блока по одной причине с об
     }
     // Три блока без подпунктов: у каждого одна причина, описание своими словами обязательно
     assert.deepEqual(body.refs.tiles.map((tile) => [tile.id, tile.zone, tile.codes]), [
-      ["plan", "plan", ["П-02"]], ["cobble", "unplanned", ["В-Т-01"]], ["failure", "failure", ["В-А-01"]]]);
+      ["plan", "plan", ["perevalka"]], ["cobble", "unplanned", ["burezhka"]], ["failure", "failure", ["avaria"]]]);
     for (const tile of body.refs.tiles) {
       assert.ok(tile.title && tile.subtitle, tile.id);
       assert.equal(tile.items.length, 1, tile.id);
@@ -157,8 +157,7 @@ test("refs: 36 причин, 3 блока по одной причине с об
       assert.equal(tile.items[0].text, "", tile.id);
     }
     for (const [code, reason] of Object.entries(body.refs.reasons)) {
-      const expected = code.startsWith("П-") ? "plan" : /^В-[МЭВА]-/.test(code) ? "failure" : "unplanned";
-      assert.equal(reason.zone, expected, code);
+      assert.equal(reason.zone, { perevalka: "plan", burezhka: "unplanned", avaria: "failure" }[code], code);
     }
     assert.equal(body.refs.tiles.length, 3);
     assert.equal(body.refs.nodes.length, 14);
@@ -285,7 +284,7 @@ test("events: ремонт через смены — shift_close с action ви�
     assert.deepEqual(fromState.state.open.handovers, state.open.handovers);
     // Новая бригада указывает причину и пускает стан: это тот же простой, а не новый
     const done = await postEvents(base, [
-      { id: "reason-1", type: "reason", at: "2026-01-01T05:30:00Z", downtimeId: "d1", reason: "В-М-01", crewId: "2", personId: "p4" },
+      { id: "reason-1", type: "reason", at: "2026-01-01T05:30:00Z", downtimeId: "d1", reason: "avaria", crewId: "2", personId: "p4" },
       { id: "start-1", type: "start", at: "2026-01-01T11:00:00Z", downtimeId: "d1", action: "заменили подшипник", crewId: "2", personId: "p4" },
     ]);
     assert.deepEqual(done.body.rejected, []);
@@ -293,7 +292,7 @@ test("events: ремонт через смены — shift_close с action ви�
     assert.equal(done.body.state.open, null);
     const own = done.body.state.segments.filter((x) => x.downtimeId === "d1");
     assert.equal(own.length, 1);
-    assert.equal(own[0].reason, "В-М-01");
+    assert.equal(own[0].reason, "avaria");
     assert.equal(own[0].action, "заменили подшипник");
     // action из shift_close в простой не попал
     assert.notEqual(own[0].action, action);
@@ -360,9 +359,9 @@ test("state.day: обе смены, обрезка по суткам, причи
     assert.equal(day.fromMs, Date.parse("2026-01-01T05:00:00Z"));
     assert.equal(day.toMs, Date.parse("2026-01-02T05:00:00Z"));
     assert.deepEqual(day.segments.map((s) => [s.startMs, s.endMs, s.reason, s.open]), [
-      [day.fromMs, Date.parse("2026-01-01T06:00:00Z"), "П-02", false],
-      [Date.parse("2026-01-01T16:50:00Z"), Date.parse("2026-01-01T17:10:00Z"), "В-Т-01", false],
-      [Date.parse("2026-01-01T17:10:00Z"), Date.parse("2026-01-01T18:00:00Z"), "В-М-02", false],
+      [day.fromMs, Date.parse("2026-01-01T06:00:00Z"), "perevalka", false],
+      [Date.parse("2026-01-01T16:50:00Z"), Date.parse("2026-01-01T17:10:00Z"), "burezhka", false],
+      [Date.parse("2026-01-01T17:10:00Z"), Date.parse("2026-01-01T18:00:00Z"), "avaria", false],
       [Date.parse("2026-01-01T21:00:00Z"), now.getTime(), null, true],
     ]);
     const state = await fetch(`${base}/api/state`, { headers: HEAD }).then((r) => r.json());

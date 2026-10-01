@@ -9,14 +9,14 @@ const at = (minutes) => fromMs + minutes * M;
 const options = (now, data = 0) => ({
   fromMs, toMs: at(1440), nowMs: at(now), dataFromMs: data === null ? null : at(data), refs,
 });
-const segment = (from, to, reason = "В-Т-01", open = false) =>
+const segment = (from, to, reason = "burezhka", open = false) =>
   ({ startMs: at(from), endMs: to === null ? null : at(to), reason, open });
 const sum = (cell) => Object.values(cell.ms).reduce((total, ms) => total + ms, 0);
 
 test("зона причины: плановая, внеплановая, авария, без причины", () => {
-  for (const code of ["П-01", "П-99"]) assert.equal(zoneOf(code, refs), "plan");
-  for (const code of ["В-М-01", "В-Э-99", "В-В-03"]) assert.equal(zoneOf(code, refs), "failure");
-  for (const code of ["В-Т-01", "В-О-99", "В-П-99", "", null, "неизвестная"]) {
+  assert.equal(zoneOf("perevalka", refs), "plan");
+  assert.equal(zoneOf("avaria", refs), "failure");
+  for (const code of ["burezhka", "", null, "неизвестная"]) {
     assert.equal(zoneOf(code, refs), "unplanned");
   }
 });
@@ -47,7 +47,7 @@ test("текущая ячейка учитывает прошедшую част
 });
 
 test("открытый простой идёт до nowMs, включая время после снимка состояния", () => {
-  const cells = dayCells([segment(20, 25, "В-М-02", true)], options(45));
+  const cells = dayCells([segment(20, 25, "avaria", true)], options(45));
   assert.equal(cells[0].ms.work, 20 * M);
   assert.equal(cells[0].ms.failure, 10 * M);
   assert.equal(cells[1].ms.failure, 15 * M);
@@ -55,7 +55,7 @@ test("открытый простой идёт до nowMs, включая вре
 });
 
 test("nodata до начала учёта имеет приоритет над простоем", () => {
-  const cells = dayCells([segment(0, 60, "П-02")], options(75, 40));
+  const cells = dayCells([segment(0, 60, "perevalka")], options(75, 40));
   assert.equal(cells[0].ms.nodata, 30 * M);
   assert.equal(cells[1].ms.nodata, 10 * M);
   assert.equal(cells[1].ms.plan, 20 * M);
@@ -65,7 +65,7 @@ test("nodata до начала учёта имеет приоритет над �
 });
 
 test("простой через границу ячейки и суток обрезается", () => {
-  const cells = dayCells([segment(-10, 10, "П-02"), segment(25, 40), segment(1430, 1450, "В-Э-01")], options(1500));
+  const cells = dayCells([segment(-10, 10, "perevalka"), segment(25, 40), segment(1430, 1450, "avaria")], options(1500));
   assert.deepEqual(cells[0].ms, { work: 15 * M, plan: 10 * M, unplanned: 5 * M, failure: 0, nodata: 0 });
   assert.equal(cells[1].ms.unplanned, 10 * M);
   assert.equal(cells[47].ms.failure, 10 * M);
@@ -73,7 +73,7 @@ test("простой через границу ячейки и суток обр
 });
 
 test("сумма зон каждой ячейки равна её прошедшему времени, пересечения не удваиваются", () => {
-  const cells = dayCells([segment(5, 50), segment(20, 80, "В-М-02"), segment(80, null, null, true)], options(101.5, 10));
+  const cells = dayCells([segment(5, 50), segment(20, 80, "avaria"), segment(80, null, null, true)], options(101.5, 10));
   for (const cell of cells) {
     assert.equal(sum(cell), Math.max(0, Math.min(cell.endMs, at(101.5)) - cell.startMs));
     assert.ok(Object.values(cell.ms).every((ms) => ms >= 0));
@@ -81,7 +81,7 @@ test("сумма зон каждой ячейки равна её прошедш
 });
 
 test("zoneTotals: точный отрезок внутри ячейки, граница смены и пустой период", () => {
-  const cells = dayCells([segment(10, 20, "П-02"), segment(710, 730, "В-М-01")], options(750));
+  const cells = dayCells([segment(10, 20, "perevalka"), segment(710, 730, "avaria")], options(750));
   assert.deepEqual(zoneTotals(cells, at(12), at(25)), { work: 5, plan: 8, unplanned: 0, failure: 0, nodata: 0 });
   assert.deepEqual(zoneTotals(cells, at(720), at(1440)), { work: 20, plan: 0, unplanned: 0, failure: 10, nodata: 0 });
   assert.equal(Object.values(zoneTotals(cells, at(0), at(1440))).reduce((a, b) => a + b, 0), 750);

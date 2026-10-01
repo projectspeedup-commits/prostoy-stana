@@ -237,7 +237,7 @@ if (process.env.STATS_TZ_CHILD !== "1") test("computeStats: время до пе
   const to = Date.parse("2026-09-03T05:00:00Z");
   const st = computeStats([
     { id: "a", type: "stop", at: "2026-09-02T10:00:00Z", downtimeId: "d" },
-    { id: "b", type: "start", at: "2026-09-02T11:00:00Z", downtimeId: "d", reason: "В-М-01", action: "x" },
+    { id: "b", type: "start", at: "2026-09-02T11:00:00Z", downtimeId: "d", reason: "avaria", action: "x" },
   ], { fromMs: from, toMs: to, nowMs: to, refs: DEFAULT_REFS });
   assert.equal(st.byDay[0].noData, true);
   assert.equal(st.byDay[0].workMin, null);
