@@ -810,7 +810,7 @@ function cancelDraft() {
 // --- Экраны ---
 function render() {
   renderScreen();
-  // На первом шаге причины выход уже есть: «Назад» и «Пока не знаю». Третья кнопка лишняя
+  // На первом шаге причины выход уже есть: «Назад». Вторая кнопка лишняя
   const firstReasonStep = ui.screen === "reason" && ui.wz?.step === 1 && !ui.rw;
   // На вопросе о состоянии стана выход уже есть: «На главный экран»
   const noCancel = firstReasonStep || ui.screen === "closeCheck";
@@ -1035,28 +1035,38 @@ function withScale(view, ...kids) {
   return h("div", { class: "with-scale" }, scaleFor(view), h("div", { class: "with-scale__main" }, ...kids));
 }
 
+// Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
+function millPanel({ running, info, onGo, onStop }) {
+  const btn = (kind, on, label, onclick) => h("button", {
+    class: `mill-btn mill-${kind}${on ? " is-on" : ""}`,
+    "aria-pressed": on ? "true" : "false",
+    onclick: on ? () => showToast(running ? "Стан уже работает" : "Стан уже стоит") : onclick,
+  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }), h("span", { class: "mill-label", text: label }), on ? info : null);
+  return h("div", null,
+    h("p", { class: "mill-clock" }, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })),
+    h("div", { class: "mill-panel" },
+      btn("go", running, "СТАН РАБОТАЕТ", onGo),
+      btn("stop", !running, "СТАН ВСТАЛ", onStop)));
+}
+
 // Главный экран: стан работает
 function renderRun(main, view) {
   const dts = shiftDowntimes(view);
   // С последнего пуска, даже если он был в прошлую смену; до первой записи о стане ничего не известно
   const lastStart = Math.min(nowMs(), runningSince(view));
   fill(main, withScale(view,
-    h("div", { class: "bar green" },
-      "Стан работает · ",
-      h("span", { dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
-      h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })
-    ),
-    h("button", {
-      class: "btn danger btn-huge",
-      onclick: () => {
+    millPanel({
+      running: true,
+      info: h("span", { class: "mill-info", dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
+      onStop: () => {
         const downtimeId = crypto.randomUUID();
         send("stop", { downtimeId });
         // Сразу предлагаем причину, но можно и позже
         ui.wz = { mode: "current", downtimeId, step: 1, group: null, reason: null, note: "" };
         go("reason");
       },
-    }, "СТАН ВСТАЛ"),
-    h("p", { class: "hint", text: "Нажмите, как только стан остановился" }),
+    }),
+    h("p", { class: "hint", text: "Нажмите красную кнопку, как только стан остановился" }),
     shiftBlock(view)
   ));
 }
@@ -1229,14 +1239,11 @@ function renderStop(main, view) {
   const cur = open.reason;
 
   const left = h("div", null,
-    h("div", { class: "bar red" },
-      `Стан стоит с ${fmtSince(since, view.shift)}`,
-      h("span", { class: "msk", "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
-      h("span", { class: "timer", dataset: { since: String(since) } }, fmtTimer(elapsed))
-    ),
-    h("button", {
-      class: "btn primary btn-go",
-      onclick: () => {
+    millPanel({
+      running: false,
+      info: h("span", { class: "mill-info" }, `стоит с ${fmtSince(since, view.shift)}`,
+        h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
+      onGo: () => {
         // Возврат на главную не сбрасывает уже зафиксированное время пуска.
         if (restartMatches(view, ui.rw)) {
           if (ui.rw.thenClose && !ui.rw.timeConfirmed) return go("restartTime");
@@ -1254,8 +1261,8 @@ function renderStop(main, view) {
         if (open.reason) go("restartConfirm");
         else startRestartReasonWizard();
       },
-    }, "СТАН ПОШЁЛ"),
-    h("p", { class: "hint", text: "Нажмите, когда стан заработал. Время пуска запомним сразу, затем заполним запись." })
+    }),
+    h("p", { class: "hint", text: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу." })
   );
 
   let card;
@@ -1378,9 +1385,7 @@ function renderForgotStop(main, view) {
   if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
   if (fw.step === 2) {
     fill(main, ...top(), question("Почему стоит?"),
-      reasonGroups(fw, () => { fw.step = 4; render(); }),
-      h("button", { class: "btn btn-flat reason-later",
-        onclick: () => { fw.unknown = true; fw.step = 5; render(); } }, "Пока не знаю"));
+      reasonGroups(fw, () => { fw.step = 4; render(); }));
     return;
   }
   if (fw.step === 4) {
@@ -1562,13 +1567,13 @@ function renderReasonWizard(main, view) {
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
       reasonGroups(wz, () => { wz.step = 3; render(); }),
-      !restarting ? h("button", {
+      !restarting && wz.mode === "past" ? h("button", {
         class: "btn btn-flat reason-later",
         onclick: () => {
           if (wz.mode === "past") go("recorded");
           else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
         },
-      }, wz.mode === "past" ? "Укажу позже" : "Пока не знаю") : null
+      }, "Укажу позже") : null
     );
     return;
   }
@@ -1682,17 +1687,8 @@ function renderRestartAction(main, view) {
     "aria-label": "Что сделали, чтобы запустить стан",
   });
   ta.value = rw.action || "";
-  const error = h("p", { class: "error-text", text: "Напишите, что сделали" });
   const submit = h("button", { class: "btn primary", onclick: () => finishRestart(ta.value) }, "Сохранить пуск");
-  let touched = !!ta.value;
-  const update = () => {
-    rw.action = ta.value;
-    const ok = validAction(ta.value);
-    submit.disabled = !ok;
-    error.hidden = ok || !touched;
-  };
-  ta.addEventListener("input", () => { touched = true; update(); });
-  update();
+  ta.addEventListener("input", () => { rw.action = ta.value; });
   const total = (rw.route === "reason" ? 3 : 2) + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
@@ -1708,8 +1704,7 @@ function renderRestartAction(main, view) {
       h("p", { class: "hint", text: "Раньше по этому простою:" }),
       earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
     ta,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    error,
+    h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
     submit
   );
 }
@@ -1717,7 +1712,7 @@ function renderRestartAction(main, view) {
 function finishRestart(rawAction) {
   const rw = ui.rw;
   const action = rawAction.trim();
-  if (!rw || action.length < 3) return;
+  if (!rw) return;
   if (!restartMatches(buildView(), rw)) { render(); return; }
   if (!reasonRef(rw.reason) || (needsNote(rw.reason) && !validAction(rw.note))) { startRestartReasonWizard(); return; }
   if (rw.startMs < buildView().open.startMs || rw.startMs > nowMs()) {
@@ -1778,7 +1773,6 @@ function manualError(view, mw) {
   if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в итоге смены.`;
   if (!reasonRef(mw.reason)) return "Выберите причину простоя.";
   if (needsNote(mw.reason) && !validAction(mw.note)) return "Опишите своими словами, что случилось.";
-  if (!validAction(mw.action)) return "Напишите, что сделали перед пуском.";
   return "";
 }
 
@@ -1844,7 +1838,7 @@ function renderManual(main, view) {
   }
   const action = mw.step === 6;
   const field = action ? "action" : "note";
-  const must = action || needsNote(mw.reason);
+  const must = !action && needsNote(mw.reason);
   const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
     placeholder: action ? actionHint(mw.reason) : noteHint(mw.reason), "aria-label": action ? "Что сделали" : "Что случилось" });
   ta.value = mw[field] || "";
@@ -1865,7 +1859,7 @@ function renderManual(main, view) {
   fill(main, ...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Расскажите своими словами"),
     action ? null : h("p", { class: "muted", text: reasonLabel(mw.reason) }), ta, error,
     h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit,
-    !must ? h("button", { class: "btn", onclick: () => { mw.note = ""; mw.noteEdited = true; next(); } }, "Без описания") : null);
+    !must && !action ? h("button", { class: "btn", onclick: () => { mw.note = ""; mw.noteEdited = true; next(); } }, "Без описания") : null);
   if (!action) focusReasonNote(ta);
 }
 
@@ -1930,7 +1924,6 @@ function renderRecorded(main, view) {
 function missingFields(segment) {
   const missing = [];
   if (!reasonRef(segment.reason)) missing.push("причина");
-  if (!actionText(segment.action)) missing.push("что сделали");
   if (isOther(segment.reason) && !validAction(segment.note)) missing.push("описание иной причины");
   return missing;
 }
@@ -2249,7 +2242,7 @@ function submitRepair() {
     const reason = e.reason || view.open?.reason;
     const note = e.note ?? view.open?.note;
     if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
-    else if (!reasonRef(reason) || !validAction(e.action) || (needsNote(reason) && !validAction(note))) repair.error = "Укажите причину и что сделали. Для иной причины нужно описание.";
+    else if (!reasonRef(reason) || (needsNote(reason) && !validAction(note))) repair.error = "Укажите причину и опишите её своими словами.";
     else if (core.toMs(e.at) < view.open.startMs) repair.error = "Пуск не может быть раньше остановки.";
   }
   if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (needsNote(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
