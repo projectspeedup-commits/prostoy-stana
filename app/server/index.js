@@ -15,7 +15,8 @@ import { computeStats, periodRange } from "../core/stats.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
 const MAX_BODY = 64 * 1024;
-const RATE_LIMIT = 60; // запросов в минуту с одного ключа
+const RATE_LIMIT = 60; // запросов в минуту с одного ключа (по умолчанию; боевой запуск задаёт свой)
+const RATE_LIMIT_SHARED = 600; // боевой: общей ссылкой с одним ключом пользуются многие устройства
 const ALIVE_GAP_MINUTES = 3; // разрыв живости больше этого — простой сервера
 
 const MIME = {
@@ -60,8 +61,10 @@ function median(values) {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
 
-export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE } = {}) {
+export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT } = {}) {
   const clock = () => new Date(now());
+  // Раздел «Администратор» — только перечисленным устройствам; без списка — всем (тесты, старый запуск)
+  const canAdmin = (device) => !Array.isArray(adminDevices) || adminDevices.includes(device.name);
   const settingsStore = createSettingsStore(dataDir === ":memory:" ? null : path.join(dataDir, "settings.json"));
   const readRefs = createRefsReader(peopleFile, settingsStore);
   let settingsWrites = Promise.resolve();
@@ -123,7 +126,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return true;
     }
     w.count += 1;
-    return w.count <= RATE_LIMIT;
+    return w.count <= rateLimit;
   }
 
   function identify(req) {
@@ -209,7 +212,10 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
-    if (isRefs) return send(res, 200, { ok: true, ...readRefs() });
+    if (isRefs) return send(res, 200, { ok: true, ...readRefs(), canAdmin: canAdmin(device) });
+    if ((isAdminGet || isAdminPut) && !canAdmin(device)) {
+      return send(res, 403, { ok: false, error: "forbidden", message: "Раздел «Администратор» открывается только ключом владельца." });
+    }
     if (isAdminGet) {
       const { refs, refsVersion } = readRefs();
       return send(res, 200, { ok: true, settings: settingsFromRefs(refs), refsVersion });
@@ -343,12 +349,21 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   return { server, db, close };
 }
 
+// Кому открыт «Администратор»: список имён из STAN_ADMIN_DEVICES, иначе устройство owner, если оно есть
+export function adminDevicesFrom(text, keys) {
+  const listed = String(text || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (listed.length) return listed;
+  return keys.some((k) => k.name === "owner") ? ["owner"] : undefined;
+}
+
 function main() {
   let app;
   try {
     app = createApp({
       dataDir: process.env.STAN_DATA_DIR || "./data",
       deviceKeys: parseDeviceKeys(process.env.STAN_DEVICE_KEYS),
+      adminDevices: adminDevicesFrom(process.env.STAN_ADMIN_DEVICES, parseDeviceKeys(process.env.STAN_DEVICE_KEYS)),
+      rateLimit: Number(process.env.STAN_RATE_LIMIT) || RATE_LIMIT_SHARED,
     });
   } catch (e) {
     console.error(`Ошибка запуска: ${e.message}`);

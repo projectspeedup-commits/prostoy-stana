@@ -72,6 +72,7 @@ async function realApi(path, options = {}) {
 let key = null;
 let refs = null;          // справочники (кешируются)
 let refsVersion = null;
+let canAdmin = true;      // открыт ли этому ключу «Администратор» (сервер говорит в /api/refs)
 const restored = readJSON(SESSION_KEY, {});
 let serverState = restored.state || null;
 let stateAt = restored.stateAt || null;
@@ -280,7 +281,9 @@ async function loadRefs() {
     if (d && d.ok && d.refs) {
       refs = d.refs;
       refsVersion = d.refsVersion || null;
-      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion }));
+      canAdmin = d.canAdmin !== false;
+      if (!canAdmin && ui.screen === "admin") ui.screen = "auto";
+      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
       setOnline(true);
       render();
       return true;
@@ -298,6 +301,7 @@ function loadCachedRefs() {
     if (c && c.refs && c.refs.reasons) {
       refs = c.refs;
       refsVersion = c.refsVersion || null;
+      canAdmin = c.canAdmin !== false;
     }
   } catch { /* кеш пуст */ }
 }
@@ -777,14 +781,14 @@ function renderTopbar() {
     if (!admin.dataset.bound) {
       admin.dataset.bound = "1";
       admin.addEventListener("click", () => {
-        if (!key || !refs) return;
+        if (!key || !refs || !canAdmin) return;
         if (ui.screen !== "admin") ui.adminBack = ui.screen;
         ui.admin = null;
         window.scrollTo(0, 0);
         go("admin");
       });
     }
-    admin.hidden = !key;
+    admin.hidden = !key || !canAdmin;
     admin.classList.toggle("is-on", ui.screen === "admin");
   }
 }
@@ -1003,7 +1007,8 @@ function loadAdmin() {
     .then((d) => { ui.admin = { settings: adminDraft(d.settings) }; })
     .catch((err) => {
       if (err && err.status === 401) badKey();
-      ui.admin = { loadError: err && err.status === 404
+      ui.admin = { loadError: err && err.status === 403 ? (err.data?.message || "Раздел «Администратор» открывается только ключом владельца.")
+        : err && err.status === 404
         ? "Сервер ещё не умеет хранить настройки: его нужно обновить."
         : "Нет связи с сервером. Настройки открываются и сохраняются только при связи." };
     })
@@ -1057,6 +1062,7 @@ async function saveAdmin() {
   render();
 }
 function renderAdmin(main) {
+  if (!canAdmin) return go("auto");
   const back = ui.adminBack && ui.adminBack !== "admin" ? ui.adminBack : "auto";
   const leave = () => {
     if (ui.admin && ui.admin.dirty && !ui.admin.leaveArmed) {
@@ -2661,6 +2667,10 @@ async function boot() {
 }
 
 takeKeyFromHash();
+// Общую ссылку вставили в уже открытую вкладку: страница сама не перезагружается — берём ключ и перезапускаемся
+window.addEventListener("hashchange", () => {
+  if (/(?:^#|&)key=/.test(location.hash)) { takeKeyFromHash(); location.reload(); }
+});
 key = readStore(STORE_KEY) || null;
 loadCachedRefs();
 

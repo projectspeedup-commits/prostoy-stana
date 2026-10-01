@@ -424,3 +424,36 @@ test("mock admin: тот же контракт, ошибки, новый refsVer
   assert.deepEqual(empty.settings.people, []);
   assert.deepEqual((await api("/api/refs")).refs.settings.contacts, []);
 });
+
+test("администратор: только ключ владельца, остальным кнопки нет и сервер отказывает", async () => {
+  const app = createApp({
+    dataDir: ":memory:",
+    deviceKeys: [{ name: "owner", key: "k-owner" }, { name: "master", key: "k-master" }, { name: "post", key: "k-post" }],
+    adminDevices: ["owner"],
+    now: () => NOW,
+  });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const call = (key, url, init = {}) => fetch(base + url, { ...init, headers: { "X-Device-Key": key, "Content-Type": "application/json" } });
+  try {
+    for (const key of ["k-master", "k-post"]) {
+      assert.equal((await (await call(key, "/api/refs")).json()).canAdmin, false);
+      const get = await call(key, "/api/admin/settings");
+      assert.equal(get.status, 403);
+      assert.match((await get.json()).message, /владельца/);
+      const put = await call(key, "/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: fresh() }) });
+      assert.equal(put.status, 403);
+    }
+    assert.equal((await (await call("k-owner", "/api/refs")).json()).canAdmin, true);
+    assert.equal((await call("k-owner", "/api/admin/settings")).status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("администратор: кому открыт по умолчанию", async () => {
+  const { adminDevicesFrom } = await import("../../app/server/index.js");
+  assert.deepEqual(adminDevicesFrom("", [{ name: "post" }, { name: "owner" }]), ["owner"]);
+  assert.deepEqual(adminDevicesFrom(" boss , owner ", [{ name: "owner" }]), ["boss", "owner"]);
+  assert.equal(adminDevicesFrom(undefined, [{ name: "a" }, { name: "b" }]), undefined);
+});
