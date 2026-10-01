@@ -31,10 +31,11 @@ SRC=$(git -C "$ROOT" log --oneline -1)
 git commit -q -m "Демо из $SRC"
 git push -q origin gh-pages
 
-# Ждём, пока GitHub Pages начнёт отдавать новый app.js (кеш до 10 минут)
-want=$(sha1sum "$ROOT/app/public/app.js" | cut -c1-40)
+# Ждём, пока GitHub Pages начнёт отдавать новый app.js (кеш до 10 минут).
+# Переводы строк не сравниваем: на Windows рабочая копия может быть в CRLF, а GitHub отдаёт LF
+want=$(tr -d '\r' < "$ROOT/app/public/app.js" | sha1sum | cut -c1-40)
 for i in $(seq 1 60); do
-  got=$(curl -s "$URL/app.js?t=$(date +%s)" | sha1sum | cut -c1-40)
+  got=$(curl -s "$URL/app.js?t=$(date +%s)" | tr -d '\r' | sha1sum | cut -c1-40)
   [ "$got" = "$want" ] && { echo "Выложено: $URL"; exit 0; }
   sleep 10
 done
