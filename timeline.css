@@ -380,3 +380,9 @@ main:has(.with-scale .stop-grid) { max-width: 1480px; }
   .with-scale { grid-template-columns: minmax(0, 1fr); }
   .with-scale > .day-scale { order: 2; }
 }
+
+/* Монитор от 1400 px: экран со шкалой шире (правило здесь, чтобы перекрыть ширину выше) */
+@media (min-width: 1400px) {
+  main:has(.with-scale) { max-width: 1240px; }
+  main:has(.with-scale .stop-grid) { max-width: 1600px; }
+}

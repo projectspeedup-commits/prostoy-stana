@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#14161a">
+  <meta name="theme-color" content="#e9edf2">
   <title>Простой стана</title>
   <script src="theme.js"></script>
   <link rel="manifest" href="manifest.webmanifest">
@@ -15,7 +15,13 @@
   <header class="topbar">
     <button id="conn" type="button" class="pill wait">Связаться</button>
     <button id="demo" type="button" class="pill home" hidden>На главный экран</button>
-    <button id="theme" type="button" class="pill theme-toggle" aria-label="Светлая тема" title="Переключить на светлую тему">&#x2600;&#xFE0E; Светлая</button>
+    <button id="theme" type="button" class="theme-toggle" aria-label="Тёмная тема" title="Переключить на тёмную тему">
+      <svg class="bulb" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path class="bulb-glass" d="M12 2.5a6.5 6.5 0 0 0-3.9 11.7c.6.5 1 1.2 1 2V17h5.8v-.8c0-.8.4-1.5 1-2A6.5 6.5 0 0 0 12 2.5z"/>
+        <path class="bulb-base" d="M9.2 18.6h5.6M9.8 21h4.4"/>
+        <path class="bulb-rays" d="M12 .2v1M3.2 4l.8.7M20.8 4l-.8.7M.8 10.5h1.2M22 10.5h1.2"/>
+      </svg>
+    </button>
   </header>
   <p id="save-status" class="save-status" role="status" aria-live="polite" hidden></p>
   <main id="main" aria-label="Учёт работы стана"></main>

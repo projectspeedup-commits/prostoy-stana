@@ -712,8 +712,38 @@ label { display: block; margin-top: 20px; }
 /* Шапка: кнопки в одну строку, не наезжают на содержимое */
 .pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
 .m-tab { font-size: 0.8em; padding: 0 4px; }
-/* Переключатель темы: справа в шапке, отдельно от рабочих кнопок */
-.theme-toggle { margin-left: auto; }
+/* Переключатель темы — круглая кнопка-лампочка справа в шапке.
+   Светлая тема: лампочка горит; тёмная: погашена */
+.theme-toggle {
+  margin-left: auto; flex: 0 0 auto; width: 52px; height: 52px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid var(--border-strong); border-radius: 50%;
+  background: var(--pill-bg); color: var(--text-2); cursor: pointer;
+}
+.theme-toggle .bulb { width: 30px; height: 30px; fill: none; stroke: currentColor;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.theme-toggle .bulb-glass { fill: #ffd43b; stroke: #a8690a; }
+.theme-toggle .bulb-rays { stroke: #e0a100; }
+:root[data-theme="dark"] .theme-toggle .bulb-glass { fill: none; stroke: currentColor; }
+:root[data-theme="dark"] .theme-toggle .bulb-rays { display: none; }
+.theme-toggle:active { filter: var(--press-btn); }
+
+/* Шапка — всегда одна строка: на телефоне кнопки компактнее */
+.topbar { flex-wrap: nowrap; }
+.topbar .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 480px) {
+  .topbar { gap: 8px; padding-left: 8px; padding-right: 8px; }
+  .topbar .pill { min-height: 44px; padding: 8px 12px; font-size: 0.72em; }
+  .theme-toggle { width: 44px; height: 44px; }
+  .theme-toggle .bulb { width: 26px; height: 26px; }
+}
+/* Монитор: шире поле, крупнее шрифт — читается с расстояния */
+@media (min-width: 1400px) {
+  body { font-size: 22px; }
+  main { max-width: 860px; }
+  main:has(.with-scale) { max-width: 1240px; }
+  main:has(.with-scale .stop-grid) { max-width: 1600px; }
+}
 
 /* Графики */
 .chart { width: 100%; height: auto; display: block; background: var(--surface); border-radius: 12px; }
