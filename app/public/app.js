@@ -1,6 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
-import { deliverBatch, pruneRecords } from "./queue.js";
+import { deliverBatch, pruneRecords, settleRecords } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -80,7 +80,8 @@ let queueStoredSeparately = restored.queueSeparated === true || !Array.isArray(r
 let queue = queueStoredSeparately ? loadQueue() : restored.queue;
 let records = Array.isArray(restored.records) ? restored.records : [];
 for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
-  records.push({ event, status: "pending", replaces: restored.pendingReplacements?.find((r) => r.id === event.id)?.replaces });
+  const receipt = restored.pendingReplacements?.find((r) => r.id === event.id);
+  records.push({ event, status: "pending", replaces: receipt?.replaces, rootId: receipt?.rootId, rootAccepted: receipt?.rootAccepted });
 }
 let clockOffset = restored.clockOffset || 0;
 let stateEpoch = 0;
@@ -112,20 +113,22 @@ const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "c
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
+settleRejected();
 function persistClient() {
   // При обновлении старой версии сначала переносим очередь, потом убираем её из снимка.
   if (!queueStoredSeparately) {
     if (!writeStore(QUEUE_KEY, JSON.stringify(queue))) return false;
     queueStoredSeparately = true;
   }
+  settleRejected();
   records = pruneRecords(records, nowMs());
   const draft = Object.fromEntries(DRAFT_FIELDS.map((field) => [field, ui[field]]));
   // Очередь имеет отдельную запись и не переписывается при каждом вводе текста.
   const savedRecords = records.filter((r) => r.status !== "pending");
-  const pendingReplacements = records.filter((r) => r.status === "pending" && r.replaces).map((r) => ({ id: r.event.id, replaces: r.replaces }));
+  const pendingReplacements = records.filter((r) => r.status === "pending" && (r.replaces || r.rootAccepted)).map((r) => ({ id: r.event.id, replaces: r.replaces, rootId: r.rootId, rootAccepted: r.rootAccepted }));
   const snapshot = (list) => JSON.stringify({ state: serverState, stateAt, records: list, pendingReplacements, clockOffset, draft, queueSeparated: true });
   if (writeStore(SESSION_KEY, snapshot(savedRecords))) return true;
-  records = records.filter((r) => !["saved", "replaced", "adopted"].includes(r.status));
+  records = records.filter((r) => !["saved", "replaced", "adopted", "dismissed"].includes(r.status));
   return writeStore(SESSION_KEY, snapshot(records.filter((r) => r.status !== "pending")));
 }
 function acceptState(state, time) {
@@ -133,7 +136,16 @@ function acceptState(state, time) {
   serverState = state;
   stateAt = time || new Date(nowMs()).toISOString();
   updateClock(time);
+  settleRejected();
   persistClient();
+}
+// Отклонённая запись больше не нужна, если сервер уже принял то же самое другой отправкой:
+// дошло исправление из той же цепочки или остановка с этим номером простоя уже записана.
+// Иначе копии одной остановки висят карточками, а повторная отправка снова получает отказ.
+function settleRejected() {
+  const n = settleRecords(records, serverState);
+  if (ui.repair && records.find((r) => r.event.id === ui.repair.id)?.status === "replaced") ui.repair = null;
+  return n;
 }
 
 function loadQueue() {
@@ -661,7 +673,7 @@ function plural(n, one, few, many) {
   return many;
 }
 function fmtTons(v) {
-  return String(v).replace(".", ",") + " т";
+  return String(v).replace(".", ",") + " тн";
 }
 
 // --- DOM ---
@@ -805,15 +817,28 @@ function renderRejects() {
   }
   box.hidden = false;
   fill(box,
-    storageErrors.size ? h("button", { class: "btn", onclick: () => { persistClient(); render(); } }, "Повторить сохранение на планшете") : null,
+    storageErrors.size ? h("button", { class: "btn", onclick: () => { persistQueue(); render(); } }, "Повторить сохранение на планшете") : null,
+    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => dismissRejected(rejected.map((r) => r.event.id)) },
+      `Убрать все отклонённые записи (${rejected.length})`) : null,
     ...rejected.map((r) => h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: humanError(r.error) }),
       h("button", { class: "btn", onclick: () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
         go("repair");
-      } }, "Открыть сохранённую запись")))
+      } }, "Открыть сохранённую запись"),
+      h("button", { class: "btn btn-flat", onclick: () => dismissRejected([r.event.id]) }, "Убрать запись")))
   );
+}
+// Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
+// На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
+function dismissRejected(ids) {
+  let n = 0;
+  for (const r of records) if (r.status === "rejected" && ids.includes(r.event.id)) { r.status = "dismissed"; n += 1; }
+  if (ui.repair && ids.includes(ui.repair.id)) ui.repair = null;
+  persistClient();
+  showToast(n === 1 ? "Запись убрана" : `Убрано записей: ${n}`);
+  render();
 }
 
 function humanError(code) {
@@ -833,6 +858,9 @@ function eventTitle(e) {
   return ({ stop: "остановка", start: "пуск", reason: "причина", split: "смена причины", fix: "исправление", manual: "простой вручную", shift_open: "приём смены", shift_close: "закрытие смены" })[e.type] || "запись";
 }
 function receiptStatus(list) {
+  const active = list.filter((r) => !["dismissed", "replaced"].includes(r.status));
+  if (list.length && !active.length) return list.some((r) => r.status === "dismissed") ? "Запись убрана с планшета" : "Запись заменена";
+  list = active;
   if (list.some((r) => r.status === "rejected")) return "Нужно исправить";
   if (!list.length || list.some((r) => r.status === "pending")) {
     return storageErrors.has(QUEUE_KEY) ? "На планшете не сохранено" : "Сохранено на планшете";
@@ -840,7 +868,7 @@ function receiptStatus(list) {
   return "Принято сервером";
 }
 function receiptFor(downtimeId) {
-  return records.filter((r) => r.status !== "replaced" && (r.event.downtimeId || r.event.id) === downtimeId);
+  return records.filter((r) => r.status !== "replaced" && r.status !== "dismissed" && (r.event.downtimeId || r.event.id) === downtimeId);
 }
 
 function reasonRef(code) {
@@ -2011,7 +2039,7 @@ function renderRestartAction(main, view) {
   // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
   const billet = needBillet ? h("input", { id: "restart-billet", type: "text", maxlength: "8",
     inputmode: "decimal", autocomplete: "off", placeholder: "Тонны, 0 — если брака нет", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
-  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите от 0 до 1000 т. Если брака нет — 0." }) : null;
+  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
   if (needBillet) {
     billet.value = rw.billet ?? "";
     billetError.hidden = true;
@@ -2038,7 +2066,7 @@ function renderRestartAction(main, view) {
       earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
     ta,
     h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, т" }) : null,
+    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, тн" }) : null,
     billet,
     billetError,
     submit
@@ -2414,21 +2442,22 @@ function renderBillet(main, view) {
   const bl = ui.bl;
   if (!bl) return go("detail");
   const save = (value) => {
-    if (!Number.isFinite(value) || value < 0 || value > 1000) return showToast("Укажите от 0 до 1000 т.");
+    if (!validBillet(value)) return showToast("Укажите от 0 до 1000 тн.");
     ui.bl = null;
     ui.screen = "detail";
     send("fix", { downtimeId: bl.downtimeId, index: bl.index, billet: value });
   };
-  const input = h("input", { type: "number", min: "0", max: "1000", step: "0.1", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
+  const input = h("input", { type: "text", maxlength: "8", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
   input.value = bl.value;
   input.addEventListener("input", () => { bl.value = input.value; });
   fill(main, backBtn("К записи простоя", () => go("detail")), question("Сколько заготовки ушло в брак?"),
-    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 т." }),
+    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 тн." }),
     h("div", { class: "tiles" }, [0, 0.5, 1, 2, 5].map((v) => h("button", { class: "tile", onclick: () => save(v) }, fmtTons(v)))),
-    h("label", { for: "billet-value", text: "Другое количество, т" }),
+    h("label", { for: "billet-value", text: "Другое количество, тн" }),
     Object.assign(input, { id: "billet-value" }),
     h("button", { class: "btn primary", onclick: () => {
-      if (input.value.trim()) save(Number(input.value.replace(",", ".")));
+      if (validBillet(input.value)) save(Number(input.value.trim().replace(",", ".")));
+      else showToast("Укажите от 0 до 1000 тн.");
     } }, "Сохранить"));
 }
 
@@ -2581,7 +2610,7 @@ function renderRepairField(main) {
     input, error, h("button", { class: "btn primary", onclick: () => {
       const value = time ? parseLocalTime(input.value) : field === "billet" ? (input.value.trim() ? Number(input.value) : NaN) : input.value;
       if ((time && (!Number.isFinite(value) || value > nowMs())) || (field === "billet" && (!Number.isFinite(value) || value < 0 || value > 1000))) {
-        error.textContent = time ? "Укажите прошедшее время." : "Укажите вес от нуля."; error.hidden = false; return;
+        error.textContent = time ? "Укажите прошедшее время." : "Укажите вес от 0 до 1000 тн."; error.hidden = false; return;
       }
       e[field] = time ? new Date(value).toISOString() : value;
       repair.invalid[field] = false;

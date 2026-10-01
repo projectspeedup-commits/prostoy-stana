@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { eventBatch, deliverBatch, pruneRecords } from '../../app/public/queue.js';
+import { eventBatch, deliverBatch, pruneRecords, settleRecords } from '../../app/public/queue.js';
 
 test('P1: очередь ограничена байтами UTF-8, порядком и 50 событиями', () => {
   const q = Array.from({ length: 230 }, (_, id) => ({ id: String(id), note: 'Я'.repeat(500) }));
@@ -59,4 +59,39 @@ test('P2: SW возвращает кеш при 500/502/503/504, API не кеш
   let called = false;
   listeners.fetch({ request: new Request('http://local/api/state'), respondWith: () => { called = true; } });
   assert.equal(called, false);
+});
+
+test('main: принятая цепочка и известный stop заменяют отклонённые копии', () => {
+  const at = new Date().toISOString();
+  const record = (id, status, replaces, fields = {}) => ({ event: { id, type: 'fix', at, ...fields }, status, replaces });
+  const records = [record('a', 'rejected'), record('b', 'rejected', 'a'), record('c', 'saved', 'b'),
+    record('known', 'rejected', null, { type: 'stop', downtimeId: 'server-open' }), record('unrelated', 'rejected'),
+    record('adopt-root', 'rejected'), record('adopt-copy', 'adopted', 'adopt-root')];
+  assert.equal(settleRecords(records, { open: { downtimeId: 'server-open' } }), 4);
+  assert.deepEqual(records.map((r) => r.status), ['replaced', 'replaced', 'saved', 'replaced', 'rejected', 'replaced', 'adopted']);
+  assert.equal(settleRecords(records, {}), 0);
+});
+
+test('main: новая очередь помнит принятую цепочку после удаления старых квитанций', () => {
+  const old = new Date(Date.now() - 4 * 86400000).toISOString();
+  const records = [
+    { event: { id: 'root', type: 'fix', at: old }, status: 'rejected' },
+    { event: { id: 'ok', type: 'fix', at: old }, status: 'saved', replaces: 'root' },
+    { event: { id: 'pending', type: 'fix', at: old }, status: 'pending', replaces: 'ok' },
+  ];
+  settleRecords(records, {});
+  const retained = pruneRecords(records, Date.now());
+  assert.equal(retained.length, 1);
+  const restored = JSON.parse(JSON.stringify(retained));
+  restored[0].status = 'rejected';
+  assert.equal(settleRecords(restored, {}), 1);
+  assert.equal(restored[0].status, 'replaced');
+});
+
+test('main: dismissed/replaced сохраняются с ограничением истории, не возвращаются в rejected', () => {
+  const now = Date.now();
+  const records = ['dismissed', 'replaced'].map((status) => ({ status, event: { id: status, type: 'stop', at: new Date(now).toISOString() } }));
+  settleRecords(records, {});
+  assert.deepEqual(pruneRecords(records, now).map((r) => r.status), ['dismissed', 'replaced']);
+  assert.equal(pruneRecords(records, now + 4 * 86400000).length, 0);
 });

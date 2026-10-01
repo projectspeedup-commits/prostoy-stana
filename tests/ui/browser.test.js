@@ -121,6 +121,12 @@ test('UI: выбор ночной смены, квитанции, темы, ша
     for (const [width, height] of [[320, 720], [375, 812], [600, 800], [768, 1024], [820, 900], [1100, 700], [1200, 800], [1600, 900]]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
       await sleep(60);
+      if (width === 320 && state === 'running') {
+        const ax = await send('Accessibility.getFullAXTree');
+        for (const name of ['Администратор', 'Связаться', 'На главный экран', 'Переключить на светлую тему']) {
+          assert.ok(ax.nodes.some((n) => n.role?.value === 'button' && n.name?.value === name), `Доступное имя: ${name}`);
+        }
+      }
       const sizes = await evaluate(`(() => {
         const h = document.querySelector('.topbar');
         const b = document.querySelector('.mill-stop'), l = b.querySelector('.mill-label'), lamp = b.querySelector('.mill-lamp');
@@ -171,6 +177,38 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await wait(`JSON.parse(localStorage.getItem('stan.session.v1'))?.records.some(r=>r.event.id==='legacy-queue' && r.status==='saved')`);
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: migrate.identifier });
   assert.equal(app.db.prepare("SELECT count(*) n FROM events WHERE id = 'legacy-queue'").get().n, 1);
+  const seedRejected = await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const s = JSON.parse(localStorage.getItem('stan.session.v1'));
+    const row = (id, status, replaces, type='fix', downtimeId) => ({event:{id,type,downtimeId,at:new Date(Date.now()).toISOString()},status,replaces});
+    s.records.push(row('copy','rejected',null,'stop','remote-stop'), row('root','rejected'), row('middle','rejected','root'),
+      row('accepted-copy','saved','middle'), ...[1,2,3].map(i=>row('dismiss'+i,'rejected')));
+    s.draft = {};
+    localStorage.setItem('stan.session.v1',JSON.stringify(s));
+  })()` });
+  await send('Page.reload');
+  await wait(`document.querySelectorAll('#rejects .reject').length === 3`);
+  await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seedRejected.identifier });
+  for (const id of ['copy', 'root', 'middle']) assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.find(r=>r.event.id===${JSON.stringify(id)}).status`), 'replaced');
+  await evaluate(`[...document.querySelectorAll('#rejects .reject button')].find(b=>b.textContent==='Убрать запись').click()`);
+  assert.equal(await evaluate(`document.querySelectorAll('#rejects .reject').length`), 2);
+  await evaluate(`[...document.querySelectorAll('#rejects button')].find(b=>b.textContent==='Убрать все отклонённые записи (2)').click()`);
+  assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
+  for (const id of ['dismiss1', 'dismiss2', 'dismiss3']) assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.find(r=>r.event.id===${JSON.stringify(id)}).status`), 'dismissed');
+  await send('Page.reload');
+  await wait(`document.querySelector('.mill-panel')`);
+  assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
+  await click('Простои за смену');
+  await evaluate(`document.querySelector('.segs button').click()`);
+  await click('Брак');
+  assert.equal(await evaluate(`document.querySelector('#billet-value').type`), 'text');
+  await evaluate(`document.querySelector('#billet-value').value='1001'`);
+  await click('Сохранить');
+  assert.ok(await evaluate(`!!document.querySelector('#billet-value')`));
+  await evaluate(`document.querySelector('#billet-value').value='2,5'`);
+  await click('Сохранить');
+  await wait(`document.querySelector('#main').textContent.includes('2,5 тн') && JSON.parse(localStorage.getItem('stan.queue')).length===0`);
+  const billet = app.db.prepare("SELECT body FROM events WHERE type = 'fix' ORDER BY rowid DESC LIMIT 1").get();
+  assert.equal(JSON.parse(billet.body).billet, 2.5);
   assert.equal(errors.length, 0, errors.join('\n'));
   fs.writeFileSync(path.join(root, 'Проверка интерфейса.json'), JSON.stringify({ results, errors }, null, 2));
   // Browser.close закрывает все процессы нашего отдельного профиля.

@@ -27,9 +27,43 @@ export async function deliverBatch(api, queue) {
 }
 
 export function pruneRecords(records, nowMs) {
-  const confirmed = records.filter((r) => ["saved", "replaced", "adopted"].includes(r.status)
+  const confirmed = records.filter((r) => ["saved", "replaced", "adopted", "dismissed"].includes(r.status)
     && Date.parse(r.event.at) >= nowMs - 3 * 86400000)
     .sort((a, b) => Date.parse(a.confirmedAt || a.event.at) - Date.parse(b.confirmedAt || b.event.at)).slice(-300);
   const keep = new Set(confirmed);
   return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r));
+}
+
+// Цепочка исправлений переживает ограничение истории и перезагрузку с отдельной очередью.
+// Метаданные остаются только у тех квитанций/неотправленных записей, которым они нужны.
+export function settleRecords(records, state) {
+  const byId = new Map(records.map((r) => [r.event.id, r]));
+  const rootOf = (r) => {
+    if (r.rootId) return r.rootId;
+    const seen = new Set();
+    let cur = r;
+    while (cur.replaces && !seen.has(cur.replaces)) {
+      seen.add(cur.replaces);
+      const prev = byId.get(cur.replaces);
+      if (!prev) return cur.replaces;
+      if (prev.rootId) return prev.rootId;
+      cur = prev;
+    }
+    return cur.event.id;
+  };
+  const roots = new Map(records.map((r) => [r.event.id, rootOf(r)]));
+  const savedRoots = new Set(records.filter((r) => r.rootAccepted || (['saved', 'adopted'].includes(r.status) && r.replaces))
+    .map((r) => roots.get(r.event.id)));
+  const known = new Set([...(state?.day?.segments || []), ...(state?.segments || [])].map((s) => s.downtimeId));
+  if (state?.open) known.add(state.open.downtimeId);
+  let count = 0;
+  for (const r of records) {
+    r.rootId = roots.get(r.event.id);
+    if (savedRoots.has(r.rootId)) r.rootAccepted = true;
+    if (r.status === 'rejected' && (r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
+      r.status = 'replaced';
+      count++;
+    }
+  }
+  return count;
 }
