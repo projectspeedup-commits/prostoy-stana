@@ -244,3 +244,11 @@ if (process.env.STATS_TZ_CHILD !== "1") test("computeStats: время до пе
   assert.equal(st.totalMin, 19 * 60);
   assert.equal(st.downMin, 60);
 });
+
+if (process.env.STATS_TZ_CHILD !== "1") test("месяц 1-го числа до 08:00 — ещё прошлый месяц по производственным суткам", () => {
+  const now = Date.parse("2026-10-01T07:45:00+03:00");
+  const range = periodRange("month", now, DEFAULT_SCHEDULE);
+  assert.equal(range.fromMs, Date.parse("2026-09-01T08:00:00+03:00"));
+  assert.equal(range.toMs, now);
+  assert.ok(range.toMs > range.fromMs);
+});

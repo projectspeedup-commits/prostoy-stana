@@ -1,6 +1,5 @@
-/* Шкала суток для timeline.js. Тёмная тема страницы:
-   фон #16181c, карточки #20242b, рамки #3a3f4a,
-   текст #f2f4f8, приглушённый #b7bdc7.
+/* Шкала суток для timeline.js. Цвета — токены из app.css (тёмная и светлая темы):
+   --ds-* для самой шкалы, --z-* для зон, общие --border, --text, --text-soft.
    По умолчанию (экран от 1100 px) — вертикальная колонка слева от кнопки;
    уже 1100 px — горизонтальная полоса (media query внизу). */
 
@@ -8,10 +7,10 @@
   box-sizing: border-box;
   width: 300px;
   padding: 10px;
-  background: #20242b;
-  border: 1px solid #3a3f4a;
+  background: var(--ds-bg);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  color: #f2f4f8;
+  color: var(--text);
   font-family: inherit;
 }
 
@@ -25,7 +24,7 @@
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 700;
-  color: #f2f4f8;
+  color: var(--text);
 }
 
 .day-scale__rows {
@@ -58,7 +57,7 @@
   font-size: 12px;
   font-weight: 700;
   line-height: 14px;
-  color: #b7bdc7;
+  color: var(--text-soft);
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
@@ -71,25 +70,25 @@
   right: 6px;
   top: 50%;
   width: 8px;
-  border-top: 1px solid #3a3f4a;
+  border-top: 1px solid var(--border);
 }
 
 .ds-row__track {
   position: relative;
   display: flex;
   overflow: hidden;
-  background: #262a32;
+  background: var(--ds-track);
   border-radius: 3px;
 }
 
 /* Будущее: без заливки, тонкая пунктирная рамка */
 .ds-row--future .ds-row__track {
   background: transparent;
-  border: 1px dashed #3a3f4a;
+  border: 1px dashed var(--ds-future-border);
 }
 
 .ds-row--future .ds-row__label {
-  color: #6b7280;
+  color: var(--ds-faint);
 }
 
 /* Части строки: размер задан скриптом через flex-basis,
@@ -99,15 +98,20 @@
   height: 100%;
 }
 
-.z-work { background: #2fd35f; }      /* работает — зелёный */
-.z-plan { background: #f5f7fa; }      /* перевалка — белый */
-.z-unplanned { background: #ffc93c; } /* внеплановый — жёлтый */
-.z-failure { background: #ff5252; }   /* авария — красный */
-.z-nodata { background: #565d66; }    /* нет данных — тёмно-серый */
+.z-work { background: var(--z-work); }           /* работает — зелёный */
+.z-plan { background: var(--z-plan); }           /* перевалка: в тёмной теме белая, в светлой светло-серая с рамкой */
+.z-unplanned { background: var(--z-unplanned); } /* внеплановый — жёлтый */
+.z-failure { background: var(--z-failure); }     /* авария — красный */
+.z-nodata { background: var(--z-nodata); }       /* нет данных — серый */
+
+/* Рамка перевалки на шкале (внутрь, размер части не меняется); в тёмной теме прозрачная */
+.ds-seg.z-plan {
+  box-shadow: inset 0 0 0 1px var(--z-plan-edge);
+}
 
 /* Текущая ячейка: рамка, черта и плашка времени */
 .ds-row--now .ds-row__track {
-  outline: 2px solid #f2f4f8;
+  outline: 2px solid var(--ds-now);
   outline-offset: 0;
 }
 
@@ -123,8 +127,8 @@
   top: var(--nowpos);
   height: 2px;
   margin-top: -1px;
-  background: #f2f4f8;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+  background: var(--ds-now);
+  box-shadow: var(--ds-now-shadow);
   z-index: 2;
   pointer-events: none;
 }
@@ -140,15 +144,15 @@
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
-  color: #16181c;
-  background: #f2f4f8;
+  color: var(--ds-now-text);
+  background: var(--ds-now);
   border-radius: 3px;
   white-space: nowrap;
 }
 
 /* Выбранная строка */
 .ds-row--sel .ds-row__track {
-  outline: 2px solid #6ea8fe;
+  outline: 2px solid var(--ds-sel);
   outline-offset: 0;
 }
 
@@ -159,16 +163,16 @@
   gap: 6px;
   margin: 2px 0 4px;
   padding: 3px 8px;
-  background: #282e38;
+  background: var(--ds-shift-bg);
   border-radius: 4px;
   font-size: 13px;
   font-weight: 700;
-  color: #b7bdc7;
+  color: var(--text-soft);
 }
 
 .ds-shift--active {
-  background: #333b48;
-  color: #ffffff;
+  background: var(--ds-shift-active-bg);
+  color: var(--ds-shift-active-text);
 }
 
 .ds-shift__times {
@@ -182,9 +186,9 @@
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.35;
-  color: #f2f4f8;
-  background: #16181c;
-  border: 1px solid #3a3f4a;
+  color: var(--text);
+  background: var(--ds-details-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -200,7 +204,7 @@
   grid-column: 1 / -1;
   font-size: 12px;
   font-weight: 700;
-  color: #b7bdc7;
+  color: var(--text-soft);
 }
 
 .ds-legend__item {
@@ -210,7 +214,7 @@
   min-width: 0;
   font-size: 13px;
   line-height: 1.3;
-  color: #e6e9ee;
+  color: var(--ds-legend-text);
 }
 
 .ds-legend__item--zero {
@@ -222,13 +226,18 @@
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1px solid #3a3f4a;
+  border: 1px solid var(--border);
+}
+
+/* Квадрат перевалки в легенде: в светлой теме светло-серый с заметной рамкой, как на шкале */
+.ds-legend__chip.z-plan {
+  border-color: var(--z-plan-chip-edge);
 }
 
 .ds-legend__val {
   margin-left: auto;
   font-weight: 700;
-  color: #f2f4f8;
+  color: var(--text);
 }
 
 /* --- Горизонтальная шкала на экране уже 1100 px: планшет стоя и телефон --- */
@@ -324,7 +333,7 @@
     left: -1px;
     top: 0;
     bottom: 0;
-    border-left: 2px dashed #6b7280;
+    border-left: 2px dashed var(--ds-faint);
   }
 
   .ds-shift__name {
@@ -333,12 +342,12 @@
     left: 3px;
     font-size: 11px;
     font-weight: 700;
-    color: #b7bdc7;
+    color: var(--text-soft);
     white-space: nowrap;
   }
 
   .ds-shift--active .ds-shift__name {
-    color: #ffffff;
+    color: var(--ds-shift-active-text);
   }
 
   .ds-shift__times {

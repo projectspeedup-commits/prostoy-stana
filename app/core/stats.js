@@ -139,7 +139,8 @@ export function periodRange(period, nowMs, schedule) {
     endMs = dayStart + DAY;
     label = "7 суток";
   } else if (period === "month") {
-    const monthStart = `${localDate(now, schedule).slice(0, 7)}-01`;
+    // Месяц — по производственным суткам: 1-го числа до 08:00 ещё идут сутки прошлого месяца
+    const monthStart = `${shift.day.slice(0, 7)}-01`;
     fromMs = firstShiftStart(monthStart, schedule);
     endMs = firstShiftStart(nextMonthDay(monthStart), schedule);
     label = "Месяц";
