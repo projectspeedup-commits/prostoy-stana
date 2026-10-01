@@ -33,18 +33,6 @@ let REFS_VERSION = refsVersion();
 
 const events = []; // журнал событий, как в базе сервера
 
-function shiftsOfDay(day, schedule) {
-  const tz = schedule.tzOffsetMinutes || 0;
-  const sign = tz >= 0 ? "+" : "-";
-  const off = `${String(Math.floor(Math.abs(tz) / 60)).padStart(2, "0")}:${String(Math.abs(tz) % 60).padStart(2, "0")}`;
-  const out = [];
-  for (const s of schedule.shifts) {
-    const sh = core.shiftOf(`${day}T${s.start}:00${sign}${off}`, schedule);
-    if (sh.day === day && !out.some((o) => o.shiftNo === sh.shiftNo)) out.push(sh);
-  }
-  return out;
-}
-
 // Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
 function firstEventMs() {
   let first = Infinity;
@@ -62,50 +50,15 @@ function computeState() {
   const schedule = refs.settings.schedule;
   const built = core.buildDowntimes(events, now);
 
-  // Бригада на посту: последний shift_open, снятый shift_close
-  let crew = null;
-  let closed = false;
-  for (const e of events) {
-    if (e.type === "shift_open") {
-      crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
-      closed = false;
-    } else if (e.type === "shift_close") {
-      crew = null;
-      closed = true;
-    }
-  }
-
-  const shift = core.shiftOf(now, schedule);
-  const allParts = [];
-  const segments = [];
-  for (const seg of built.segments) {
-    // Мгновенное нажатие ещё не даёт длительности, как и на сервере.
-    if (seg.endMs <= seg.startMs) continue;
-    for (const p of core.splitByShifts(seg, schedule)) {
-      // reason/billet/note уже применены ядром (fix и note в reason поддерживает core)
-      const part = { ...p, reason: p.reason ?? null, billet: p.billet ?? null, note: p.note ?? null };
-      const cls = core.classify(part, refs, refs.settings);
-      const full = {
-        ...part,
-        ...cls,
-        open: seg.open === true && p.endMs === seg.endMs,
-        personId: crew ? crew.personId : null,
-        crewId: crew ? crew.crewId : null,
-      };
-      allParts.push(full);
-      if (p.day === shift.day) segments.push(full);
-    }
-  }
-  segments.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
-
+  const { shift, crew, closed } = core.shiftStatus(events, now, schedule);
+  const segments = core.periodParts(built.segments, shift.startMs, Math.min(now, shift.endMs), refs);
   // Для времени пуска нужны исходные отрезки, без обрезки по границе смены.
   const openSegs = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
   // Начало всего простоя (не последнего отрезка) — как у сервера
   const openStartMs = built.open
     ? Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs))
     : null;
-  const dayParts = allParts.filter((p) => p.day === shift.day);
-  const summary = core.summarizeDay(dayParts, shiftsOfDay(shift.day, schedule), {});
+  const summary = core.summarizeDay(segments, [shift], { [shift.shiftNo]: events.length > 0 }, { nowMs: now, dataFromMs: firstEventMs() ?? now });
   const dayRange = periodRange("day", now, schedule);
   const day = {
     fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * 60000,
@@ -165,6 +118,7 @@ export async function api(path, options = {}) {
     let body;
     try { body = JSON.parse(options.body || ""); }
     catch { fail(400, "Некорректный JSON в теле запроса."); }
+    if (body?.refsVersion !== REFS_VERSION) fail(409, "Настройки уже изменили на другом устройстве. Обновите экран и повторите.");
     let settings;
     try { settings = validateSettings(body?.settings, refs.people); }
     catch (e) {
@@ -202,39 +156,27 @@ export async function api(path, options = {}) {
     }
     const saved = [];
     const rejected = [];
-    const types = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
     for (const e of Array.isArray(body.events) ? body.events : []) {
-      if (!e || typeof e.id !== "string" || !types.has(e.type)) {
-        rejected.push({ id: e && e.id ? e.id : "?", error: "bad_event" });
-        continue;
-      }
+      const inputError = core.eventInputError(e);
+      if (inputError) { rejected.push({ id: e?.id ?? null, error: inputError }); continue; }
       // Повтор очереди подтверждаем без повторной записи, как на сервере.
       if (events.some((old) => old.id === e.id)) {
         saved.push(e.id);
         continue;
       }
-      let at;
-      try { at = core.toMs(e.at); }
-      catch {
-        rejected.push({ id: e.id, error: "bad_request" });
+      const now = Date.now();
+      const error = core.eventBoundsError(e, now) || core.eventTimeError(events, e, now);
+      if (error) {
+        const built = core.buildDowntimes(events, now);
+        rejected.push({ id: e.id, error, ...(error === "already_stopped" ? {
+          downtimeId: built.open.downtimeId,
+          startMs: Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs)),
+        } : {}) });
         continue;
       }
-      if (at > Date.now() + 2 * 60000) {
-        rejected.push({ id: e.id, error: "bad_time" });
-        continue;
-      }
-      if (e.type === "manual") {
-        try {
-          if (!(core.toMs(e.to) > core.toMs(e.from))) throw new Error("bad_range");
-        } catch {
-          rejected.push({ id: e.id, error: "bad_range" });
-          continue;
-        }
-      }
-      const timeError = core.eventTimeError(events, e, Date.now());
-      if (timeError) {
-        rejected.push({ id: e.id, error: timeError });
-        continue;
+      if (e.type !== "shift_open") {
+        const { crew } = core.shiftStatus(events.filter((old) => core.toMs(old.at) <= core.toMs(e.at)), core.toMs(e.at), refs.settings.schedule);
+        if (crew) { e.crewId ??= crew.crewId; e.personId ??= crew.personId; e.personName ??= crew.personName; }
       }
       events.push(e);
       saved.push(e.id);

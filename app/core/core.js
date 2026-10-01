@@ -111,21 +111,65 @@ export function splitByShifts(segment, schedule) {
 
 // Проверка времени запоздалой остановки и пуска — одна для сервера и демо.
 export function eventTimeError(events, event, nowMs) {
-  if (event.type !== "stop" && event.type !== "start") return "";
+  if (!["stop", "start", "manual"].includes(event.type)) return "";
   const at = toMs(event.at);
   const built = buildDowntimes(events, nowMs);
   if (event.type === "stop") {
-    // Лишнее нажатие во время простоя ядро по-прежнему принимает и игнорирует.
-    const before = events.filter((e) => toMs(e.at) <= at);
-    if (buildDowntimes(before, at).open) return "";
+    if (built.open) {
+      const start = Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs));
+      const original = events.find((e) => e.type === "stop" && (e.downtimeId ?? e.id) === built.open.downtimeId);
+      if (at <= start || (at < nowMs && original?.device != null && original.device === event.device)) return "overlap";
+      return "already_stopped";
+    }
     if (built.segments.some((s) => !s.open && s.endMs > at) ||
         events.some((e) => e.type === "start" && toMs(e.at) > at)) return "overlap";
-  } else {
+  } else if (event.type === "start") {
     const id = event.downtimeId ?? built.open?.downtimeId;
+    if (!built.open || id !== built.open.downtimeId) return "not_open";
     const last = built.segments.filter((s) => s.downtimeId === id).at(-1);
     if (last && at < last.startMs) return "bad_time";
+  } else if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) {
+    return "overlap";
   }
   return "";
+}
+
+/** Ограничения времени одинаковы для сервера и демо. */
+export function eventBoundsError(event, nowMs) {
+  const at = toMs(event.at);
+  if (at < nowMs - 40 * DAY_MS || at > nowMs + 2 * MIN) return "bad_time";
+  if (event.type === "manual") {
+    const from = toMs(event.from), to = toMs(event.to);
+    if (to <= from) return "bad_request";
+    if (from < nowMs - 40 * DAY_MS || to > nowMs + 2 * MIN || to - from > 7 * DAY_MS) return "bad_time";
+  }
+  return "";
+}
+
+export function shiftStatus(events, nowMs, schedule) {
+  const shift = shiftOf(nowMs, schedule);
+  const own = events.filter((e) => toMs(e.at) >= shift.startMs && toMs(e.at) < shift.endMs)
+    .sort((a, b) => toMs(a.at) - toMs(b.at));
+  const last = own.findLast((e) => e.type === "shift_open" || e.type === "shift_close");
+  const crew = own.findLast((e) => e.type === "shift_open");
+  return { shift, own, closed: last?.type === "shift_close",
+    crew: crew ? { crewId: crew.crewId ?? null, personId: crew.personId ?? null, personName: crew.personName ?? null, at: crew.at } : null };
+}
+
+/** Полная длительность сохраняется до обрезки границами отчёта. */
+export function withDowntimeDuration(segments) {
+  const durations = new Map();
+  for (const s of segments) durations.set(s.downtimeId, (durations.get(s.downtimeId) || 0) + s.endMs - s.startMs);
+  return segments.map((s) => ({ ...s, durationMs: durations.get(s.downtimeId) }));
+}
+
+export function periodParts(segments, fromMs, toMs, refs) {
+  return withDowntimeDuration(segments).flatMap((s) => {
+    const startMs = Math.max(s.startMs, fromMs), endMs = Math.min(s.endMs, toMs);
+    if (endMs <= startMs) return [];
+    return splitByShifts({ ...s, startMs, endMs, ...classify(s, refs, refs.settings) }, refs.settings.schedule)
+      .map((p) => ({ ...p, continued: p.startMs > s.startMs }));
+  });
 }
 
 // Граница для забытой остановки, включая пуски и простои прошлых смен.
@@ -277,7 +321,7 @@ export function handoversSince(events, sinceMs) {
 export function classify(segment, refs, settings) {
   const reason = segment.reason;
   const hasReason = reason !== null && reason !== undefined && reason !== "";
-  const minutes = (segment.endMs - segment.startMs) / MIN;
+  const minutes = (segment.durationMs ?? (segment.endMs - segment.startMs)) / MIN;
   const ref = hasReason ? refs.reasons[reason] : undefined;
   let mode;
   if (!hasReason && minutes < settings.shortStopMinutes) mode = "short";
@@ -287,59 +331,61 @@ export function classify(segment, refs, settings) {
   return { mode, group };
 }
 
-function emptySums() {
-  return { totalMinutes: 0, plannedMinutes: 0, unplannedMinutes: 0, shortMinutes: 0, workMinutes: 0, stops: 0 };
+// Округляем общий итог один раз, распределяя остаток между категориями.
+export function apportionMinutes(msList, totalMin = Math.round(msList.reduce((a, b) => a + b, 0) / MIN)) {
+  const out = msList.map((ms) => Math.floor(ms / MIN));
+  const rest = msList.map((ms, i) => ms - out[i] * MIN);
+  let left = totalMin - out.reduce((a, b) => a + b, 0);
+  for (const i of rest.map((_, i) => i).sort((a, b) => rest[b] - rest[a] || a - b)) {
+    if (left-- <= 0) break;
+    out[i]++;
+  }
+  return out;
 }
 
-function addPart(sums, p) {
-  if (p.mode === "planned") sums.plannedMinutes += p.minutes;
-  else if (p.mode === "short") sums.shortMinutes += p.minutes;
-  else sums.unplannedMinutes += p.minutes;
-  if (p.continued !== true) sums.stops += 1;
+const stopCount = (parts) => new Set(parts.filter((p) => p.downtimeId != null).map((p) => p.downtimeId)).size
+  + parts.filter((p) => p.downtimeId == null && !p.continued).length;
+const partMs = (p) => p.endMs - p.startMs;
+function sumParts(parts, totalMs, hasData) {
+  const modes = ["planned", "unplanned", "short"];
+  const downMs = parts.reduce((sum, p) => sum + partMs(p), 0);
+  const downMinutes = Math.round(downMs / MIN);
+  const [plannedMinutes, unplannedMinutes, shortMinutes] = apportionMinutes(modes.map((mode) =>
+    parts.filter((p) => p.mode === mode).reduce((sum, p) => sum + partMs(p), 0)), downMinutes);
+  const totalMinutes = Math.round(totalMs / MIN);
+  return { totalMinutes, downMinutes, plannedMinutes, unplannedMinutes, shortMinutes,
+    workMinutes: hasData ? Math.max(0, totalMinutes - downMinutes) : null, stops: stopCount(parts), hasData };
 }
 
-/** Сводка производственных суток. */
-export function summarizeDay(parts, shiftsOfDay, signals) {
+/** Сводка по прошедшему времени с начала учёта. */
+export function summarizeDay(parts, shiftsOfDay, signals, { nowMs = Infinity, dataFromMs = -Infinity } = {}) {
   const sig = signals || {};
-  const shifts = shiftsOfDay.map((sh) => {
-    const own = parts.filter((p) => p.shiftNo === sh.shiftNo);
-    // Данные есть, если был сигнал/событие; наличие простоя само по себе есть событие
-    const hasData = sig[sh.shiftNo] === true || own.length > 0;
-    const s = { shiftNo: sh.shiftNo, hasData, ...emptySums() };
-    s.totalMinutes = Math.round((sh.endMs - sh.startMs) / MIN);
-    for (const p of own) addPart(s, p);
-    const down = s.plannedMinutes + s.unplannedMinutes + s.shortMinutes;
-    s.workMinutes = hasData ? Math.max(0, s.totalMinutes - down) : null;
-    return s;
+  const visible = parts.flatMap((p) => {
+    const sh = shiftsOfDay.find((s) => s.shiftNo === p.shiftNo);
+    if (!sh) return [];
+    const startMs = Math.max(p.startMs, sh.startMs), endMs = Math.min(p.endMs, sh.endMs, nowMs);
+    return endMs > startMs ? [{ ...p, startMs, endMs }] : [];
   });
-  const day = { ...emptySums(), hasData: shifts.some((s) => s.hasData) };
-  let anyWork = false;
-  let work = 0;
-  for (const s of shifts) {
-    day.totalMinutes += s.totalMinutes;
-    day.plannedMinutes += s.plannedMinutes;
-    day.unplannedMinutes += s.unplannedMinutes;
-    day.shortMinutes += s.shortMinutes;
-    day.stops += s.stops;
-    if (s.workMinutes !== null) {
-      anyWork = true;
-      work += s.workMinutes;
-    }
-  }
-  day.workMinutes = anyWork ? work : null;
-
-  const known = new Set(shiftsOfDay.map((s) => s.shiftNo));
-  const map = new Map();
-  for (const p of parts) {
-    if (!known.has(p.shiftNo)) continue;
-    const reason = p.reason === undefined || p.reason === "" ? null : p.reason;
+  const elapsed = (sh) => Math.max(0, Math.min(sh.endMs, nowMs) - Math.max(sh.startMs, dataFromMs));
+  const shifts = shiftsOfDay.map((sh) => {
+    const own = visible.filter((p) => p.shiftNo === sh.shiftNo);
+    const hasData = sig[sh.shiftNo] === true || own.length > 0;
+    return { shiftNo: sh.shiftNo, ...sumParts(own, elapsed(sh), hasData) };
+  });
+  const day = sumParts(visible, shiftsOfDay.reduce((sum, sh) => sum + elapsed(sh), 0), shifts.some((s) => s.hasData));
+  const knownMs = shiftsOfDay.reduce((sum, sh, i) => sum + (shifts[i].hasData ? elapsed(sh) : 0), 0);
+  if (day.hasData) day.workMinutes = Math.max(0, Math.round(knownMs / MIN) - day.downMinutes);
+  const groups = new Map();
+  for (const p of visible) {
+    const reason = p.reason || null;
     const key = JSON.stringify([reason, p.mode, p.group]);
-    let r = map.get(key);
-    if (!r) map.set(key, (r = { reason, group: p.group, mode: p.mode, minutes: 0, stops: 0 }));
-    r.minutes += p.minutes;
-    if (p.continued !== true) r.stops += 1;
+    if (!groups.has(key)) groups.set(key, { reason, mode: p.mode, group: p.group, parts: [] });
+    groups.get(key).parts.push(p);
   }
-  const byReason = [...map.values()].sort((a, b) => b.minutes - a.minutes || String(a.reason).localeCompare(String(b.reason)));
+  const rows = [...groups.values()];
+  const rounded = apportionMinutes(rows.map((r) => r.parts.reduce((sum, p) => sum + partMs(p), 0)), day.downMinutes);
+  const byReason = rows.map((r, i) => ({ reason: r.reason, mode: r.mode, group: r.group, minutes: rounded[i], stops: stopCount(r.parts) }))
+    .sort((a, b) => b.minutes - a.minutes || String(a.reason).localeCompare(String(b.reason)));
   return { shifts, day, byReason };
 }
 
@@ -360,4 +406,36 @@ export function workIntervals(parts, shift) {
   }
   push(cursor, shift.endMs);
   return out;
+}
+
+/** Проверка формы события до расчётов; общая для демо и сервера. */
+export function eventInputError(event) {
+  const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
+  if (!event || typeof event !== "object" || Array.isArray(event) || typeof event.id !== "string" || !event.id.trim() || event.id.length > 64) return "bad_request";
+  try {
+    toMs(event.at);
+    if (!TYPES.has(event.type)) throw new Error();
+    if (event.device != null && typeof event.device !== "string") throw new Error();
+    if (event.seq != null && (!Number.isSafeInteger(event.seq) || event.seq < 0)) throw new Error();
+    for (const field of ["reason", "node", "note", "action", "downtimeId"]) {
+      if (event[field] != null && typeof event[field] !== "string") throw new Error();
+    }
+    for (const field of ["crewId", "personId"]) {
+      if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
+    }
+    if (typeof event.note === "string" && event.note.length > 500) throw new Error();
+    if (typeof event.action === "string" && event.action.length > 500) throw new Error();
+    if (event.personName != null && (typeof event.personName !== "string" || event.personName.length > 120)) throw new Error();
+    if (event.billet != null && (typeof event.billet !== "number" || !Number.isFinite(event.billet) || event.billet < 0 || event.billet > 1000)) throw new Error();
+    if (event.type === "fix" && (typeof event.downtimeId !== "string" || !event.downtimeId ||
+      !Number.isSafeInteger(event.index) || event.index < 0)) throw new Error();
+    if (event.type === "manual") {
+      const from = toMs(event.from);
+      const to = toMs(event.to);
+      if (to <= from) throw new Error();
+    }
+  } catch {
+    return "bad_request";
+  }
+  return "";
 }

@@ -1,8 +1,7 @@
-import { buildDowntimes, classify, DEFAULT_SCHEDULE, eventTimeError, handoversSince, lastRunningMs, shiftOf, splitByShifts, summarizeDay, toMs } from "../core/core.js";
+import { buildDowntimes, DEFAULT_SCHEDULE, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeDay, toMs } from "../core/core.js";
 
 import { periodRange } from "../core/stats.js";
 
-const TYPES = new Set(["stop", "start", "reason", "split", "manual", "fix", "shift_open", "shift_close"]);
 const MINUTE = 60_000;
 
 // Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
@@ -45,54 +44,25 @@ export function createEventStore(db) {
           saved.push(event.id);
           continue;
         }
-        let at, from, to;
-        try {
-          at = toMs(event.at);
-          if (!TYPES.has(event.type)) throw new Error();
-          if (event.device != null && typeof event.device !== "string") throw new Error();
-          if (event.seq != null && (!Number.isSafeInteger(event.seq) || event.seq < 0)) throw new Error();
-          for (const field of ["reason", "node", "note", "action", "downtimeId"]) {
-            if (event[field] != null && typeof event[field] !== "string") throw new Error();
-          }
-          for (const field of ["crewId", "personId"]) {
-            if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
-          }
-          if (typeof event.note === "string" && event.note.length > 500) throw new Error();
-          if (typeof event.action === "string" && event.action.length > 500) throw new Error();
-          if (event.personName != null && (typeof event.personName !== "string" || event.personName.length > 120)) throw new Error();
-          if (event.billet != null && (typeof event.billet !== "number" || !Number.isFinite(event.billet) || event.billet < 0)) throw new Error();
-          if (event.type === "fix" && (typeof event.downtimeId !== "string" || !event.downtimeId ||
-            !Number.isSafeInteger(event.index) || event.index < 0)) throw new Error();
-          if (event.type === "manual") {
-            from = toMs(event.from);
-            to = toMs(event.to);
-            if (to <= from) throw new Error();
-          }
-        } catch {
-          reject("bad_request");
-          continue;
-        }
-        if (at > receivedMs + 2 * MINUTE || (event.type === "manual" && to > receivedMs + 2 * MINUTE)) {
-          reject("bad_time");
-          continue;
-        }
-        if (event.type === "manual" && buildDowntimes(accepted, receivedMs).segments.some((s) =>
-          from < (s.open ? Infinity : s.endMs) && to > s.startMs)) {
-          reject("overlap");
-          continue;
-        }
-        const timeError = eventTimeError(accepted, event, receivedMs);
+        const inputError = eventInputError(event);
+        if (inputError) { reject(inputError); continue; }
+        const at = toMs(event.at);
+        const boundsError = eventBoundsError(event, receivedMs);
+        if (boundsError) { reject(boundsError); continue; }
+        const timeError = eventTimeError(accepted, { ...event, device }, receivedMs);
         if (timeError) {
-          reject(timeError);
+          if (timeError === "already_stopped") {
+            const built = buildDowntimes(accepted, receivedMs);
+            rejected.push({ id: event.id, error: timeError, downtimeId: built.open.downtimeId,
+              startMs: Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs)) });
+          } else reject(timeError);
           continue;
         }
-        const stored = { ...event, device: event.device ?? device };
+        const stored = { ...event, device };
         // Кто нажал: если устройство не прислало бригаду и человека,
         // берём их из последнего приёма смены в той же смене.
         if (event.type !== "shift_open" && (stored.crewId == null || stored.personId == null)) {
-          const day = shiftOf(at, schedule);
-          const open = accepted.findLast((e) => e.type === "shift_open" && toMs(e.at) <= at &&
-            toMs(e.at) >= day.startMs);
+          const { crew: open } = shiftStatus(accepted.filter((e) => toMs(e.at) <= at), at, schedule);
           if (open) {
             stored.crewId ??= open.crewId ?? null;
             stored.personId ??= open.personId ?? null;
@@ -115,16 +85,10 @@ export function createEventStore(db) {
   function state(nowMs, refs) {
     const events = read();
     const built = buildDowntimes(events, nowMs);
-    const shift = shiftOf(nowMs, refs.settings.schedule);
-    const inShift = (at) => at >= shift.startMs && at < shift.endMs;
-    const ownEvents = events.filter((e) => inShift(toMs(e.at)));
-    const lastCrew = ownEvents.findLast((e) => e.type === "shift_open");
+    const { shift, crew, closed } = shiftStatus(events, nowMs, refs.settings.schedule);
     const ping = db.prepare("SELECT 1 FROM pings WHERE server_at >= ? AND server_at < ? LIMIT 1")
       .get(new Date(shift.startMs).toISOString(), new Date(shift.endMs).toISOString());
-    const segments = built.segments.filter((s) => s.endMs > s.startMs)
-      .flatMap((s) => splitByShifts(s, refs.settings.schedule))
-      .filter((p) => p.day === shift.day && p.shiftNo === shift.shiftNo)
-      .map((p) => ({ ...p, ...classify(p, refs, refs.settings) }));
+    const segments = periodParts(built.segments, shift.startMs, Math.min(shift.endMs, nowMs), refs);
     const openSegments = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
     const openStartMs = built.open ? Math.min(...openSegments.map((s) => s.startMs)) : null;
     const dayRange = periodRange("day", nowMs, refs.settings.schedule);
@@ -145,11 +109,11 @@ export function createEventStore(db) {
         handovers: handoversSince(events, openStartMs),
       } : null,
       shift,
-      crew: lastCrew ? { crewId: lastCrew.crewId ?? null, personId: lastCrew.personId ?? null, personName: lastCrew.personName ?? null, at: lastCrew.at } : null,
+      crew,
       segments,
       day,
-      summary: summarizeDay(segments, [shift], { [shift.shiftNo]: ownEvents.length > 0 || !!ping }),
-      closed: ownEvents.some((e) => e.type === "shift_close"),
+      summary: summarizeDay(segments, [shift], { [shift.shiftNo]: events.length > 0 || !!ping }, { nowMs, dataFromMs: firstEventMs(events) ?? nowMs }),
+      closed,
       dataFromMs: firstEventMs(events),
       runningSinceMs: lastRunningMs(events, nowMs),
     };

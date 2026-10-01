@@ -491,3 +491,19 @@
   .mill-btn { justify-content: center; }
   .mill-lamp { flex: 0 1 auto; height: 100%; max-height: calc((50cqi - 40px) * 0.8); }
 }
+
+/* Шапка сжимается вместе с окном, табличка использует ширину своей клавиши. */
+.topbar { width: 100%; box-sizing: border-box; min-width: 0; }
+.brand { flex: 0 1 auto; min-width: 0; }
+.brand strong, .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mill-btn { min-width: 0; container-type: inline-size; }
+.mill-label { box-sizing: border-box; max-width: 100%; font-size: clamp(10px, 7cqi, 32px); overflow-wrap: anywhere; }
+.current-shift { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+  .mill-lamp { max-height: 80cqi; }
+}
+@media (max-width: 820px) { .brand { display: none; } }
+@media (max-width: 380px) {
+  .topbar .pill .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .topbar .save-status { overflow-wrap: anywhere; }
+}

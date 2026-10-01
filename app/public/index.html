@@ -13,21 +13,21 @@
 </head>
 <body>
   <header class="topbar">
-    <button id="conn" type="button" class="pill wait">
+    <button id="conn" type="button" aria-label="Связаться" title="Связаться" class="pill wait">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 2 2-6a8.5 8.5 0 1 1 18-4.5Z"/><path d="M7 10h10M7 14h6"/></svg>
       <span class="pill-text">Связаться</span>
     </button>
-    <button id="demo" type="button" class="pill home" hidden>
+    <button id="demo" type="button" aria-label="На главный экран" title="На главный экран" class="pill home" hidden>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/></svg>
       <span class="pill-text">На главный экран</span>
     </button>
-    <button id="admin" type="button" class="pill admin" hidden>
+    <button id="admin" type="button" aria-label="Администратор" title="Администратор" class="pill admin" hidden>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
       <span class="pill-text">Администратор</span>
     </button>
     <p id="save-status" class="save-status" role="status" aria-live="polite" hidden></p>
     <div class="brand"><strong>ПРОКАТНЫЙ СТАН</strong><span>система учёта простоев</span></div>
-    <button id="theme" type="button" class="theme-toggle" aria-label="Тёмная тема" title="Переключить на тёмную тему">
+    <button id="theme" type="button" class="theme-toggle" aria-label="Переключить на тёмную тему" aria-pressed="false" title="Переключить на тёмную тему">
       <svg class="bulb" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path class="bulb-glass" d="M12 2.5a6.5 6.5 0 0 0-3.9 11.7c.6.5 1 1.2 1 2V17h5.8v-.8c0-.8.4-1.5 1-2A6.5 6.5 0 0 0 12 2.5z"/>
         <path class="bulb-base" d="M9.2 18.6h5.6M9.8 21h4.4"/>

@@ -49,7 +49,7 @@ async function start(t, { people, memory = false } = {}) {
   return {
     app, base, directory, peopleFile, file: path.join(directory, "settings.json"), request,
     get: () => request("/api/admin/settings"),
-    put: (settings) => request("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings }) }),
+    put: async (settings) => request("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings, refsVersion: (await request("/api/admin/settings")).body.refsVersion }) }),
   };
 }
 
@@ -171,16 +171,16 @@ test("settings.json имеет приоритет; создание, замен�
   await s.app.close();
 });
 
-test("повреждённый settings.json не подменяется демо и не перезаписывается через PUT", async (t) => {
+test("повреждённый settings.json даёт fallback и восстанавливается через PUT", async (t) => {
   const s = await start(t);
   for (const damaged of ["null", "{", '{"version":2,"people":[]}']) {
     fs.writeFileSync(s.file, damaged);
-    assert.equal((await s.get()).status, 500);
-    assert.equal((await s.put(fresh())).status, 500);
-    assert.equal(fs.readFileSync(s.file, "utf8"), damaged);
-    assert.equal(fs.existsSync(`${s.file}.bak`), false);
+    assert.equal((await s.get()).status, 200);
+    assert.equal((await s.request("/api/health")).body.settings, "fallback");
+    assert.equal((await s.put(fresh())).status, 200);
+    assert.equal((await s.request("/api/health")).body.settings, "ok");
+    assert.equal(JSON.parse(fs.readFileSync(s.file, "utf8")).version, 1);
   }
-  await s.app.close();
 });
 
 const invalidCases = [
@@ -307,22 +307,18 @@ test("после нового расписания событие получае
   await s.app.close();
 });
 
-test("одновременные PUT оставляют целый файл и предыдущую версию в .bak", async (t) => {
+test("одновременные PUT с одной версией: один 200, другой 409 без потери правок", async (t) => {
   const s = await start(t);
-  const first = fresh();
-  const second = fresh();
+  const { refsVersion } = (await s.get()).body;
+  const first = fresh(), second = fresh();
   first.contacts[0].title = "Первая запись";
   second.contacts[0].title = "Вторая запись";
-  const results = await Promise.all([s.put(first), s.put(second)]);
-  assert.ok(results.every((r) => r.status === 200));
-  const current = JSON.parse(fs.readFileSync(s.file, "utf8"));
-  const previous = JSON.parse(fs.readFileSync(`${s.file}.bak`, "utf8"));
-  assert.notEqual(current.contacts[0].title, previous.contacts[0].title);
-  for (const result of results) assert.ok([current, previous].some((r) => r.people[0].id === result.body.settings.people[0].id));
-  const final = (await s.get()).body;
-  assert.deepEqual({ version: 1, ...final.settings }, current);
-  assert.equal(final.refsVersion, results.find((r) => r.body.settings.people[0].id === current.people[0].id).body.refsVersion);
-  await s.app.close();
+  const results = await Promise.all([first, second].map((settings) => s.request("/api/admin/settings", {
+    method: "PUT", body: JSON.stringify({ settings, refsVersion }),
+  })));
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+  assert.equal(results.find((r) => r.status === 409).body.message, "Настройки уже изменили на другом устройстве. Обновите экран и повторите.");
+  assert.deepEqual((await s.get()).body, results.find((r) => r.status === 200).body);
 });
 
 test("запись повторяет rename при EPERM/EBUSY и сохраняет старую версию при полном отказе", async (t) => {
@@ -387,7 +383,7 @@ test("mock admin: тот же контракт, ошибки, новый refsVer
   assert.deepEqual(before.settings.contacts, DEFAULT_CONTACTS);
   assert.ok(before.settings.people.every((p) => p.phone === ""));
   assert.equal(Object.hasOwn((await api("/api/refs")).refs.settings, "contacts"), false);
-  const result = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: fresh() }) });
+  const result = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: fresh(), refsVersion: before.refsVersion }) });
   assert.equal(result.ok, true);
   assert.match(result.settings.people[0].id, /^p[0-9a-f]{8}$/);
   assert.notEqual(result.refsVersion, before.refsVersion);
@@ -407,7 +403,7 @@ test("mock admin: тот же контракт, ошибки, новый refsVer
   for (const [, change] of invalidCases) {
     const input = structuredClone(snapshot.settings);
     change(input);
-    await assert.rejects(api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: input }) }), (e) => {
+    await assert.rejects(api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: input, refsVersion: snapshot.refsVersion }) }), (e) => {
       assert.equal(e.status, 400);
       assert.equal(e.data.error, "bad_request");
       assert.match(e.data.message, /[а-яё]/i);
@@ -420,7 +416,7 @@ test("mock admin: тот же контракт, ошибки, новый refsVer
   await assert.rejects(api("/api/admin/settings", { method: "PUT", body: "я".repeat(33000) }), { status: 413 });
   snapshot.settings.people = [];
   snapshot.settings.contacts = [];
-  const empty = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: snapshot.settings }) });
+  const empty = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings: snapshot.settings, refsVersion: snapshot.refsVersion }) });
   assert.deepEqual(empty.settings.people, []);
   assert.deepEqual((await api("/api/refs")).refs.settings.contacts, []);
 });

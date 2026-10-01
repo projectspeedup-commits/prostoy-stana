@@ -175,6 +175,7 @@ test("summarizeDay: byReason сходится с простоями; смена 
   assert.equal(empty.shifts[1].hasData, false);
   assert.equal(empty.shifts[1].workMinutes, null);
   assert.equal(empty.shifts[0].workMinutes, 720);
+  assert.equal(empty.day.workMinutes, 720); // смена без данных не считается работой
   const none = summarizeDay([], shiftsOfDay, {});
   assert.equal(none.day.hasData, false);
   assert.equal(none.day.workMinutes, null);

@@ -31,7 +31,7 @@ after(() => app.close());
 test("health без ключа отвечает 200", async () => {
   const r = await fetch(`${base}/api/health`);
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { ok: true });
+  assert.deepEqual(await r.json(), { ok: true, settings: "ok" });
 });
 
 test("ping без ключа даёт 401 bad_key", async () => {

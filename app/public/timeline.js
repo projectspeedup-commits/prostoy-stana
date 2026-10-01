@@ -1,3 +1,4 @@
+import { apportionMinutes } from "./core/core.js";
 // Шкала суток: 48 ячеек по 30 минут, состояние стана цветом.
 // ES-модуль без зависимостей. Стили — только классами из timeline.css,
 // размеры цветных частей и положение метки «сейчас» — через el.style
@@ -176,6 +177,12 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
     if (cell.startMs < shiftFromMs || cell.startMs >= shiftToMs) continue;
     for (const key of Object.keys(sums)) sums[key] += cell.ms[key] || 0;
   }
+
+  const zoneKeys = ["plan", "unplanned", "failure"];
+  const down = zoneKeys.reduce((n, key) => n + sums[key], 0);
+  const rounded = apportionMinutes(zoneKeys.map((key) => sums[key]));
+  sums.work = Math.max(0, Math.round((sums.work + down) / 60000) - Math.round(down / 60000)) * 60000;
+  zoneKeys.forEach((key, i) => { sums[key] = rounded[i] * 60000; });
 
   const legend = document.createElement("div");
   legend.className = "day-scale__legend";
