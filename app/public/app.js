@@ -768,14 +768,27 @@ function renderRejects() {
   box.hidden = false;
   fill(box,
     storageErrors.size ? h("button", { class: "btn", onclick: () => { persistClient(); render(); } }, "Повторить сохранение на планшете") : null,
+    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => dismissRejected(rejected.map((r) => r.event.id)) },
+      `Убрать все отклонённые записи (${rejected.length})`) : null,
     ...rejected.map((r) => h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: humanError(r.error) }),
       h("button", { class: "btn", onclick: () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
         go("repair");
-      } }, "Открыть сохранённую запись")))
+      } }, "Открыть сохранённую запись"),
+      h("button", { class: "btn btn-flat", onclick: () => dismissRejected([r.event.id]) }, "Убрать запись")))
   );
+}
+// Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
+// На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
+function dismissRejected(ids) {
+  let n = 0;
+  for (const r of records) if (r.status === "rejected" && ids.includes(r.event.id)) { r.status = "dismissed"; n += 1; }
+  if (ui.repair && ids.includes(ui.repair.id)) ui.repair = null;
+  persistClient();
+  showToast(n === 1 ? "Запись убрана" : `Убрано записей: ${n}`);
+  render();
 }
 
 function humanError(code) {
@@ -800,7 +813,7 @@ function receiptStatus(list) {
   return "Принято сервером";
 }
 function receiptFor(downtimeId) {
-  return records.filter((r) => r.status !== "replaced" && (r.event.downtimeId || r.event.id) === downtimeId);
+  return records.filter((r) => r.status !== "replaced" && r.status !== "dismissed" && (r.event.downtimeId || r.event.id) === downtimeId);
 }
 
 function reasonRef(code) {
