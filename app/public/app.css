@@ -9,6 +9,9 @@
 /* ===== Тёмная тема ===== */
 :root {
   color-scheme: dark;
+  --mill-ring: conic-gradient(from -35deg, #f9fcff, #9caab7 13%, #f3f7fb 25%, #74828f 42%, #394652 52%, #b8c4ce 67%, #eff5fa 80%, #7d8c98 91%, #f9fcff);
+  --mill-gap: #111a22;
+  --mill-glint: #fff;
 
   /* Металл, пульт и поверхности главного экрана. */
   --metal-panel-top: #414c58;
@@ -842,8 +845,10 @@ label { display: block; margin-top: 20px; }
 /* Главный экран: холодный металл и промышленный пульт. */
 .ico { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: currentColor;
   stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.topbar { flex-wrap: nowrap; gap: 12px; max-width: 1480px; margin: 0 auto;
-  padding: calc(20px + env(safe-area-inset-top)) 24px 20px; background: var(--metal-page); }
+.topbar { flex-wrap: nowrap; gap: 12px; margin: 0 auto;
+  padding-block: calc(20px + env(safe-area-inset-top)) 20px; background: none; }
+.topbar::before { content: ''; position: absolute; inset: 0 var(--screen-gutter); z-index: -1;
+  background: var(--metal-page); pointer-events: none; }
 .topbar .pill { display: inline-flex; align-items: center; justify-content: center; gap: 9px;
   flex: 0 0 auto; min-height: 48px; padding: 10px 18px; font-size: 15px; white-space: nowrap;
   border: 1px solid var(--metal-edge); color: var(--metal-ink);
@@ -900,30 +905,37 @@ label { display: block; margin-top: 20px; }
   background-position: center top, center bottom; background-repeat: no-repeat; }
 .mill-panel::before { left: 10px; }
 .mill-panel::after { right: 10px; }
-.mill-btn { position: relative; display: flex; align-items: center; justify-content: center; gap: clamp(14px, 2.8cqi, 30px);
-  min-width: 0; min-height: 142px; padding: 10px 18px; border: 0; border-radius: 0;
+.mill-btn { position: relative; display: flex; align-items: center; justify-content: center; gap: clamp(12px, 2cqi, 22px);
+  min-width: 0; min-height: 142px; padding: 10px 12px; border: 0; border-radius: 0;
   font: inherit; font-weight: 800; color: var(--metal-ink); background: transparent; cursor: pointer; touch-action: manipulation; }
 .mill-btn + .mill-btn { border-left: 1px solid var(--metal-edge); }
 .mill-go { --mill-top: var(--mill-green-top); --mill-mid: var(--mill-green-mid); --mill-bottom: var(--mill-green-bottom); --mill-glow: var(--mill-green-glow); }
 .mill-stop { --mill-top: var(--mill-red-top); --mill-mid: var(--mill-red-mid); --mill-bottom: var(--mill-red-bottom); --mill-glow: var(--mill-red-glow); }
-.mill-lamp { display: block; flex: 0 0 auto; position: relative; width: clamp(78px, 13cqi, 140px); aspect-ratio: 1; border-radius: 50%;
-  background: var(--metal-chrome); padding: 10px;
-  box-shadow: 0 4px 4px var(--metal-shadow), inset 0 1px 1px var(--metal-highlight), 0 0 0 2px var(--metal-plate), 0 0 0 4px var(--metal-edge);
+.mill-lamp { display: block; flex: 0 0 auto; position: relative; width: clamp(132px, 18cqi, 156px); aspect-ratio: 1; border-radius: 50%;
+  background: var(--mill-ring);
+  box-shadow: 0 6px 7px var(--metal-shadow), inset 0 2px 2px var(--metal-highlight), inset 0 -3px 3px var(--metal-shadow), 0 0 0 2px var(--metal-plate), 0 0 0 3px var(--metal-edge);
   transition: transform 120ms ease-out, box-shadow 120ms ease-out; }
-.mill-lamp::before { content: ''; display: block; width: 100%; height: 100%; border-radius: 50%;
-  background: radial-gradient(ellipse at 32% 23%, var(--mill-top), var(--mill-mid) 36%, var(--mill-bottom) 92%);
-  box-shadow: inset 0 2px 3px var(--metal-highlight), inset 0 -7px 8px var(--metal-shadow), 0 3px 4px var(--metal-shadow);
+.mill-lamp::before { content: ''; position: absolute; inset: 13%; border-radius: 50%;
+  background: radial-gradient(ellipse 38% 22% at 32% 22%, var(--mill-glint), var(--mill-top) 35%, transparent 100%),
+    radial-gradient(ellipse at 38% 28%, var(--mill-top), var(--mill-mid) 43%, var(--mill-bottom) 85%);
+  box-shadow: 0 0 0 2px var(--mill-gap), 0 3px 4px var(--metal-shadow), inset 0 2px 3px var(--metal-highlight), inset 0 -10px 12px var(--metal-shadow);
   filter: brightness(.76) saturate(.85); transition: filter 120ms ease-out; }
-.mill-btn.is-on .mill-lamp { transform: translateY(2px); box-shadow: 0 2px 3px var(--metal-shadow),
-  inset 0 1px 1px var(--metal-highlight), 0 0 0 2px var(--metal-plate), 0 0 0 4px var(--mill-mid), 0 0 24px 5px var(--mill-glow); }
-.mill-btn.is-on .mill-lamp::before { filter: none; box-shadow: inset 0 3px 7px var(--metal-shadow), inset 0 -4px 6px var(--metal-shadow); }
-@media (hover: hover) { .mill-btn:hover .mill-lamp::before { filter: brightness(1.1); }
+.mill-lamp::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; opacity: 0;
+  border: 3px solid transparent; border-bottom-color: var(--mill-mid);
+  filter: drop-shadow(0 3px 4px var(--mill-glow)); pointer-events: none; }
+.mill-btn.is-on .mill-lamp { transform: translateY(2px); }
+.mill-btn.is-on .mill-lamp::before { filter: none; }
+.mill-btn.is-on .mill-lamp::after { opacity: 1; }
+@media (hover: hover) { .mill-btn:hover .mill-lamp::before { filter: brightness(.88) saturate(.9); }
+  .mill-btn.is-on:hover .mill-lamp::before { filter: brightness(1.1); }
   .topbar .pill:hover, .btn.shift-action:hover { border-color: var(--focus); } }
 .mill-btn:active .mill-lamp { transform: translateY(5px); }
 .mill-btn:active .mill-lamp::before { box-shadow: inset 0 5px 10px var(--metal-shadow); }
-.mill-label { display: grid; gap: 2px; min-width: 0; padding: 10px 14px; border-radius: 6px;
+.mill-label { display: grid; gap: 2px; min-width: 0; width: clamp(140px, 20cqi, 208px); max-width: 100%; padding: 10px 14px; border-radius: 6px;
+  border: 1px solid var(--metal-edge);
   background: var(--metal-plate); box-shadow: inset 0 2px 4px var(--metal-shadow), 0 1px 0 var(--metal-edge);
   font-size: clamp(15px, 2.7cqi, 29px); letter-spacing: .035em; line-height: 1.2; text-align: left; white-space: nowrap; }
+.mill-btn.is-on .mill-label { text-shadow: 0 0 8px var(--mill-glow); }
 .mill-hint { display: flex; align-items: center; justify-content: center; gap: 8px; grid-column: 1 / -1;
   max-width: 100%; width: fit-content; margin: 0 auto; padding: 7px 14px; border-radius: 7px;
   background: var(--metal-plate); color: var(--metal-muted); font-size: 13px; line-height: 1.4; }
@@ -954,8 +966,8 @@ label { display: block; margin-top: 20px; }
 .shift-action > .ico { color: var(--text-muted); width: 20px; }
 .stop-grid { display: block; }
 .stop-grid > * { min-width: 0; }
-@media (min-width: 1100px) {
-  .stop-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; align-items: start; }
+@media (min-width: 1500px) {
+  .stop-grid { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 18px; align-items: start; }
   .stop-grid > :last-child .card:first-child { margin-top: 0; }
 }
 @container (max-width: 650px) {
@@ -964,8 +976,10 @@ label { display: block; margin-top: 20px; }
   .mill-state > .ico { width: 26px; height: 26px; }
   .mill-clock { padding-left: 14px; gap: 8px; }
   .mill-clock > .ico { display: none; }
-  .mill-btn { padding: 10px; gap: 12px; }
-  .mill-label { padding: 9px; }
+  .mill-btn { flex-direction: column; padding: 10px; gap: 18px; }
+  .mill-lamp { width: 132px; max-width: 100%; }
+  .mill-label { width: 100%; max-width: 208px; padding: 9px;
+    font-size: clamp(14px, 4.7cqi, 22px); text-align: center; }
 }
 @container (max-width: 480px) {
   .mill-status { align-items: stretch; flex-direction: column; gap: 10px; }
@@ -974,11 +988,9 @@ label { display: block; margin-top: 20px; }
   .mill-clock > div { display: flex; align-items: baseline; gap: 12px; }
   .mill-clock .mill-subtitle { margin: 0; }
   .mill-btn { flex-direction: column; gap: 18px; padding: 6px 8px; }
-  .mill-lamp { width: clamp(82px, 28cqi, 112px); padding: 8px; }
-  .mill-label { font-size: clamp(16px, 4.7cqi, 22px); text-align: center; }
 }
 @media (max-width: 1099px) {
-  .topbar { padding: 14px 16px; gap: 9px; }
+  .topbar { padding-block: 14px; gap: 9px; }
   .topbar .pill { padding: 9px 12px; font-size: 13px; }
   .brand strong { font-size: 18px; }
   .brand span { font-size: 8px; letter-spacing: .13em; }
@@ -990,10 +1002,12 @@ label { display: block; margin-top: 20px; }
   .theme-toggle { margin-left: auto; }
 }
 @media (max-width: 480px) {
-  .topbar { gap: 6px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px; }
+  .topbar { gap: 6px; padding-block: calc(8px + env(safe-area-inset-top)) 8px; }
   .topbar .pill { min-height: 44px; padding: 8px; gap: 5px; font-size: 11px; }
   .topbar .pill .ico { width: 16px; height: 16px; }
-  .topbar .save-status { flex: 1 1 44px; gap: 4px; font-size: 9px; line-height: 1.2; }
+  .topbar .save-status { flex: 0 0 12px; justify-content: center; }
+  .save-status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .save-status::before { width: 8px; height: 8px; }
   .theme-toggle { width: 40px; height: 40px; padding: 3px; }
   .theme-toggle .bulb { width: 32px; height: 32px; }
@@ -1022,7 +1036,6 @@ label { display: block; margin-top: 20px; }
   .topbar { padding-block: calc(14px + env(safe-area-inset-top)) 14px; }
   .mill-panel { padding: 20px 20px 12px; gap: 14px 0; }
   .mill-btn { min-height: 120px; }
-  .mill-lamp { width: clamp(78px, 12cqi, 112px); }
   .shift-card { padding: 14px 18px 12px; }
   .shift-person { grid-template-columns: 64px minmax(0, 1fr); gap: 16px; }
   .shift-avatar { width: 64px; height: 68px; }

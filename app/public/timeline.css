@@ -150,6 +150,13 @@
   border-radius: 3px;
   white-space: nowrap;
 }
+/* Бейдж целиком занимает ячейку подписи и не перекрывает соседние часы. */
+@media (min-width: 1100px) {
+  .ds-row--now { min-height: 16px; }
+  .ds-row--now .ds-row__label { visibility: hidden; }
+  .ds-nowbadge { top: 0; bottom: 0; width: 44px; transform: none;
+    display: grid; place-items: center; padding: 0 3px; }
+}
 
 /* Выбранная строка */
 .ds-row--sel .ds-row__track {
@@ -373,18 +380,14 @@
   align-items: start;
 }
 .with-scale__main { min-width: 0; }
-main:has(.with-scale) { max-width: 1480px; padding-inline: 24px; }
+:root { --screen-gutter: 24px; }
+.topbar, main:has(.with-scale) { max-width: 1480px; padding-inline: var(--screen-gutter); }
 
 
 /* Узкий экран: шкала полосой под главными кнопками, чтобы не отодвигать их вниз */
 @media (max-width: 1099px) {
   .with-scale { grid-template-columns: minmax(0, 1fr); }
   .with-scale > .day-scale { order: 2; }
-}
-
-/* Монитор от 1400 px: экран со шкалой шире (правило здесь, чтобы перекрыть ширину выше) */
-@media (min-width: 1400px) {
-  main:has(.with-scale) { max-width: 1480px; }
 }
 
 .day-scale__title { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
@@ -396,10 +399,10 @@ main:has(.with-scale) { max-width: 1480px; padding-inline: 24px; }
 @media (max-width: 1099px) {
   .ds-row { height: auto; margin: 0; }
   .ds-shift { padding: 0; }
-  main:has(.with-scale) { padding-inline: 16px; }
+  :root { --screen-gutter: 16px; }
 }
 @media (max-width: 480px) {
-  main:has(.with-scale) { padding-inline: 12px; }
+  :root { --screen-gutter: 12px; }
   .ds-legend__item { font-size: 11px; }
 }
 @media (min-width: 1100px) and (max-height: 950px) {

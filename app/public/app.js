@@ -530,6 +530,11 @@ function fmtDate(ms) {
   const d = new Date(ms + off * 60000);
   return String(d.getUTCDate()).padStart(2, "0") + "." + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
+function fmtDateLong(ms) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow", day: "2-digit", month: "long",
+  }).format(ms);
+}
 // Начало простоя: если оно раньше начала текущей смены — с датой («28.09 21:12»)
 function fmtSince(ms, shift) {
   return ms < shift.startMs ? `${fmtDate(ms)} ${fmtClock(ms)}` : fmtClock(ms);
@@ -708,13 +713,14 @@ function renderTopbar() {
   if (status) {
     const rejected = records.filter((r) => r.status === "rejected").length;
     status.className = "save-status" + (storageErrors.size || rejected ? " attention" : "");
-    status.textContent = storageErrors.size
+    const statusText = storageErrors.size
       ? "На планшете не сохранено. Не закрывайте страницу. Освободите память и повторите сохранение."
       : rejected ? `Нужно исправить: ${rejected}. Текст сохранён — откройте запись ниже.`
       : queue.length ? `Сохранено на планшете · ждут отправки: ${queue.length}`
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
       : "Нет связи с сервером";
+    status.replaceChildren(h("span", { class: "save-status-text", text: statusText }));
     status.hidden = !key;
   }
   // Главная страница не уничтожает ответы незаконченного шага.
@@ -1076,7 +1082,7 @@ function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
           subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
       h("div", { class: "mill-clock" }, icon("clock"),
         h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
-          h("p", { class: "mill-subtitle", text: fmtDate(nowMs()) })))),
+          h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
     h("div", { class: "mill-panel" },
       btn("go", running, "РАБОТАЕТ", onGo),
       btn("stop", !running, "ВСТАЛ", onStop),
