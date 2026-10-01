@@ -1150,3 +1150,5 @@ main:has(.adm-card) { max-width: 1100px; }
 }
 /* «ОСТАНОВЛЕН» длиннее «РАБОТАЕТ»: на узком телефоне табличке нужны меньшие отступы */
 @media (max-width: 480px) { .mill-label { padding-inline: 4px; letter-spacing: 0; } }
+/* Во всю ширину монитора клавиши растут вместе с пультом (до 560 px) */
+@media (min-width: 1400px) { .mill-lamp, .mill-label { max-width: 560px; } }
