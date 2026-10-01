@@ -16,11 +16,9 @@
     } catch (e) { return null; }
   }
 
-  // Какая тема действует сейчас: выбранная вручную или по устройству
+  // Какая тема действует сейчас: выбранная вручную, иначе светлая (владелец, 01.10.2026)
   function current() {
-    var a = root.getAttribute("data-theme");
-    if (a === "light" || a === "dark") return a;
-    return media && media.matches ? "light" : "dark";
+    return root.getAttribute("data-theme") === "dark" ? "dark" : "light";
   }
 
   // Подпись кнопки #theme и цвет строки состояния браузера (meta theme-color)
@@ -28,8 +26,8 @@
     var next = current() === "light" ? "dark" : "light";
     var btn = document.getElementById("theme");
     if (btn) {
-      btn.textContent = next === "light" ? "☀︎ Светлая" : "☾ Тёмная";
       btn.setAttribute("aria-label", next === "light" ? "Светлая тема" : "Тёмная тема");
+      btn.setAttribute("aria-pressed", next === "dark" ? "true" : "false");
       btn.title = next === "light" ? "Переключить на светлую тему" : "Переключить на тёмную тему";
     }
     var meta = document.querySelector('meta[name="theme-color"]');
@@ -45,8 +43,8 @@
     sync();
   }
 
-  var choice = saved();
-  if (choice) root.setAttribute("data-theme", choice);
+  // Без сохранённого выбора страница открывается в светлой теме
+  root.setAttribute("data-theme", saved() || "light");
 
   document.addEventListener("DOMContentLoaded", function () {
     var btn = document.getElementById("theme");
