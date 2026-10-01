@@ -70,13 +70,14 @@ export function dayChart(days) {
 export function donut(rows, centerTitle) {
   const W = 480, H = 200, cx = 100, cy = 100, r = 80, w = 28;
   const total = rows.reduce((s, r2) => s + r2.minutes, 0);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart donut", role: "img", "aria-label": "Доли простоя по группам причин" });
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart donut", role: "img", "aria-label": rows.map((r2) => r2.name).join(", ") });
   if (!total) return svg;
   let a0 = -Math.PI / 2;
   rows.forEach((row, i) => {
     const frac = row.minutes / total;
     const a1 = a0 + frac * Math.PI * 2;
-    const cls = `seg-${i % 7}`;
+    // Свой цвет у строки (зона: работа, плановый, внеплановый, авария) — иначе по порядку
+    const cls = row.cls || `seg-${i % 7}`;
     if (frac >= 0.999) {
       svg.append(el("circle", { cx, cy, r: r - w / 2, class: `ring ${cls}`, "stroke-width": w, fill: "none" }));
     } else {

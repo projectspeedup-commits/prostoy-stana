@@ -1330,7 +1330,8 @@ function barValue(r, total) {
   if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
   return parts.join(" · ");
 }
-function barList(title, rows, total, label, zone = null) {
+// zone(r) — цвет полосы по зоне причины; fill — свой класс полосы (например, нейтральный для смен)
+function barList(title, rows, total, label, zone = null, fill = "") {
   if (!rows || !rows.length) return null;
   const max = Math.max(...rows.map((r) => r.minutes), 1);
   return h("div", { class: "m-block" },
@@ -1339,10 +1340,22 @@ function barList(title, rows, total, label, zone = null) {
       h("div", { class: "m-bar-head" },
         h("span", { class: "m-bar-name" }, zone ? zoneMark(zone(r)) : null, label(r)),
         h("span", { class: "m-bar-val", text: barValue(r, total) })),
-      h("div", { class: "m-track" }, h("div", { class: "m-fill", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
+      h("div", { class: "m-track" }, h("div", { class: "m-fill" + (zone ? " z-" + zone(r) : fill ? " " + fill : ""), style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
 }
 function zoneMark(zone) {
   return h("span", { class: "reason-zone-mark reason-zone-" + zone, "aria-hidden": "true" });
+}
+// Кольцо «работа и простой»: доли зон теми же цветами, что шкала суток
+function zoneDonut(st) {
+  const names = { work: "Работа", plan: "Плановый", unplanned: "Внеплановый", failure: "Авария" };
+  const rows = Object.keys(names).map((zone) => {
+    const row = (st.byZone || []).find((item) => item.zone === zone);
+    return { name: names[zone], minutes: row ? row.minutes : 0, cls: "z-" + zone };
+  }).filter((r) => r.minutes > 0);
+  if (!rows.length) return null;
+  return h("div", { class: "m-block" },
+    h("div", { class: "m-title", text: "Работа и простой по видам" }),
+    donut(rows, "за период"));
 }
 function zoneMetrics(st) {
   const labels = { work: "Работа", plan: "Плановый простой",
@@ -1401,10 +1414,8 @@ function metrics() {
       kpi(mins(st.mttrMin), "время на ремонт")),
     st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
     warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
-    st.byGroup && st.byGroup.length ? h("div", { class: "m-block" },
-      h("div", { class: "m-title", text: "Простой по группам причин" }),
-      donut(st.byGroup.map((g) => ({ name: g.group, minutes: g.minutes })), "простой")) : null,
-    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
+    zoneDonut(st),
+    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId), null, "neutral"),
     st.byDay && st.byDay.length > 1 ? h("div", { class: "m-block" },
       h("div", { class: "m-title", text: "По суткам: работа и простой, часы" }),
       dayChart(st.byDay),
