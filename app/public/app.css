@@ -1096,3 +1096,33 @@ main:has(.adm-card) { max-width: 1100px; }
   .adm-del { grid-column: 1 / -1; }
   .adm-field input, .adm-field select { min-height: 48px; padding-inline: 10px; font-size: 0.8em; }
 }
+
+/* Пульт: прямоугольные клавиши во всю половину панели (владелец, 01.10.2026), табличка под клавишей */
+.mill-btn { flex-direction: column; gap: 16px; padding: 8px clamp(10px, 3cqi, 30px); }
+.mill-lamp { width: 100%; max-width: 400px; aspect-ratio: 4 / 3; border-radius: 18px; }
+.mill-lamp::before { inset: 8%; border-radius: 10px;
+  background: radial-gradient(ellipse 46% 24% at 30% 16%, var(--mill-glint), var(--mill-top) 40%, transparent 100%),
+    linear-gradient(180deg, var(--mill-top), var(--mill-mid) 42%, var(--mill-bottom)); }
+.mill-lamp::after { inset: -5px; border-radius: 22px; border: 3px solid var(--mill-mid);
+  filter: drop-shadow(0 0 6px var(--mill-glow)); }
+.mill-label { width: 100%; max-width: 400px; text-align: center; }
+@media (max-width: 480px) {
+  .mill-btn { padding: 6px 8px; gap: 12px; }
+  .mill-lamp { border-radius: 14px; }
+  .mill-lamp::after { border-radius: 18px; }
+}
+/* Объём клавиши: снизу видна боковая стенка (тень цвета клавиши), сверху фаска и блик.
+   Горящая клавиша утоплена наполовину, при нажатии — до упора. Двигается только клавиша, рамка стоит */
+.mill-btn.is-on .mill-lamp, .mill-btn:active .mill-lamp { transform: none; }
+.mill-lamp::before { inset: 8% 8% 15% 8%;
+  box-shadow: inset 0 2px 1px var(--metal-highlight), inset 0 -9px 12px var(--metal-shadow),
+    inset 5px 0 6px -4px var(--metal-highlight), inset -5px 0 6px -4px var(--metal-shadow),
+    0 11px 0 var(--mill-bottom), 0 12px 0 var(--mill-gap), 0 17px 14px var(--metal-shadow);
+  transition: transform 110ms ease-out, box-shadow 110ms ease-out, filter 120ms ease-out; }
+.mill-btn.is-on .mill-lamp::before { transform: translateY(5px);
+  box-shadow: inset 0 2px 1px var(--metal-highlight), inset 0 -9px 12px var(--metal-shadow),
+    inset 5px 0 6px -4px var(--metal-highlight), inset -5px 0 6px -4px var(--metal-shadow),
+    0 6px 0 var(--mill-bottom), 0 7px 0 var(--mill-gap), 0 10px 18px var(--mill-glow); }
+.mill-btn:active .mill-lamp::before { transform: translateY(9px);
+  box-shadow: inset 0 4px 8px var(--metal-shadow), 0 2px 0 var(--mill-bottom), 0 3px 0 var(--mill-gap); }
+@media (prefers-reduced-motion: reduce) { .mill-lamp::before { transition: none; } }
