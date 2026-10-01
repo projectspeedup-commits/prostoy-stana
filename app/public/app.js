@@ -1718,8 +1718,8 @@ function renderRestartConfirm(main, view) {
     stepLine(rw.thenClose ? 2 : 1, rw.thenClose ? 3 : 2),
     question(`Причина: ${reasonLabel(rw.reason)} — верно?`),
     h("button", { class: "btn primary", onclick: () => {
-      if (needsNote(rw.reason) && !validAction(rw.note)) { startRestartReasonWizard(); ui.wz.step = 3; render(); }
-      else { rw.route = "confirm"; go("restartAction"); }
+      // При пуске причину своими словами не спрашиваем (решение владельца 01.10.2026)
+      rw.route = "confirm"; go("restartAction");
     } }, "Да, верно"),
     h("button", { class: "btn", onclick: startRestartReasonWizard }, "Изменить")
   );
@@ -1793,7 +1793,9 @@ function renderReasonWizard(main, view) {
   if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
   const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
   const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? 3 + offset : 2;
+  const total = restarting ? 2 + offset : 2;
+  // При пуске шага «своими словами» нет: после выбора причины — сразу «Что сделали»
+  if (restarting && wz.step !== 1) wz.step = 1;
   const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
@@ -1811,7 +1813,10 @@ function renderReasonWizard(main, view) {
       backBtn(...back1),
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, () => { wz.step = 3; render(); }),
+      reasonGroups(wz, () => {
+        if (restarting) return finishReasonWizard(wz.note || "");
+        wz.step = 3; render();
+      }),
       !restarting && wz.mode === "past" ? h("button", {
         class: "btn btn-flat reason-later",
         onclick: () => {
@@ -1868,7 +1873,7 @@ function finishReasonWizard(rawNote) {
   }
   const note = String(rawNote || "").trim();
   if (!reasonRef(wz.reason)) { wz.step = 1; render(); return; }
-  if (needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
+  if (wz.mode !== "restart" && needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
   const noteField = { note };
   if (wz.mode === "repair") {
     ui.repair.event.reason = wz.reason;
@@ -1934,12 +1939,12 @@ function renderRestartAction(main, view) {
   ta.value = rw.action || "";
   const submit = h("button", { class: "btn primary", onclick: () => finishRestart(ta.value) }, "Сохранить пуск");
   ta.addEventListener("input", () => { rw.action = ta.value; });
-  const total = (rw.route === "reason" ? 3 : 2) + (rw.thenClose ? 1 : 0);
+  const total = 2 + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
   fill(main,
-    backBtn(rw.route === "reason" ? "К описанию причины" : "К причине", () => {
-      if (rw.route === "reason") { ui.wz.step = 3; go("reason"); }
+    backBtn(rw.route === "reason" ? "К выбору причины" : "К причине", () => {
+      if (rw.route === "reason") { ui.wz.step = 1; go("reason"); }
       else go("restartConfirm");
     }),
     stepLine(total, total),
@@ -1959,7 +1964,7 @@ function finishRestart(rawAction) {
   const action = rawAction.trim();
   if (!rw) return;
   if (!restartMatches(buildView(), rw)) { render(); return; }
-  if (!reasonRef(rw.reason) || (needsNote(rw.reason) && !validAction(rw.note))) { startRestartReasonWizard(); return; }
+  if (!reasonRef(rw.reason)) { startRestartReasonWizard(); return; }
   if (rw.startMs < buildView().open.startMs || rw.startMs > nowMs()) {
     showToast("Проверьте время пуска и часы планшета"); return;
   }
@@ -2485,9 +2490,8 @@ function submitRepair() {
   if (e.type === "manual") repair.error = manualError(view, { ...e, from: core.toMs(e.from), to: core.toMs(e.to) });
   if (e.type === "start") {
     const reason = e.reason || view.open?.reason;
-    const note = e.note ?? view.open?.note;
     if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
-    else if (!reasonRef(reason) || (needsNote(reason) && !validAction(note))) repair.error = "Укажите причину и опишите её своими словами.";
+    else if (!reasonRef(reason)) repair.error = "Укажите причину.";
     else if (core.toMs(e.at) < view.open.startMs) repair.error = "Пуск не может быть раньше остановки.";
   }
   if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (needsNote(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
