@@ -1155,3 +1155,14 @@ main:has(.adm-card) { max-width: 1100px; }
 /* Клавиши — максимально большие (владелец, 01.10.2026): вся ширина своей половины пульта */
 .mill-lamp, .mill-label { max-width: none; }
 .mill-lamp { width: 100%; }
+/* Показатели: цвета зон, как на шкале суток (владелец, 01.10.2026) */
+.m-fill.z-work { background: var(--z-work); }
+.m-fill.z-plan { background: var(--z-plan); }
+.m-fill.z-unplanned { background: var(--z-unplanned); }
+.m-fill.z-failure { background: var(--z-failure); }
+.m-fill.neutral { background: var(--chart-axis); }
+.chart .z-work { fill: var(--z-work); stroke: var(--z-work); }
+.chart .z-plan { fill: var(--z-plan); stroke: var(--z-plan); }
+.chart .z-unplanned { fill: var(--z-unplanned); stroke: var(--z-unplanned); }
+.chart .z-failure { fill: var(--z-failure); stroke: var(--z-failure); }
+.chart .ring.z-work, .chart .ring.z-plan, .chart .ring.z-unplanned, .chart .ring.z-failure { fill: none; }
