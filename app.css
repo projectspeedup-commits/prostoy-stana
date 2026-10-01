@@ -1148,3 +1148,5 @@ main:has(.adm-card) { max-width: 1100px; }
   .mill-lamp, .mill-lamp::before { border-radius: 12px; }
   .mill-lamp::after { border-radius: 17px; }
 }
+/* «ОСТАНОВЛЕН» длиннее «РАБОТАЕТ»: на узком телефоне табличке нужны меньшие отступы */
+@media (max-width: 480px) { .mill-label { padding-inline: 4px; letter-spacing: 0; } }

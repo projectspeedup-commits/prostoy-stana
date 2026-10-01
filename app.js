@@ -1280,7 +1280,7 @@ function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
           h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
     h("div", { class: "mill-panel" },
       btn("go", running, "РАБОТАЕТ", onGo),
-      btn("stop", !running, "ВСТАЛ", onStop),
+      btn("stop", !running, "ОСТАНОВЛЕН", onStop),
       hint ? h("p", { class: "mill-hint" }, icon("info"), h("span", { text: hint })) : null));
 }
 
