@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { createEventStore } from "./events.js";
 import { createRefsReader } from "./people.js";
+import { createSettingsStore } from "./settings.js";
+import { settingsFromRefs, validateSettings } from "../core/settings.js";
 import { computeStats, periodRange } from "../core/stats.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -60,7 +62,19 @@ function median(values) {
 
 export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE } = {}) {
   const clock = () => new Date(now());
-  const readRefs = createRefsReader(peopleFile);
+  const settingsStore = createSettingsStore(dataDir === ":memory:" ? null : path.join(dataDir, "settings.json"));
+  const readRefs = createRefsReader(peopleFile, settingsStore);
+  let settingsWrites = Promise.resolve();
+  function updateSettings(input) {
+    // Проверяем ID и возвращаем версию внутри очереди: следующий PUT видит завершённый предыдущий.
+    const update = settingsWrites.then(async () => {
+      const settings = validateSettings(input, readRefs().refs.people);
+      await settingsStore.write(settings);
+      return { ok: true, settings, refsVersion: readRefs().refsVersion };
+    });
+    settingsWrites = update.catch(() => {});
+    return update;
+  }
   const keys = Array.isArray(deviceKeys) ? deviceKeys : parseDeviceKeys(deviceKeys);
   if (!keys.length) {
     throw new Error("Не заданы ключи устройств (STAN_DEVICE_KEYS): сервер без ключей не запускается.");
@@ -186,14 +200,20 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isState = pathname === "/api/state" && req.method === "GET";
     const isStats = pathname === "/api/stats" && req.method === "GET";
     const isEvents = pathname === "/api/events" && req.method === "POST";
+    const isAdminGet = pathname === "/api/admin/settings" && req.method === "GET";
+    const isAdminPut = pathname === "/api/admin/settings" && req.method === "PUT";
 
     const device = identify(req);
     if (!device) return send(res, 401, { ok: false, error: "bad_key" });
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
-    if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents) return send(res, 404, { ok: false, error: "not_found" });
+    if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
     if (isRefs) return send(res, 200, { ok: true, ...readRefs() });
+    if (isAdminGet) {
+      const { refs, refsVersion } = readRefs();
+      return send(res, 200, { ok: true, settings: settingsFromRefs(refs), refsVersion });
+    }
     if (isState) {
       const { refs, refsVersion } = readRefs();
       const time = clock();
@@ -216,8 +236,18 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     try {
       data = JSON.parse(await readBody(req));
     } catch (e) {
-      if (e && e.code === "too_large") return send(res, 413, { ok: false, error: "bad_request" });
-      return send(res, 400, { ok: false, error: "bad_request" });
+      const tooLarge = e && e.code === "too_large";
+      return send(res, tooLarge ? 413 : 400, {
+        ok: false, error: "bad_request",
+        ...(isAdminPut ? { message: tooLarge ? "Тело запроса не должно превышать 64 КБ." : "Некорректный JSON в теле запроса." } : {}),
+      });
+    }
+    if (isAdminPut) {
+      try { return send(res, 200, await updateSettings(data?.settings)); }
+      catch (e) {
+        if (e.code !== "bad_request") throw e;
+        return send(res, 400, { ok: false, error: "bad_request", message: e.message });
+      }
     }
     if (isEvents) {
       if (!data || !Array.isArray(data.events) || data.events.length > 200) {
@@ -258,7 +288,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js" || rel === "/core/zones.js";
+    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js" || rel === "/core/zones.js" || rel === "/core/settings.js";
     const full = isCore ? path.resolve(HERE, "..", "core", rel.slice("/core/".length)) : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
     if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

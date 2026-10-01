@@ -1,33 +1,45 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { DEFAULT_REFS } from "./refs.js";
+import { SETTINGS_CREWS, validateSettings } from "../core/settings.js";
+import { fileSignature } from "./settings.js";
 
 // Две смены по 12 часов: Смена 1 — дневная, Смена 2 — ночная; в списке — мастера с полным ФИО
 function demoPeople() {
-  const crews = [{ id: "1", title: "Смена 1" }, { id: "2", title: "Смена 2" }];
+  const crews = SETTINGS_CREWS;
   const people = [
     ["Демонов Первый Иванович", "1"], ["Демонов Второй Петрович", "1"],
     ["Демонов Третий Сергеевич", "2"], ["Демонов Четвёртый Павлович", "2"],
-  ].map(([name, crewId], i) => ({ id: `d${i + 1}`, name, crewId }));
+  ].map(([name, crewId], i) => ({ id: `d${i + 1}`, name, crewId, phone: "" }));
   return { crews, people, demo: true };
 }
 
-export function createRefsReader(filename) {
+export function createRefsReader(filename, settingsStore) {
   let signature;
   let cached;
   return () => {
-    let next = "demo";
-    if (filename) {
-      try {
-        const st = fs.statSync(filename, { bigint: true });
-        next = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
-      } catch (e) {
-        if (e.code !== "ENOENT") throw e;
-      }
-    }
+    const peopleSignature = fileSignature(filename);
+    const next = `${settingsStore?.signature() ?? "missing"}|${peopleSignature}`;
     if (next !== signature) {
       let data = demoPeople();
-      if (next !== "demo") {
+      const saved = settingsStore?.read();
+      if (saved != null) {
+        if (saved.version !== 1 || !Array.isArray(saved.people) ||
+          !saved.people.every((p) => p && typeof p.id === "string" && p.id.length > 0)) {
+          throw new Error("Некорректный файл настроек");
+        }
+        const settings = validateSettings(saved, saved.people);
+        data = {
+          crews: SETTINGS_CREWS,
+          people: settings.people,
+          demo: false,
+          settings: {
+            ...DEFAULT_REFS.settings,
+            schedule: { tzOffsetMinutes: 180, shifts: settings.schedule.shifts },
+            contacts: settings.contacts,
+          },
+        };
+      } else if (peopleSignature !== "missing") {
         const parsed = JSON.parse(fs.readFileSync(filename, "utf8").replace(/^\uFEFF/, ""));
         const id = (v) => (typeof v === "string" && v.length > 0) || Number.isSafeInteger(v);
         if (!parsed || !Array.isArray(parsed.crews) || !Array.isArray(parsed.people) ||
@@ -38,8 +50,8 @@ export function createRefsReader(filename) {
           throw new Error("Некорректный справочник людей");
         }
         data = {
-          crews: parsed.crews.map(({ id, title }) => ({ id, title })),
-          people: parsed.people.map(({ id, name, crewId }) => ({ id, name, crewId })),
+          crews: SETTINGS_CREWS,
+          people: parsed.people.map(({ id, name, crewId }) => ({ id: String(id), name, crewId: String(crewId), phone: "" })),
           demo: false,
         };
       }

@@ -1045,3 +1045,52 @@ label { display: block; margin-top: 20px; }
   .shift-block .shift-time { margin-top: 10px; padding-block: 8px; }
   .btn.shift-action { min-height: 74px; padding: 11px 20px; }
 }
+
+/* Кнопка «Администратор» в шапке и связь с сервером точкой: текст статуса — только когда что-то не так */
+.topbar .pill.admin.is-on { border-color: var(--focus); }
+.save-status:not(.attention) .save-status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.topbar .save-status:not(.attention) { flex: 0 0 12px; justify-content: center; }
+@media (max-width: 600px) {
+  .topbar .pill.admin { padding-inline: 12px; }
+  .topbar .pill.admin .pill-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+}
+
+/* Раздел «Администратор» */
+main:has(.adm-card) { max-width: 1100px; }
+.adm-card { margin-top: 18px; padding: 18px 22px 20px; border-radius: 16px; background: var(--metal-card);
+  border: 1px solid var(--metal-card-edge); box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); }
+.adm-card > h2 { margin: 0 0 6px; font-size: 1.1em; }
+.adm-note { margin: 10px 0 0; font-size: 0.8em; }
+.adm-shift { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(120px, 180px) minmax(120px, 180px);
+  align-items: end; gap: 12px 16px; padding: 12px 0; border-bottom: 1px solid var(--metal-card-edge); }
+.adm-shift-name { display: flex; align-items: center; gap: 10px; align-self: center; }
+.adm-shift-name .muted { font-size: 0.8em; }
+.adm-field { display: grid; gap: 6px; margin: 0; min-width: 0; }
+.adm-field > span { font-size: 0.75em; color: var(--text-muted); }
+.adm-field input, .adm-field select { width: 100%; min-height: 52px; margin: 0; padding: 8px 12px; font-size: 0.9em; }
+.adm-field select { font: inherit; font-size: 0.9em; color: inherit; border-radius: 14px;
+  border: 2px solid var(--border-strong); background: var(--surface-2); }
+.adm-group { padding-top: 10px; }
+.adm-group + .adm-group { margin-top: 8px; border-top: 1px solid var(--metal-card-edge); }
+.adm-group-title { margin: 6px 0 4px; font-size: 0.9em; }
+.adm-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 210px auto; align-items: end; gap: 10px 12px;
+  padding: 10px 0; }
+.adm-card > .adm-row { grid-template-columns: minmax(0, 1fr) 210px auto; }
+.adm-del { min-height: 52px; margin: 0; padding: 8px 14px; font-size: 0.8em; }
+.btn.adm-add { width: auto; min-height: 48px; margin-top: 8px; padding: 8px 18px; font-size: 0.85em; }
+.adm-errors { margin-top: 16px; }
+.adm-errors .error-text { margin: 4px 0; }
+.adm-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.adm-actions .btn { flex: 1 1 220px; margin: 0; }
+@media (max-width: 760px) {
+  .adm-card { padding: 14px; }
+  .adm-shift { grid-template-columns: 1fr 1fr; }
+  .adm-shift-name { grid-column: 1 / -1; }
+  .adm-row, .adm-card > .adm-row { grid-template-columns: 1fr 1fr; padding: 12px 0; border-bottom: 1px dashed var(--metal-card-edge); }
+  .adm-row .adm-grow { grid-column: 1 / -1; }
+  .adm-card > .adm-row { grid-template-columns: 1fr; }
+  .adm-del { grid-column: 1 / -1; }
+  .adm-field input, .adm-field select { min-height: 48px; padding-inline: 10px; font-size: 0.8em; }
+}
