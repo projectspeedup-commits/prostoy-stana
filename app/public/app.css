@@ -1166,3 +1166,8 @@ main:has(.adm-card) { max-width: 1100px; }
 .chart .z-unplanned { fill: var(--z-unplanned); stroke: var(--z-unplanned); }
 .chart .z-failure { fill: var(--z-failure); stroke: var(--z-failure); }
 .chart .ring.z-work, .chart .ring.z-plan, .chart .ring.z-unplanned, .chart .ring.z-failure { fill: none; }
+/* Строки «Исправить запись» и «Что изменить?»: тот же класс, что у кнопок смены, но без значка —
+   подпись сверху, значение под ней (без этого подпись падала в узкую колонку значка) */
+.btn.shift-action:not(:has(> .action-ico)) { display: flex; flex-direction: column; align-items: flex-start;
+  justify-content: center; gap: 4px; min-height: 72px; text-align: left; }
+.btn.shift-action:not(:has(> .action-ico)) > .action-help { margin-top: 0; }
