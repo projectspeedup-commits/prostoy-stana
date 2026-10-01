@@ -40,7 +40,7 @@ function detailsText(cell, fmtClock) {
   return range + ": " + parts.join(", ");
 }
 
-export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDate }) {
+export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon }) {
   const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
 
   const root = document.createElement("section");
@@ -53,6 +53,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDa
     ? "Сутки " + fmtDate(cells[0].startMs) + " по 30 минут"
     : "Сутки по 30 минут";
   root.appendChild(title);
+  if (icon) title.prepend(icon("calendar"));
 
   const rows = document.createElement("div");
   rows.className = "day-scale__rows";
@@ -69,20 +70,24 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, fmtClock, fmtDa
     const isHour = clock.slice(3) === "00";
     const hour = parseInt(clock.slice(0, 2), 10);
 
-    // Заголовок смены — перед строками 08:00 и 20:00.
-    if (isHour && (hour === 8 || hour === 20)) {
+    // Заголовок смены — перед строкой её начала (по расписанию; без него — 08:00 и 20:00).
+    const sh = shifts
+      ? shifts.find((s) => s.startMs === cell.startMs)
+      : isHour && (hour === 8 || hour === 20) ? { no: hour === 8 ? 1 : 2, startMs: cell.startMs, endMs: cell.startMs + shiftLen } : null;
+    if (sh) {
       const header = document.createElement("div");
       header.className = "ds-shift";
-      if (cell.startMs <= nowMs && nowMs < cell.startMs + shiftLen) {
+      if (sh.startMs <= nowMs && nowMs < sh.endMs) {
         header.classList.add("ds-shift--active");
       }
       const name = document.createElement("span");
       name.className = "ds-shift__name";
-      name.textContent = hour === 8 ? "Смена 1" : "Смена 2";
+      name.textContent = "Смена " + sh.no;
+      if (icon) name.prepend(icon(sh.no === 1 ? "sun" : "moon"));
       header.appendChild(name);
       const times = document.createElement("span");
       times.className = "ds-shift__times";
-      times.textContent = "· " + clock + "–" + fmtClock(cell.startMs + shiftLen);
+      times.textContent = "· " + clock + "–" + fmtClock(sh.endMs);
       header.appendChild(times);
       rows.appendChild(header);
     }

@@ -61,7 +61,7 @@ async function realApi(path, options = {}) {
     });
     const data = await r.json().catch(() => null);
     if (r.status === 401) throw Object.assign(new Error("bad_key"), { status: 401 });
-    if (!r.ok || !data) throw Object.assign(new Error("http_" + r.status), { status: r.status });
+    if (!r.ok || !data) throw Object.assign(new Error("http_" + r.status), { status: r.status, data });
     return data;
   } finally {
     clearTimeout(timer);
@@ -530,6 +530,11 @@ function fmtDate(ms) {
   const d = new Date(ms + off * 60000);
   return String(d.getUTCDate()).padStart(2, "0") + "." + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
+function fmtDateLong(ms) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow", day: "2-digit", month: "long",
+  }).format(ms);
+}
 // Начало простоя: если оно раньше начала текущей смены — с датой («28.09 21:12»)
 function fmtSince(ms, shift) {
   return ms < shift.startMs ? `${fmtDate(ms)} ${fmtClock(ms)}` : fmtClock(ms);
@@ -650,6 +655,31 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// Единые контурные иконки: SVG строится через DOM, без inline-кода и стилей.
+function icon(name) {
+  const paths = {
+    pulse: "M2 12h5l3-8 4 16 3-8h5",
+    clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2",
+    helmet: "M4 11a8 8 0 0 1 16 0M3 11h18M9 3v5M15 3v5M7 12v2a5 5 0 0 0 10 0v-2M3 22v-2c0-2 4-3 6-3l3 3 3-3c2 0 6 1 6 3v2",
+    check: "m5 12 4 4L19 6M20 12v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h10",
+    bars: "M4 20V10h3v10M10.5 20V4h3v16M17 20V8h3v12M2 20h20",
+    chart: "M3 3v18h18M6 16l4-5 4 2 6-8",
+    info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v6M12 7v.1",
+    chevron: "m9 5 7 7-7 7",
+    sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M1 12h2M21 12h2M4 4l1.5 1.5M18.5 18.5 20 20M4 20l1.5-1.5M18.5 5.5 20 4",
+    moon: "M20.5 14a9 9 0 0 1-10.5-10.5A9 9 0 1 0 20.5 14Z",
+    calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ico");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(svg.namespaceURI, "path");
+  path.setAttribute("d", paths[name]);
+  svg.append(path);
+  return svg;
+}
+
 // Кнопка «Назад»: первая строка вложенного экрана, во всю ширину, серая рамка
 function backBtn(label, onclick) {
   return h("button", { class: "btn back", onclick }, "← " + label);
@@ -678,18 +708,20 @@ function renderTopbar() {
     conn.addEventListener("click", () => { if (key && refs) { ui.contactBack = ui.screen; go("contact"); } });
   }
   conn.className = "pill";
-  conn.textContent = "Связаться";
+  conn.querySelector(".pill-text").textContent = "Связаться";
   const status = $("save-status");
   if (status) {
     const rejected = records.filter((r) => r.status === "rejected").length;
     status.className = "save-status" + (storageErrors.size || rejected ? " attention" : "");
-    status.textContent = storageErrors.size
+    const statusText = storageErrors.size
       ? "На планшете не сохранено. Не закрывайте страницу. Освободите память и повторите сохранение."
       : rejected ? `Нужно исправить: ${rejected}. Текст сохранён — откройте запись ниже.`
       : queue.length ? `Сохранено на планшете · ждут отправки: ${queue.length}`
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
       : "Нет связи с сервером";
+    status.replaceChildren(h("span", { class: "save-status-text", text: statusText }));
+    status.title = statusText;
     status.hidden = !key;
   }
   // Главная страница не уничтожает ответы незаконченного шага.
@@ -707,6 +739,22 @@ function renderTopbar() {
     });
   }
   home.hidden = !key;
+  // Раздел администратора: смены, мастера, номера для «Связаться». Пароля пока нет (решение владельца)
+  const admin = $("admin");
+  if (admin) {
+    if (!admin.dataset.bound) {
+      admin.dataset.bound = "1";
+      admin.addEventListener("click", () => {
+        if (!key || !refs) return;
+        if (ui.screen !== "admin") ui.adminBack = ui.screen;
+        ui.admin = null;
+        window.scrollTo(0, 0);
+        go("admin");
+      });
+    }
+    admin.hidden = !key;
+    admin.classList.toggle("is-on", ui.screen === "admin");
+  }
 }
 
 function renderRejects() {
@@ -848,6 +896,7 @@ function renderScreen() {
     case "closeConfirm": return renderCloseConfirm(main, view);
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
+    case "admin": return renderAdmin(main, view);
     case "stats": return renderStats(main, view);
     case "detail": return renderDetail(main, view);
     case "repair": return renderRepair(main, view);
@@ -868,7 +917,10 @@ const DEFAULT_CONTACTS = [
   { title: "Диспетчер", tel: "" },
 ];
 function renderContact(main, view) {
-  const list = (refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS;
+  // Первая плитка звонит мастеру, который принял смену, — по телефону из раздела «Администратор»
+  const master = view.crew && (refs.people || []).find((p) => p.id === view.crew.personId);
+  const masterTile = { title: master ? `Мастер смены · ${master.name}` : "Мастер смены", tel: (master && master.phone) || "" };
+  const list = [masterTile, ...((refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS.slice(1))];
   const back = ui.contactBack && ui.contactBack !== "contact" ? ui.contactBack : "auto";
   const status = online && !queue.length ? "Связь с сервером есть, нажатия доходят."
     : online ? `Отправляются нажатия: ${queue.length}.`
@@ -879,9 +931,174 @@ function renderContact(main, view) {
     h("p", { class: "muted", text: status }),
     h("div", { class: "tiles one" },
       list.map((c) => c.tel
-        ? h("a", { class: "tile", href: `tel:${c.tel}` }, c.title, h("span", { class: "t-code", text: c.tel }))
+        ? h("a", { class: "tile", href: `tel:${c.tel.replace(/[^\d+]/g, "")}` }, c.title, h("span", { class: "t-code", text: c.tel }))
         : h("div", { class: "tile tile-off" }, c.title, h("span", { class: "t-code", text: "номер не задан" }))))
   );
+}
+
+// --- Раздел «Администратор»: время смен, мастера с телефонами, номера для «Связаться» ---
+// Две смены закрывают сутки без промежутков: конец одной — начало другой. Шаг — 30 минут, как у шкалы суток
+const HALF_HOURS = Array.from({ length: 48 }, (_, i) => `${two(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`);
+const PHONE_RE = /^\+?[0-9 ()\-]{5,24}$/;
+let adminReq = null;
+
+function adminDraft(s) {
+  const shifts = (s && s.schedule && s.schedule.shifts) || [];
+  const startOf = (no) => (shifts.find((x) => x.no === no) || {}).start || (no === 1 ? "08:00" : "20:00");
+  return {
+    schedule: { shifts: [1, 2].map((no) => ({ no, start: startOf(no) })) },
+    people: ((s && s.people) || []).map((p) => ({ id: p.id ?? null, name: p.name || "", crewId: String(p.crewId || "1"), phone: p.phone || "" })),
+    contacts: ((s && s.contacts) || []).map((c) => ({ title: c.title || "", tel: c.tel || "" })),
+  };
+}
+function loadAdmin() {
+  if (adminReq) return;
+  ui.admin = { loading: true };
+  adminReq = api("/api/admin/settings")
+    .then((d) => { ui.admin = { settings: adminDraft(d.settings) }; })
+    .catch((err) => {
+      if (err && err.status === 401) badKey();
+      ui.admin = { loadError: err && err.status === 404
+        ? "Сервер ещё не умеет хранить настройки: его нужно обновить."
+        : "Нет связи с сервером. Настройки открываются и сохраняются только при связи." };
+    })
+    .finally(() => { adminReq = null; if (ui.screen === "admin") render(); });
+}
+const hmMin = (v) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
+const fmtLen = (min) => (min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
+function adminProblems(s) {
+  const out = [];
+  const [a, b] = s.schedule.shifts.map((x) => hmMin(x.start));
+  const len1 = (b - a + 1440) % 1440;
+  if (a === b) out.push("Смены не могут начинаться в одно время.");
+  else if (len1 < 60 || 1440 - len1 < 60) out.push("Каждая смена должна длиться не меньше часа.");
+  const phoneOk = (v) => !v.trim() || PHONE_RE.test(v.trim());
+  s.people.forEach((p, i) => {
+    if (p.name.trim().length < 3) out.push(`Мастер № ${i + 1}: впишите фамилию, имя и отчество.`);
+    if (!phoneOk(p.phone)) out.push(`${p.name.trim() || `Мастер № ${i + 1}`}: в телефоне только цифры, «+», пробелы, скобки и дефис.`);
+  });
+  s.contacts.forEach((c, i) => {
+    if (!c.title.trim()) out.push(`Номер № ${i + 1}: впишите, кому звонить.`);
+    if (!phoneOk(c.tel)) out.push(`${c.title.trim() || `Номер № ${i + 1}`}: в телефоне только цифры, «+», пробелы, скобки и дефис.`);
+  });
+  return out;
+}
+async function saveAdmin() {
+  const a = ui.admin;
+  if (!a || !a.settings || a.saving) return;
+  const s = a.settings;
+  const problems = adminProblems(s);
+  if (problems.length) { a.error = problems; return render(); }
+  a.saving = true;
+  a.error = null;
+  render();
+  const settings = {
+    schedule: { shifts: s.schedule.shifts.map(({ no, start }) => ({ no, start })) },
+    people: s.people.map((p) => ({ id: p.id, name: p.name.trim().replace(/\s+/g, " "), crewId: p.crewId, phone: p.phone.trim() })),
+    contacts: s.contacts.map((c) => ({ title: c.title.trim().replace(/\s+/g, " "), tel: c.tel.trim() })),
+  };
+  try {
+    const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings }) });
+    ui.admin = { settings: adminDraft(d.settings) };
+    showToast("Настройки сохранены");
+    await loadRefs();
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    a.saving = false;
+    a.error = [(err && err.data && err.data.message) || (err && err.status
+      ? "Сервер не принял настройки."
+      : "Нет связи с сервером. Настройки не сохранены — повторите, когда связь появится.")];
+  }
+  render();
+}
+function renderAdmin(main) {
+  const back = ui.adminBack && ui.adminBack !== "admin" ? ui.adminBack : "auto";
+  const leave = () => {
+    if (ui.admin && ui.admin.dirty && !ui.admin.leaveArmed) {
+      ui.admin.leaveArmed = true;
+      return showToast("Изменения не сохранены. Нажмите «Вернуться» ещё раз, чтобы выйти без сохранения");
+    }
+    ui.admin = null;
+    go(back);
+  };
+  const head = [backBtn("Вернуться", leave), question("Администратор")];
+  if (!ui.admin) loadAdmin();
+  const a = ui.admin;
+  if (a.loading) return fill(main, ...head, h("p", { class: "muted", text: "Загружаем настройки…" }));
+  if (a.loadError) {
+    return fill(main, ...head, h("p", { class: "error-text", text: a.loadError }),
+      h("button", { class: "btn", onclick: () => { ui.admin = null; render(); } }, "Повторить"));
+  }
+  const s = a.settings;
+  const touch = () => { a.dirty = true; a.leaveArmed = false; };
+  // Поля пишут прямо в черновик и не перерисовывают экран — иначе пропадёт курсор
+  const txt = (value, attrs, set) => {
+    const el = h("input", { type: "text", autocomplete: "off", ...attrs });
+    el.value = value;
+    el.addEventListener("input", () => { set(el.value); touch(); });
+    return el;
+  };
+  const sel = (value, label, options, set) => {
+    const el = h("select", { "aria-label": label }, options.map(([v, t]) => h("option", { value: v, text: t })));
+    el.value = value;
+    el.addEventListener("change", () => { set(el.value); touch(); render(); });
+    return el;
+  };
+  const field = (label, control, cls) => h("label", { class: "adm-field" + (cls ? " " + cls : "") }, h("span", { text: label }), control);
+  const times = HALF_HOURS.map((t) => [t, t]);
+
+  const [s1, s2] = s.schedule.shifts;
+  const len1 = (hmMin(s2.start) - hmMin(s1.start) + 1440) % 1440;
+  const shiftRow = (sh, other, len) => h("div", { class: "adm-shift" },
+    h("div", { class: "adm-shift-name" }, icon(sh.no === 1 ? "sun" : "moon"),
+      h("strong", { text: `Смена ${sh.no}` }), h("span", { class: "muted", text: len ? fmtLen(len) : "" })),
+    field("Начало", sel(sh.start, `Смена ${sh.no}, начало`, times, (v) => { sh.start = v; })),
+    field("Конец", sel(other.start, `Смена ${sh.no}, конец`, times, (v) => { other.start = v; })));
+
+  const crewOptions = [["1", "Смена 1"], ["2", "Смена 2"]];
+  const personRow = (p) => h("div", { class: "adm-row" },
+    field("Фамилия, имя, отчество", txt(p.name, { maxlength: "120", autocapitalize: "words", spellcheck: "false" }, (v) => { p.name = v; }), "adm-grow"),
+    field("Смена", sel(p.crewId, "Смена мастера", crewOptions, (v) => { p.crewId = v; })),
+    field("Телефон", txt(p.phone, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { p.phone = v; })),
+    h("button", { class: "btn btn-flat adm-del", "aria-label": `Убрать мастера ${p.name}`.trim(), onclick: () => {
+      s.people.splice(s.people.indexOf(p), 1); touch(); render();
+    } }, "Убрать"));
+  const crewGroup = (crewId) => {
+    const own = s.people.filter((p) => p.crewId === crewId);
+    return h("div", { class: "adm-group" },
+      h("h3", { class: "adm-group-title", text: `Смена ${crewId}` }),
+      own.length ? own.map(personRow) : h("p", { class: "muted", text: "Мастеров нет." }),
+      h("button", { class: "btn adm-add", onclick: () => {
+        s.people.push({ id: null, name: "", crewId, phone: "" }); touch(); render();
+        const names = main.querySelectorAll(".adm-group")[Number(crewId) - 1]?.querySelectorAll('input[maxlength="120"]');
+        names?.[names.length - 1]?.focus();
+      } }, `Добавить мастера в смену ${crewId}`));
+  };
+  const contactRow = (c) => h("div", { class: "adm-row" },
+    field("Кому звонить", txt(c.title, { maxlength: "60", placeholder: "Например: дежурный механик" }, (v) => { c.title = v; }), "adm-grow"),
+    field("Телефон", txt(c.tel, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { c.tel = v; })),
+    h("button", { class: "btn btn-flat adm-del", "aria-label": `Убрать номер ${c.title}`.trim(), onclick: () => {
+      s.contacts.splice(s.contacts.indexOf(c), 1); touch(); render();
+    } }, "Убрать"));
+
+  fill(main, ...head,
+    h("p", { class: "muted", text: "Изменения вступают в силу после «Сохранить» — сразу на всех планшетах." }),
+    h("section", { class: "adm-card", "aria-label": "Время смен" },
+      h("h2", { text: "Время смен" }),
+      shiftRow(s1, s2, len1), shiftRow(s2, s1, len1 ? 1440 - len1 : 0),
+      h("p", { class: "muted adm-note", text: "Конец одной смены — это начало другой: две смены закрывают сутки без промежутков. Время меняйте между сменами — по нему считаются отчёты." })),
+    h("section", { class: "adm-card", "aria-label": "Мастера смен" },
+      h("h2", { text: "Мастера смен" }),
+      crewGroup("1"), crewGroup("2")),
+    h("section", { class: "adm-card", "aria-label": "Номера для «Связаться»" },
+      h("h2", { text: "Номера для «Связаться»" }),
+      h("p", { class: "muted adm-note", text: "Первая кнопка на экране «Связаться» сама звонит мастеру, который принял смену, — по его телефону выше. Здесь — остальные номера." }),
+      s.contacts.length ? s.contacts.map(contactRow) : h("p", { class: "muted", text: "Номеров нет." }),
+      s.contacts.length < 12 ? h("button", { class: "btn adm-add", onclick: () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); } }, "Добавить номер") : null),
+    a.error ? h("div", { class: "adm-errors", role: "alert" }, a.error.map((t) => h("p", { class: "error-text", text: t }))) : null,
+    h("div", { class: "adm-actions" },
+      h("button", { class: "btn primary", disabled: a.saving, onclick: saveAdmin }, a.saving ? "Сохраняем…" : "Сохранить"),
+      a.dirty ? h("button", { class: "btn btn-flat", onclick: () => { ui.admin = null; render(); } }, "Отменить изменения") : null));
 }
 
 // Рендер по таймерам/ответам сервера: не дёргать экран, пока рабочий печатает
@@ -1016,7 +1233,16 @@ function scaleFor(view) {
     const HOUR = 3_600_000;
     const now = nowMs();
     const shiftFrom = view.shift.startMs;
-    const fromMs = serverState?.day?.fromMs ?? (view.shift.shiftNo === 1 ? shiftFrom : shiftFrom - 12 * HOUR);
+    const schedule = refs.settings.schedule;
+    const first = view.shift.shiftNo === 1 ? view.shift : core.shiftOf(shiftFrom - 1, schedule);
+    const fromMs = serverState?.day?.fromMs ?? first.startMs;
+    // Смены этих суток по расписанию: заголовки шкалы ставятся по их началу, а не по 08:00 и 20:00
+    const dayShifts = [];
+    for (let t = fromMs; t < fromMs + 24 * HOUR && dayShifts.length < 4;) {
+      const sh = core.shiftOf(t, schedule);
+      dayShifts.push({ no: sh.shiftNo, startMs: sh.startMs, endMs: sh.endMs });
+      t = sh.endMs;
+    }
     const endOf = (s) => (s.open || s.endMs == null ? now : s.endMs);
     const earlier = (serverState?.day?.segments || [])
       .filter((s) => s.startMs < shiftFrom)
@@ -1024,7 +1250,7 @@ function scaleFor(view) {
     const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
     if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
     const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
-    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, fmtClock, fmtDate: () => fmtDate(fromMs) });
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, shifts: dayShifts, fmtClock, fmtDate: () => fmtDate(fromMs), icon });
   } catch (e) {
     console.error("Шкала суток:", e);
     return null;
@@ -1036,17 +1262,26 @@ function withScale(view, ...kids) {
 }
 
 // Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
-function millPanel({ running, info, onGo, onStop }) {
+function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
   const btn = (kind, on, label, onclick) => h("button", {
     class: `mill-btn mill-${kind}${on ? " is-on" : ""}`,
     "aria-pressed": on ? "true" : "false",
+    "aria-label": "СТАН " + label,
     onclick: on ? () => showToast(running ? "Стан уже работает" : "Стан уже стоит") : onclick,
-  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }), h("span", { class: "mill-label", text: label }), on ? info : null);
-  return h("div", null,
-    h("p", { class: "mill-clock" }, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" })),
+  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }),
+    h("span", { class: "mill-label" }, h("span", { text: "СТАН" }), h("span", { text: label })));
+  return h("div", { class: "mill-console" },
+    h("div", { class: "mill-status " + (running ? "is-run" : "is-stop") },
+      h("div", { class: "mill-state" }, icon("pulse"),
+        h("div", null, h("div", { class: "mill-state-title" }, running ? "Стан работает · " : "Стан стоит · ", info),
+          subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
+      h("div", { class: "mill-clock" }, icon("clock"),
+        h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
+          h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
     h("div", { class: "mill-panel" },
-      btn("go", running, "СТАН РАБОТАЕТ", onGo),
-      btn("stop", !running, "СТАН ВСТАЛ", onStop)));
+      btn("go", running, "РАБОТАЕТ", onGo),
+      btn("stop", !running, "ВСТАЛ", onStop),
+      hint ? h("p", { class: "mill-hint" }, icon("info"), h("span", { text: hint })) : null));
 }
 
 // Главный экран: стан работает
@@ -1058,6 +1293,8 @@ function renderRun(main, view) {
     millPanel({
       running: true,
       info: h("span", { class: "mill-info", dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
+      subtitle: Number.isFinite(lastStart) ? `с ${fmtClock(lastStart)}` : null,
+      hint: "Нажмите красную кнопку, как только стан остановился",
       onStop: () => {
         const downtimeId = crypto.randomUUID();
         send("stop", { downtimeId });
@@ -1066,7 +1303,6 @@ function renderRun(main, view) {
         go("reason");
       },
     }),
-    h("p", { class: "hint", text: "Нажмите красную кнопку, как только стан остановился" }),
     shiftBlock(view)
   ));
 }
@@ -1181,24 +1417,33 @@ function metrics() {
 // Блок смены: кто принял, время смены, остаток, закрытие. Одинаков при работающем и стоящем стане
 function shiftBlock(view) {
   const c = view.crew;
-  const dts = shiftDowntimes(view);
-  const sum = shiftSummary(view);
-  const down = sum.plannedMinutes + sum.unplannedMinutes + sum.shortMinutes;
-  const action = (title, help, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { text: title }), h("span", { class: "action-help", text: help }));
+  let downtimeHelp = "Посмотреть или исправить простои за смену";
+  try {
+    const n = shiftDowntimes(view).length;
+    const sum = shiftSummary(view);
+    const downMin = sum.plannedMinutes + sum.unplannedMinutes + sum.shortMinutes;
+    downtimeHelp = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(downMin)} · посмотреть или исправить` : "Простоев не было";
+  } catch { /* Сводка не должна мешать управлению станом. */ }
+  const action = (name, title, help, onclick) => h("button", { class: "btn shift-action", onclick },
+    h("span", { class: "action-ico" }, icon(name)),
+    h("span", { class: "action-copy" }, h("span", { text: title }), h("span", { class: "action-help", text: help })), icon("chevron"));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
+    h("div", { class: "shift-card" },
     h("div", { class: "shift-person" },
+      h("div", { class: "shift-avatar" }, icon("helmet")),
+      h("div", { class: "shift-person-copy" },
       c ? h("p", { class: "muted", text: "Мастер смены" }) : null,
       h("h2", { text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
       c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
-      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null),
+      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null)),
     h("div", { class: "shift-time" },
+      icon("clock"),
       h("span", { text: `${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)} · МСК` }),
-      h("span", null, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000)))),
-    ui.resume ? action("Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
-    action("Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
-    action("Простои за смену", `${dts.length} ${plural(dts.length, "простой", "простоя", "простоев")} · ${fmtDurMin(down)} · посмотреть или исправить`, () => go("shift")),
-    action("Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
+      h("span", { class: "shift-remaining" }, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000))), icon("chevron"))),
+    ui.resume ? action("info", "Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
+    action("check", "Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
+    action("bars", "Простои за смену", downtimeHelp, () => go("shift")),
+    action("chart", "Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
   );
 }
 
@@ -1241,8 +1486,9 @@ function renderStop(main, view) {
   const left = h("div", null,
     millPanel({
       running: false,
-      info: h("span", { class: "mill-info" }, `стоит с ${fmtSince(since, view.shift)}`,
-        h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
+      info: h("span", { class: "mill-info" }, h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
+      subtitle: `стоит с ${fmtSince(since, view.shift)}`,
+      hint: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу.",
       onGo: () => {
         // Возврат на главную не сбрасывает уже зафиксированное время пуска.
         if (restartMatches(view, ui.rw)) {
@@ -1261,8 +1507,7 @@ function renderStop(main, view) {
         if (open.reason) go("restartConfirm");
         else startRestartReasonWizard();
       },
-    }),
-    h("p", { class: "hint", text: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу." })
+    })
   );
 
   let card;

@@ -3,6 +3,7 @@
 import * as core from "./core/core.js";
 import { DEFAULT_REFS } from "./core/refs.js";
 import { computeStats, periodRange } from "./core/stats.js";
+import { settingsFromRefs, validateSettings } from "./core/settings.js";
 
 // Справочник причин, плиток и узлов — тот же, что у сервера
 const refs = {
@@ -23,11 +24,12 @@ const refs = {
     { id: "p4", name: "Волков Евгений Николаевич", crewId: "2" },
     { id: "p5", name: "Морозов Андрей Павлович", crewId: "2" },
     { id: "p6", name: "Лебедев Григорий Олегович", crewId: "2" },
-  ],
+  ].map((person) => ({ ...person, phone: "" })),
   demo: true,
 };
 // Версия справочника — по содержимому, как у сервера: иначе страница держит старый справочник в кэше
-const REFS_VERSION = "mock-" + [...JSON.stringify(refs)].reduce((h, ch) => (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0, 7).toString(16);
+const refsVersion = () => "mock-" + [...JSON.stringify(refs)].reduce((h, ch) => (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0, 7).toString(16);
+let REFS_VERSION = refsVersion();
 
 const events = []; // журнал событий, как в базе сервера
 
@@ -148,14 +150,39 @@ export async function api(path, options = {}) {
   if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("stan.mockOffline") === "1") {
     throw new Error("mock_offline");
   }
-  if (path === "/api/refs") {
-    return { ok: true, refs, refsVersion: REFS_VERSION };
+  const url = new URL(path, "http://mock.local");
+  const method = (options.method || "GET").toUpperCase();
+  if (url.pathname === "/api/admin/settings" && method === "GET") {
+    return { ok: true, settings: settingsFromRefs(refs), refsVersion: REFS_VERSION };
   }
-  if (path === "/api/state") {
+  if (url.pathname === "/api/admin/settings" && method === "PUT") {
+    const fail = (status, message) => {
+      throw Object.assign(new Error("http_" + status), { status, data: { ok: false, error: "bad_request", message } });
+    };
+    if (new TextEncoder().encode(options.body || "").length > 64 * 1024) {
+      fail(413, "Тело запроса не должно превышать 64 КБ.");
+    }
+    let body;
+    try { body = JSON.parse(options.body || ""); }
+    catch { fail(400, "Некорректный JSON в теле запроса."); }
+    let settings;
+    try { settings = validateSettings(body?.settings, refs.people); }
+    catch (e) {
+      if (e.code !== "bad_request") throw e;
+      fail(400, e.message);
+    }
+    refs.people = settings.people;
+    refs.settings = { ...refs.settings, schedule: { tzOffsetMinutes: 180, ...settings.schedule }, contacts: settings.contacts };
+    REFS_VERSION = refsVersion();
+    return { ok: true, settings: settingsFromRefs(refs), refsVersion: REFS_VERSION };
+  }
+  if (url.pathname === "/api/refs" && method === "GET") {
+    return { ok: true, refs: structuredClone(refs), refsVersion: REFS_VERSION };
+  }
+  if (url.pathname === "/api/state" && method === "GET") {
     return { ok: true, state: computeState(), refsVersion: REFS_VERSION, serverTime: serverTime() };
   }
-  const url = new URL(path, "http://mock.local");
-  if (url.pathname === "/api/stats") {
+  if (url.pathname === "/api/stats" && method === "GET") {
     const period = url.searchParams.get("period");
     if (!new Set(["shift", "day", "week", "month"]).has(period)) {
       const err = new Error("bad_request");
@@ -166,7 +193,7 @@ export async function api(path, options = {}) {
     const range = periodRange(period, now, refs.settings.schedule);
     return { ok: true, period, label: range.label, stats: computeStats(events, { ...range, nowMs: now, refs }), serverTime: serverTime() };
   }
-  if (path === "/api/events" && options.method === "POST") {
+  if (url.pathname === "/api/events" && method === "POST") {
     let body;
     try {
       body = JSON.parse(options.body || "{}");

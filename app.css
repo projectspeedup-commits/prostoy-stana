@@ -6,9 +6,46 @@
    рабочего (<html data-theme="light">). Вне этих блоков цветов нет — только var(--…).
    Тема сама ставится скриптом theme.js; кнопка #theme в шапке переключает её. */
 
-/* ===== Тёмная тема: значения прежнего оформления, менять нельзя ===== */
+/* ===== Тёмная тема ===== */
 :root {
   color-scheme: dark;
+  --mill-ring: conic-gradient(from -35deg, #f9fcff, #9caab7 13%, #f3f7fb 25%, #74828f 42%, #394652 52%, #b8c4ce 67%, #eff5fa 80%, #7d8c98 91%, #f9fcff);
+  --mill-gap: #111a22;
+  --mill-glint: #fff;
+
+  /* Металл, пульт и поверхности главного экрана. */
+  --metal-panel-top: #414c58;
+  --metal-panel-bottom: #202933;
+  --metal-brush: rgba(229, 240, 250, 0.035);
+  --metal-edge: #64717e;
+  --metal-highlight: rgba(255, 255, 255, 0.65);
+  --metal-shadow: rgba(5, 13, 22, 0.42);
+  --metal-plate: #1c2630;
+  --metal-ink: #f4f7fa;
+  --metal-muted: #d1dae3;
+  --metal-chrome: linear-gradient(135deg, #f5f8fb 0%, #88939d 28%, #e6edf3 45%, #56616c 70%, #cad3dc 100%);
+  --metal-screw: radial-gradient(circle at 35% 30%, #c9d2db, #606d7a 45%, #202b35 75%);
+  --mill-green-top: #cbff9c;
+  --mill-green-mid: #55d726;
+  --mill-green-bottom: #12601e;
+  --mill-green-glow: rgba(100, 234, 43, 0.48);
+  --mill-red-top: #ffb4a8;
+  --mill-red-mid: #ed4037;
+  --mill-red-bottom: #78181c;
+  --mill-red-glow: rgba(255, 66, 54, 0.42);
+  --mill-status-green: #61bd43;
+  --mill-status-red: #da4d4b;
+  --mill-status-green-glow: rgba(107, 196, 63, 0.17);
+  --mill-status-red-glow: rgba(225, 71, 65, 0.14);
+  --mill-lamp-good: #68c644;
+  --mill-lamp-warn: #e6ab32;
+  --metal-page: linear-gradient(135deg, #27323d, #161d26 58%, #293440);
+  --metal-card: linear-gradient(180deg, #323d48, #252e39);
+  --metal-card-edge: #4a5968;
+  --metal-card-glint: rgba(219, 237, 255, 0.12);
+  --metal-card-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
+  --metal-inset: linear-gradient(180deg, #202a35, #293541);
+  --metal-avatar: linear-gradient(145deg, #627283, #344454);
 
   /* Фоны и поверхности */
   --bg: #14161a;               /* страница, шапка */
@@ -113,6 +150,40 @@
   :root:not([data-theme="dark"]) {
     color-scheme: light;
 
+    /* Металл, пульт и поверхности главного экрана. */
+    --metal-panel-top: #414c58;
+    --metal-panel-bottom: #202933;
+    --metal-brush: rgba(229, 240, 250, 0.035);
+    --metal-edge: #64717e;
+    --metal-highlight: rgba(255, 255, 255, 0.65);
+    --metal-shadow: rgba(5, 13, 22, 0.42);
+    --metal-plate: #1c2630;
+    --metal-ink: #f4f7fa;
+    --metal-muted: #d1dae3;
+    --metal-chrome: linear-gradient(135deg, #f5f8fb 0%, #88939d 28%, #e6edf3 45%, #56616c 70%, #cad3dc 100%);
+    --metal-screw: radial-gradient(circle at 35% 30%, #c9d2db, #606d7a 45%, #202b35 75%);
+    --mill-green-top: #cbff9c;
+    --mill-green-mid: #55d726;
+    --mill-green-bottom: #12601e;
+    --mill-green-glow: rgba(100, 234, 43, 0.48);
+    --mill-red-top: #ffb4a8;
+    --mill-red-mid: #ed4037;
+    --mill-red-bottom: #78181c;
+    --mill-red-glow: rgba(255, 66, 54, 0.42);
+    --mill-status-green: #61bd43;
+    --mill-status-red: #da4d4b;
+    --mill-status-green-glow: rgba(107, 196, 63, 0.17);
+    --mill-status-red-glow: rgba(225, 71, 65, 0.14);
+    --mill-lamp-good: #68c644;
+    --mill-lamp-warn: #e6ab32;
+    --metal-page: linear-gradient(125deg, #edf2f6 0%, #d7e1eb 48%, #eaf0f5 100%);
+    --metal-card: linear-gradient(180deg, #fcfdfe, #e9eff5);
+    --metal-card-edge: #b9c7d4;
+    --metal-card-glint: #ffffff;
+    --metal-card-shadow: 0 5px 16px rgba(47, 68, 88, 0.12);
+    --metal-inset: linear-gradient(180deg, #dbe4ed, #edf2f7);
+    --metal-avatar: linear-gradient(145deg, #f6f9fc, #b3c3d2);
+
     --bg: #e9edf2;
     --surface: #ffffff;
     --surface-2: #ffffff;
@@ -205,6 +276,40 @@
 /* ===== Светлая тема по выбору рабочего (кнопка #theme, theme.js ставит data-theme) ===== */
 :root[data-theme="light"] {
   color-scheme: light;
+
+  /* Металл, пульт и поверхности главного экрана. */
+  --metal-panel-top: #414c58;
+  --metal-panel-bottom: #202933;
+  --metal-brush: rgba(229, 240, 250, 0.035);
+  --metal-edge: #64717e;
+  --metal-highlight: rgba(255, 255, 255, 0.65);
+  --metal-shadow: rgba(5, 13, 22, 0.42);
+  --metal-plate: #1c2630;
+  --metal-ink: #f4f7fa;
+  --metal-muted: #d1dae3;
+  --metal-chrome: linear-gradient(135deg, #f5f8fb 0%, #88939d 28%, #e6edf3 45%, #56616c 70%, #cad3dc 100%);
+  --metal-screw: radial-gradient(circle at 35% 30%, #c9d2db, #606d7a 45%, #202b35 75%);
+  --mill-green-top: #cbff9c;
+  --mill-green-mid: #55d726;
+  --mill-green-bottom: #12601e;
+  --mill-green-glow: rgba(100, 234, 43, 0.48);
+  --mill-red-top: #ffb4a8;
+  --mill-red-mid: #ed4037;
+  --mill-red-bottom: #78181c;
+  --mill-red-glow: rgba(255, 66, 54, 0.42);
+  --mill-status-green: #61bd43;
+  --mill-status-red: #da4d4b;
+  --mill-status-green-glow: rgba(107, 196, 63, 0.17);
+  --mill-status-red-glow: rgba(225, 71, 65, 0.14);
+  --mill-lamp-good: #68c644;
+  --mill-lamp-warn: #e6ab32;
+  --metal-page: linear-gradient(125deg, #edf2f6 0%, #d7e1eb 48%, #eaf0f5 100%);
+  --metal-card: linear-gradient(180deg, #fcfdfe, #e9eff5);
+  --metal-card-edge: #b9c7d4;
+  --metal-card-glint: #ffffff;
+  --metal-card-shadow: 0 5px 16px rgba(47, 68, 88, 0.12);
+  --metal-inset: linear-gradient(180deg, #dbe4ed, #edf2f7);
+  --metal-avatar: linear-gradient(145deg, #f6f9fc, #b3c3d2);
 
   --bg: #e9edf2;
   --surface: #ffffff;
@@ -299,7 +404,8 @@
 html, body { margin: 0; padding: 0; }
 body {
   font: 20px/1.4 system-ui, sans-serif;
-  background: var(--bg);
+  background: var(--metal-page);
+  background-attachment: fixed;
   color: var(--text);
   min-height: 100dvh;
 }
@@ -488,8 +594,9 @@ input {
   margin-top: 12px;
   padding: 14px 16px;
   border-radius: 14px;
-  background: var(--surface-2);
-  border: 2px solid var(--border-strong);
+  background: var(--metal-card);
+  border: 1px solid var(--metal-card-edge);
+  box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow);
 }
 .card.ok { border-color: var(--green); }
 .card.none { border-color: var(--warn-edge); background: var(--warn-bg); }
@@ -642,28 +749,12 @@ input {
 .bar { position: relative; }
 .bar .msk { float: right; font-variant-numeric: tabular-nums; font-weight: 800; opacity: 0.9; }
 
-/* Время смены под большой кнопкой */
-.shift-time { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 8px; padding: 12px 14px;
-  background: var(--surface); border: 2px solid var(--border); border-radius: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.shift-time .left { color: var(--text-muted); font-weight: 600; }
-
-/* Кнопка «Связаться» в шапке */
-button.pill { cursor: pointer; border: 0; font: inherit; font-weight: 800; }
+/* Смена и действия главного экрана оформлены рядом с пультом ниже. */
+button.pill { cursor: pointer; font: inherit; font-weight: 700; }
 .tiles.one { grid-template-columns: 1fr; }
 a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .tile-off { opacity: 0.6; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-
-.shift-block { margin-top: 12px; }
-.shift-block .shift-time { margin: 0 0 8px; }
-.pill.home { background: var(--pill-home-bg); color: var(--text-2); }
-
-/* Смена: спокойный блок под главным действием, одинаковый в обоих режимах. */
-.shift-block { margin-top: 28px; padding-top: 20px; border-top: 2px solid var(--border); }
-.shift-person h2 { margin: 0 0 4px; }
-.shift-person p { margin: 4px 0; }
-.shift-block .shift-time { margin: 16px 0; flex-wrap: wrap; font-size: 0.95em; }
-.shift-action { text-align: left; font-size: 1em; }
-.action-help { display: block; margin-top: 5px; color: var(--text-soft); font-size: 0.85em; font-weight: 400; }
+.action-help { display: block; color: var(--text-soft); font-weight: 400; }
 .handover-note { padding: 16px 0; border-block: 1px solid var(--border-note); color: var(--text); }
 .receipt { font-weight: 700; }
 .save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: var(--text-soft); font-size: 0.8em; }
@@ -709,42 +800,6 @@ label { display: block; margin-top: 20px; }
 .m-fill.work { background: var(--green); }
 .m-fill.down { background: var(--red); }
 
-/* Шапка: кнопки в одну строку, не наезжают на содержимое */
-.pill { white-space: nowrap; min-height: 44px; padding: 8px 16px; font-size: 0.8em; }
-.m-tab { font-size: 0.8em; padding: 0 4px; }
-/* Переключатель темы — круглая кнопка-лампочка справа в шапке.
-   Светлая тема: лампочка горит; тёмная: погашена */
-.theme-toggle {
-  margin-left: auto; flex: 0 0 auto; width: 52px; height: 52px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 2px solid var(--border-strong); border-radius: 50%;
-  background: var(--pill-bg); color: var(--text-2); cursor: pointer;
-}
-.theme-toggle .bulb { width: 30px; height: 30px; fill: none; stroke: currentColor;
-  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.theme-toggle .bulb-glass { fill: #ffd43b; stroke: #a8690a; }
-.theme-toggle .bulb-rays { stroke: #e0a100; }
-:root[data-theme="dark"] .theme-toggle .bulb-glass { fill: none; stroke: currentColor; }
-:root[data-theme="dark"] .theme-toggle .bulb-rays { display: none; }
-.theme-toggle:active { filter: var(--press-btn); }
-
-/* Шапка — всегда одна строка: на телефоне кнопки компактнее */
-.topbar { flex-wrap: nowrap; }
-.topbar .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 480px) {
-  .topbar { gap: 8px; padding-left: 8px; padding-right: 8px; }
-  .topbar .pill { min-height: 44px; padding: 8px 12px; font-size: 0.72em; }
-  .theme-toggle { width: 44px; height: 44px; }
-  .theme-toggle .bulb { width: 26px; height: 26px; }
-}
-/* Монитор: шире поле, крупнее шрифт — читается с расстояния */
-@media (min-width: 1400px) {
-  body { font-size: 22px; }
-  main { max-width: 860px; }
-  main:has(.with-scale) { max-width: 1240px; }
-  main:has(.with-scale .stop-grid) { max-width: 1600px; }
-}
-
 /* Графики */
 .chart { width: 100%; height: auto; display: block; background: var(--surface); border-radius: 12px; }
 .chart .grid { stroke: var(--chart-grid); stroke-width: 1; }
@@ -787,30 +842,255 @@ label { display: block; margin-top: 20px; }
   .zone-metric-value { flex-basis: 100%; padding-left: 24px; }
 }
 
-/* Пульт стана: две одинаковые кнопки, как на станке. Горящая — нынешнее состояние,
-   она «утоплена» и светится; вторая — выпуклая, её и нажимают */
-.mill-clock { margin: 12px 0 6px; text-align: right; font-weight: 800; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.mill-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; container-type: inline-size; }
-.mill-btn {
-  min-height: 40dvh; padding: 16px 10px; border-radius: 22px; border: 4px solid rgba(0, 0, 0, 0.25);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  color: #fff; font: inherit; font-weight: 800; text-align: center; cursor: pointer;
-  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.35); transition: transform 0.05s, box-shadow 0.05s;
+/* Главный экран: холодный металл и промышленный пульт. */
+.ico { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.topbar { flex-wrap: nowrap; gap: 12px; margin: 0 auto;
+  padding-block: calc(20px + env(safe-area-inset-top)) 20px; background: none; }
+.topbar::before { content: ''; position: absolute; inset: 0 var(--screen-gutter); z-index: -1;
+  background: var(--metal-page); pointer-events: none; }
+.topbar .pill { display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  flex: 0 0 auto; min-height: 48px; padding: 10px 18px; font-size: 15px; white-space: nowrap;
+  border: 1px solid var(--metal-edge); color: var(--metal-ink);
+  background: linear-gradient(180deg, var(--metal-panel-top), var(--metal-panel-bottom));
+  box-shadow: inset 0 1px 0 var(--metal-highlight), 0 3px 5px var(--metal-shadow); }
+.topbar .pill .ico { width: 20px; height: 20px; }
+.topbar .pill:active { transform: translateY(1px); }
+.topbar .save-status { display: flex; align-items: center; gap: 8px; max-width: 280px; min-width: 0;
+  margin: 0; padding: 0; font-size: 12px; line-height: 1.4; }
+.save-status::before { content: ''; flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--mill-lamp-good); box-shadow: inset 0 1px 2px var(--metal-highlight), 0 0 6px var(--mill-green-glow); }
+.save-status.attention::before { background: var(--mill-lamp-warn); box-shadow: 0 0 6px var(--mill-red-glow); }
+.brand { margin-left: auto; flex: 0 0 auto; display: grid; gap: 3px; text-align: right; }
+.brand strong { font-size: 25px; font-weight: 850; letter-spacing: 0.025em; }
+.brand span { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-muted); }
+.theme-toggle { display: grid; place-items: center; flex: 0 0 auto; margin-left: 6px;
+  width: 52px; height: 52px; padding: 4px; border-radius: 50%; border: 1px solid var(--metal-edge);
+  background: var(--metal-chrome); color: var(--metal-muted); cursor: pointer;
+  box-shadow: inset 0 1px 1px var(--metal-highlight), 0 3px 7px var(--metal-shadow); }
+.theme-toggle .bulb { width: 38px; height: 38px; padding: 5px; border-radius: 50%;
+  background: var(--metal-plate); fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+.theme-toggle .bulb-glass { fill: var(--mill-lamp-warn); }
+.theme-toggle .bulb-rays { stroke: var(--mill-lamp-warn); }
+:root[data-theme="dark"] .theme-toggle .bulb-glass { fill: none; }
+:root[data-theme="dark"] .theme-toggle .bulb-rays { display: none; }
+.mill-console { container-type: inline-size; }
+.mill-status, .shift-card, .btn.shift-action { background: var(--metal-card); border: 1px solid var(--metal-card-edge);
+  box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); border-radius: 16px; }
+.mill-status { display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  min-height: 96px; padding: 17px 22px; margin-bottom: 18px; border-color: var(--mill-status-green);
+  box-shadow: inset 0 1px 0 var(--metal-card-glint), 0 0 0 2px var(--mill-status-green-glow), 0 4px 18px var(--mill-status-green-glow); }
+.mill-status.is-stop { border-color: var(--mill-status-red);
+  box-shadow: inset 0 1px 0 var(--metal-card-glint), 0 0 0 2px var(--mill-status-red-glow), 0 4px 18px var(--mill-status-red-glow); }
+.mill-state { display: flex; align-items: center; gap: 15px; min-width: 0; }
+.mill-state > .ico { width: 36px; height: 36px; color: var(--text-good); }
+.is-stop .mill-state > .ico { color: var(--text-stopped); }
+.mill-state-title { font-size: clamp(20px, 2.6cqi, 30px); font-weight: 800; line-height: 1.25; }
+.mill-info, .mill-timer { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mill-subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; font-weight: 400; }
+.mill-clock { display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+  border-left: 1px solid var(--metal-card-edge); padding-left: 22px;
+  font-size: clamp(18px, 2.6cqi, 28px); font-weight: 750; font-variant-numeric: tabular-nums; }
+.mill-clock > .ico { color: var(--text-muted); }
+.mill-panel { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 0; padding: 28px 20px 16px; container-type: inline-size; border-radius: 18px;
+  border: 1px solid var(--metal-edge); color: var(--metal-ink);
+  background: repeating-linear-gradient(0deg, transparent 0 2px, var(--metal-brush) 2px 3px),
+    linear-gradient(170deg, var(--metal-panel-top), var(--metal-panel-bottom));
+  box-shadow: inset 0 2px 2px var(--metal-highlight), inset 0 -3px 4px var(--metal-shadow), 0 6px 12px var(--metal-shadow); }
+/* По два винта на каждой стороне, у верхней и нижней кромки панели. */
+.mill-panel::before, .mill-panel::after { content: ''; position: absolute; top: 10px; bottom: 10px; width: 7px;
+  background-image: var(--metal-screw), var(--metal-screw); background-size: 7px 7px;
+  background-position: center top, center bottom; background-repeat: no-repeat; }
+.mill-panel::before { left: 10px; }
+.mill-panel::after { right: 10px; }
+.mill-btn { position: relative; display: flex; align-items: center; justify-content: center; gap: clamp(12px, 2cqi, 22px);
+  min-width: 0; min-height: 142px; padding: 10px 12px; border: 0; border-radius: 0;
+  font: inherit; font-weight: 800; color: var(--metal-ink); background: transparent; cursor: pointer; touch-action: manipulation; }
+.mill-btn + .mill-btn { border-left: 1px solid var(--metal-edge); }
+.mill-go { --mill-top: var(--mill-green-top); --mill-mid: var(--mill-green-mid); --mill-bottom: var(--mill-green-bottom); --mill-glow: var(--mill-green-glow); }
+.mill-stop { --mill-top: var(--mill-red-top); --mill-mid: var(--mill-red-mid); --mill-bottom: var(--mill-red-bottom); --mill-glow: var(--mill-red-glow); }
+.mill-lamp { display: block; flex: 0 0 auto; position: relative; width: clamp(132px, 18cqi, 156px); aspect-ratio: 1; border-radius: 50%;
+  background: var(--mill-ring);
+  box-shadow: 0 6px 7px var(--metal-shadow), inset 0 2px 2px var(--metal-highlight), inset 0 -3px 3px var(--metal-shadow), 0 0 0 2px var(--metal-plate), 0 0 0 3px var(--metal-edge);
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out; }
+.mill-lamp::before { content: ''; position: absolute; inset: 13%; border-radius: 50%;
+  background: radial-gradient(ellipse 38% 22% at 32% 22%, var(--mill-glint), var(--mill-top) 35%, transparent 100%),
+    radial-gradient(ellipse at 38% 28%, var(--mill-top), var(--mill-mid) 43%, var(--mill-bottom) 85%);
+  box-shadow: 0 0 0 2px var(--mill-gap), 0 3px 4px var(--metal-shadow), inset 0 2px 3px var(--metal-highlight), inset 0 -10px 12px var(--metal-shadow);
+  filter: brightness(.76) saturate(.85); transition: filter 120ms ease-out; }
+.mill-lamp::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; opacity: 0;
+  border: 3px solid transparent; border-bottom-color: var(--mill-mid);
+  filter: drop-shadow(0 3px 4px var(--mill-glow)); pointer-events: none; }
+.mill-btn.is-on .mill-lamp { transform: translateY(2px); }
+.mill-btn.is-on .mill-lamp::before { filter: none; }
+.mill-btn.is-on .mill-lamp::after { opacity: 1; }
+@media (hover: hover) { .mill-btn:hover .mill-lamp::before { filter: brightness(.88) saturate(.9); }
+  .mill-btn.is-on:hover .mill-lamp::before { filter: brightness(1.1); }
+  .topbar .pill:hover, .btn.shift-action:hover { border-color: var(--focus); } }
+.mill-btn:active .mill-lamp { transform: translateY(5px); }
+.mill-btn:active .mill-lamp::before { box-shadow: inset 0 5px 10px var(--metal-shadow); }
+.mill-label { display: grid; gap: 2px; min-width: 0; width: clamp(140px, 20cqi, 208px); max-width: 100%; padding: 10px 14px; border-radius: 6px;
+  border: 1px solid var(--metal-edge);
+  background: var(--metal-plate); box-shadow: inset 0 2px 4px var(--metal-shadow), 0 1px 0 var(--metal-edge);
+  font-size: clamp(15px, 2.7cqi, 29px); letter-spacing: .035em; line-height: 1.2; text-align: left; white-space: nowrap; }
+.mill-btn.is-on .mill-label { text-shadow: 0 0 8px var(--mill-glow); }
+.mill-hint { display: flex; align-items: center; justify-content: center; gap: 8px; grid-column: 1 / -1;
+  max-width: 100%; width: fit-content; margin: 0 auto; padding: 7px 14px; border-radius: 7px;
+  background: var(--metal-plate); color: var(--metal-muted); font-size: 13px; line-height: 1.4; }
+.mill-hint .ico { width: 17px; height: 17px; }
+.shift-block { display: grid; gap: 12px; margin-top: 18px; padding: 0; border: 0; }
+.shift-card { padding: 18px 22px 14px; }
+.shift-person { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 18px; }
+.shift-avatar { display: grid; place-items: center; align-self: start; width: 72px; height: 78px; border: 1px solid var(--metal-card-edge);
+  border-radius: 12px; background: var(--metal-avatar); color: var(--text-soft); box-shadow: inset 0 1px 1px var(--metal-card-glint); }
+.shift-avatar .ico { width: 46px; height: 46px; stroke-width: 1.35; }
+.shift-person h2 { margin: 2px 0 3px; font-size: 24px; line-height: 1.25; font-weight: 800; }
+.shift-person p { margin: 3px 0; font-size: 15px; }
+.shift-person p.muted { font-size: 13px; }
+.shift-block .shift-time { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 14px 0 0; padding: 10px 14px; border: 1px solid var(--metal-card-edge); border-radius: 9px;
+  background: var(--metal-inset); box-shadow: inset 0 1px 2px var(--metal-card-glint);
+  font-size: 15px; font-variant-numeric: tabular-nums; }
+.shift-time .ico { width: 19px; height: 19px; color: var(--text-muted); }
+.shift-remaining { border-left: 1px solid var(--metal-card-edge); padding-left: 16px; margin-left: 8px; }
+.shift-time > .ico:last-child { margin-left: auto; }
+.btn.shift-action { display: grid; grid-template-columns: 50px minmax(0, 1fr) 24px; gap: 16px; align-items: center;
+  margin: 0; padding: 14px 22px; min-height: 84px; text-align: left; font-size: 21px; line-height: 1.25; overflow-wrap: normal; }
+.action-ico { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 50%;
+  color: var(--metal-ink); background: linear-gradient(145deg, var(--metal-panel-top), var(--metal-panel-bottom));
+  border: 1px solid var(--metal-edge); box-shadow: inset 0 1px 1px var(--metal-highlight), 0 2px 4px var(--metal-shadow); }
+.action-ico .ico { width: 26px; height: 26px; }
+.shift-action .action-help { font-size: 14px; margin-top: 5px; line-height: 1.4; overflow-wrap: normal; }
+.shift-action > .ico { color: var(--text-muted); width: 20px; }
+.stop-grid { display: block; }
+.stop-grid > * { min-width: 0; }
+@media (min-width: 1500px) {
+  .stop-grid { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 18px; align-items: start; }
+  .stop-grid > :last-child .card:first-child { margin-top: 0; }
 }
-.mill-go { background: #1f883d; }
-.mill-stop { background: #c62828; }
-.mill-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
-.mill-btn.is-on { transform: translateY(6px); cursor: default; border-color: #fff; }
-.mill-go.is-on { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 26px 6px rgba(46, 160, 67, 0.55); }
-.mill-stop.is-on { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 0 26px 6px rgba(218, 54, 51, 0.55); }
-/* Размер надписи — от ширины пульта: «РАБОТАЕТ» не рвётся посреди слова */
-.mill-label { font-size: clamp(15px, 6.4cqi, 46px); line-height: 1.15; letter-spacing: 0.02em; }
-.mill-lamp { width: 30px; height: 30px; border-radius: 50%; background: rgba(0, 0, 0, 0.35); border: 3px solid rgba(255, 255, 255, 0.55); }
-.mill-btn.is-on .mill-lamp { background: #fff; border-color: #fff; box-shadow: 0 0 16px 5px rgba(255, 255, 255, 0.9); }
-.mill-info { font-size: 1.05em; font-variant-numeric: tabular-nums; }
-.mill-timer { display: block; margin-top: 6px; font-size: clamp(18px, 6cqi, 40px); }
+@container (max-width: 650px) {
+  .mill-status { padding: 14px; gap: 12px; }
+  .mill-state { gap: 10px; }
+  .mill-state > .ico { width: 26px; height: 26px; }
+  .mill-clock { padding-left: 14px; gap: 8px; }
+  .mill-clock > .ico { display: none; }
+  .mill-btn { flex-direction: column; padding: 10px; gap: 18px; }
+  .mill-lamp { width: 132px; max-width: 100%; }
+  .mill-label { width: 100%; max-width: 208px; padding: 9px;
+    font-size: clamp(14px, 4.7cqi, 22px); text-align: center; }
+}
+@container (max-width: 480px) {
+  .mill-status { align-items: stretch; flex-direction: column; gap: 10px; }
+  .mill-clock { border-left: 0; border-top: 1px solid var(--metal-card-edge); padding: 8px 0 0; font-size: 17px; }
+  .mill-clock > .ico { display: block; width: 18px; height: 18px; }
+  .mill-clock > div { display: flex; align-items: baseline; gap: 12px; }
+  .mill-clock .mill-subtitle { margin: 0; }
+  .mill-btn { flex-direction: column; gap: 18px; padding: 6px 8px; }
+}
+@media (max-width: 1099px) {
+  .topbar { padding-block: 14px; gap: 9px; }
+  .topbar .pill { padding: 9px 12px; font-size: 13px; }
+  .brand strong { font-size: 18px; }
+  .brand span { font-size: 8px; letter-spacing: .13em; }
+  .topbar .save-status { font-size: 11px; max-width: 120px; }
+}
+@media (max-width: 600px) {
+  .brand { display: none; }
+  .topbar .save-status { flex: 1; }
+  .theme-toggle { margin-left: auto; }
+}
 @media (max-width: 480px) {
-  .mill-panel { gap: 10px; }
-  .mill-btn { min-height: 32dvh; border-radius: 16px; gap: 10px; }
-  .mill-lamp { width: 24px; height: 24px; }
+  .topbar { gap: 6px; padding-block: calc(8px + env(safe-area-inset-top)) 8px; }
+  .topbar .pill { min-height: 44px; padding: 8px; gap: 5px; font-size: 11px; }
+  .topbar .pill .ico { width: 16px; height: 16px; }
+  .topbar .save-status { flex: 0 0 12px; justify-content: center; }
+  .save-status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  .save-status::before { width: 8px; height: 8px; }
+  .theme-toggle { width: 40px; height: 40px; padding: 3px; }
+  .theme-toggle .bulb { width: 32px; height: 32px; }
+  main { padding: 10px 12px 24px; }
+  .mill-panel { padding: 24px 12px 14px; gap: 18px 0; }
+  .mill-hint { font-size: 12px; padding: 7px 8px; align-items: flex-start; }
+  .shift-card { padding: 15px 14px 12px; }
+  .shift-person { grid-template-columns: 52px minmax(0, 1fr); gap: 12px; }
+  .shift-avatar { width: 52px; height: 60px; }
+  .shift-avatar .ico { width: 36px; height: 36px; }
+  .shift-person h2 { font-size: 20px; }
+  .shift-person p { font-size: 13px; }
+  .shift-person p.muted { font-size: 12px; }
+  .shift-block .shift-time { font-size: 12px; gap: 7px; padding: 10px; }
+  .shift-remaining { padding-left: 8px; margin-left: 0; }
+  .shift-time > .ico:last-child { display: none; }
+  .btn.shift-action { grid-template-columns: 42px minmax(0, 1fr) 16px; gap: 11px; padding: 14px; font-size: 18px; }
+  .action-ico { width: 42px; height: 42px; }
+  .shift-action .action-help { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mill-lamp, .mill-lamp::before { transition: none; }
+}
+/* На невысоком мониторе все три действия остаются в первом экране. */
+@media (min-width: 1100px) and (max-height: 950px) {
+  .topbar { padding-block: calc(14px + env(safe-area-inset-top)) 14px; }
+  .mill-panel { padding: 20px 20px 12px; gap: 14px 0; }
+  .mill-btn { min-height: 120px; }
+  .shift-card { padding: 14px 18px 12px; }
+  .shift-person { grid-template-columns: 64px minmax(0, 1fr); gap: 16px; }
+  .shift-avatar { width: 64px; height: 68px; }
+  .shift-person h2 { font-size: 22px; }
+  .shift-person p { font-size: 13px; }
+  .shift-block { gap: 10px; margin-top: 16px; }
+  .shift-block .shift-time { margin-top: 10px; padding-block: 8px; }
+  .btn.shift-action { min-height: 74px; padding: 11px 20px; }
+}
+
+/* Кнопка «Администратор» в шапке и связь с сервером точкой: текст статуса — только когда что-то не так */
+.topbar .pill.admin.is-on { border-color: var(--focus); }
+.save-status:not(.attention) .save-status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.topbar .save-status:not(.attention) { flex: 0 0 12px; justify-content: center; }
+@media (max-width: 600px) {
+  .topbar .pill.admin { padding-inline: 12px; }
+  .topbar .pill.admin .pill-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+}
+
+/* Раздел «Администратор» */
+main:has(.adm-card) { max-width: 1100px; }
+.adm-card { margin-top: 18px; padding: 18px 22px 20px; border-radius: 16px; background: var(--metal-card);
+  border: 1px solid var(--metal-card-edge); box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); }
+.adm-card > h2 { margin: 0 0 6px; font-size: 1.1em; }
+.adm-note { margin: 10px 0 0; font-size: 0.8em; }
+.adm-shift { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(120px, 180px) minmax(120px, 180px);
+  align-items: end; gap: 12px 16px; padding: 12px 0; border-bottom: 1px solid var(--metal-card-edge); }
+.adm-shift-name { display: flex; align-items: center; gap: 10px; align-self: center; }
+.adm-shift-name .muted { font-size: 0.8em; }
+.adm-field { display: grid; gap: 6px; margin: 0; min-width: 0; }
+.adm-field > span { font-size: 0.75em; color: var(--text-muted); }
+.adm-field input, .adm-field select { width: 100%; min-height: 52px; margin: 0; padding: 8px 12px; font-size: 0.9em; }
+.adm-field select { font: inherit; font-size: 0.9em; color: inherit; border-radius: 14px;
+  border: 2px solid var(--border-strong); background: var(--surface-2); }
+.adm-group { padding-top: 10px; }
+.adm-group + .adm-group { margin-top: 8px; border-top: 1px solid var(--metal-card-edge); }
+.adm-group-title { margin: 6px 0 4px; font-size: 0.9em; }
+.adm-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 210px auto; align-items: end; gap: 10px 12px;
+  padding: 10px 0; }
+.adm-card > .adm-row { grid-template-columns: minmax(0, 1fr) 210px auto; }
+.adm-del { min-height: 52px; margin: 0; padding: 8px 14px; font-size: 0.8em; }
+.btn.adm-add { width: auto; min-height: 48px; margin-top: 8px; padding: 8px 18px; font-size: 0.85em; }
+.adm-errors { margin-top: 16px; }
+.adm-errors .error-text { margin: 4px 0; }
+.adm-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.adm-actions .btn { flex: 1 1 220px; margin: 0; }
+@media (max-width: 760px) {
+  .adm-card { padding: 14px; }
+  .adm-shift { grid-template-columns: 1fr 1fr; }
+  .adm-shift-name { grid-column: 1 / -1; }
+  .adm-row, .adm-card > .adm-row { grid-template-columns: 1fr 1fr; padding: 12px 0; border-bottom: 1px dashed var(--metal-card-edge); }
+  .adm-row .adm-grow { grid-column: 1 / -1; }
+  .adm-card > .adm-row { grid-template-columns: 1fr; }
+  .adm-del { grid-column: 1 / -1; }
+  .adm-field input, .adm-field select { min-height: 48px; padding-inline: 10px; font-size: 0.8em; }
 }
