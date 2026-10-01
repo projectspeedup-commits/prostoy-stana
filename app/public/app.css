@@ -1138,3 +1138,13 @@ main:has(.adm-card) { max-width: 1100px; }
     --metal-edge: #9ba8b4; --metal-highlight: rgba(255, 255, 255, 0.95); --metal-shadow: rgba(35, 50, 66, 0.26);
     --metal-plate: #e2e8ee; --metal-ink: #18232e; --metal-muted: #46525e; --mill-gap: #5f6c78; }
 }
+/* Без серебряной рамки: клавиша во всю площадь кнопки (владелец, 01.10.2026).
+   Снизу 12 px под боковую стенку; подсветка горящей — кольцо по краю самой клавиши */
+.mill-lamp { background: none; box-shadow: none; border-radius: 16px; }
+.mill-lamp::before { inset: 0 0 12px 0; border-radius: 16px; }
+.mill-lamp::after { inset: -6px -6px 6px -6px; border-radius: 21px; transition: transform 110ms ease-out; }
+.mill-btn.is-on .mill-lamp::after { transform: translateY(5px); }
+@media (max-width: 480px) {
+  .mill-lamp, .mill-lamp::before { border-radius: 12px; }
+  .mill-lamp::after { border-radius: 17px; }
+}
