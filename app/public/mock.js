@@ -26,7 +26,8 @@ const refs = {
   ],
   demo: true,
 };
-const REFS_VERSION = "mock-4";
+// Версия справочника — по содержимому, как у сервера: иначе страница держит старый справочник в кэше
+const REFS_VERSION = "mock-" + [...JSON.stringify(refs)].reduce((h, ch) => (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0, 7).toString(16);
 
 const events = []; // журнал событий, как в базе сервера
 
