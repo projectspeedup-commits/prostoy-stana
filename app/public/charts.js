@@ -22,7 +22,7 @@ function text(x, y, s, attrs = {}) {
  * days: [{ day: "YYYY-MM-DD", workMin, downMin, noData }]
  */
 export function dayChart(days) {
-  const W = 720, H = 300;
+  const W = Math.max(280, Math.min(720, (globalThis.innerWidth || 800) - 64)), H = 300;
   const L = 44, R = 12, T = 16, B = 44;
   const plotW = W - L - R, plotH = H - T - B;
   const maxH = 24;
@@ -68,7 +68,8 @@ export function dayChart(days) {
  * rows: [{ name, minutes }]
  */
 export function donut(rows, centerTitle) {
-  const W = 480, H = 200, cx = 100, cy = 100, r = 80, w = 28;
+  const narrow = (globalThis.innerWidth || 800) <= 480;
+  const W = narrow ? 280 : 480, H = narrow ? 330 : 200, cx = narrow ? 140 : 100, cy = 100, r = 80, w = 28;
   const total = rows.reduce((s, r2) => s + r2.minutes, 0);
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart donut", role: "img", "aria-label": rows.map((r2) => r2.name).join(", ") });
   if (!total) return svg;
@@ -90,10 +91,10 @@ export function donut(rows, centerTitle) {
       }));
     }
     // Легенда справа
-    const ly = 24 + i * 24;
+    const ly = (narrow ? 220 : 24) + i * 24;
     if (ly < H - 8) {
-      svg.append(el("rect", { x: 200, y: ly - 11, width: 14, height: 14, rx: 3, class: cls }));
-      svg.append(text(220, ly, `${row.name} ${Math.round(frac * 100)}%`, { class: "legend" }));
+      svg.append(el("rect", { x: narrow ? 18 : 200, y: ly - 11, width: 14, height: 14, rx: 3, class: cls }));
+      svg.append(text(narrow ? 40 : 220, ly, `${row.name} ${Math.round(frac * 100)}%`, { class: "legend" }));
     }
     a0 = a1;
   });

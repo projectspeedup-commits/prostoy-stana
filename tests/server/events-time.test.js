@@ -16,7 +16,11 @@ function fixture(t) {
   t.after(() => db.close());
   const store = createEventStore(db);
   return {
-    save: (...events) => store.save(events, NOW, "test"),
+    save: (...events) => {
+      const r = store.save(events, NOW, "test");
+      // Здесь проверяем исход/код; содержимое конфликта проверяется в round2/data.test.js.
+      return { ...r, rejected: r.rejected.map(({ conflict, ...entry }) => entry) };
+    },
     state: () => store.state(NOW, refs),
   };
 }

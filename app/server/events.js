@@ -1,4 +1,4 @@
-import { buildDowntimes, DEFAULT_SCHEDULE, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeDay, toMs } from "../core/core.js";
+import { buildDowntimes, DEFAULT_SCHEDULE, eventConflict, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeShift, toMs } from "../core/core.js";
 
 import { periodRange } from "../core/stats.js";
 
@@ -55,7 +55,10 @@ export function createEventStore(db) {
             const built = buildDowntimes(accepted, receivedMs);
             rejected.push({ id: event.id, error: timeError, downtimeId: built.open.downtimeId,
               startMs: Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs)) });
-          } else reject(timeError);
+          } else {
+            const conflict = eventConflict(accepted, event, receivedMs);
+            rejected.push({ id: event.id, error: timeError, ...(conflict ? { conflict } : {}) });
+          }
           continue;
         }
         const stored = { ...event, device };
@@ -88,7 +91,7 @@ export function createEventStore(db) {
     const { shift, crew, closed } = shiftStatus(events, nowMs, refs.settings.schedule);
     const ping = db.prepare("SELECT 1 FROM pings WHERE server_at >= ? AND server_at < ? LIMIT 1")
       .get(new Date(shift.startMs).toISOString(), new Date(shift.endMs).toISOString());
-    const segments = periodParts(built.segments, shift.startMs, Math.min(shift.endMs, nowMs), refs);
+    const segments = periodParts(built.segments, shift.startMs, Math.min(shift.endMs, nowMs), refs, nowMs);
     const openSegments = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
     const openStartMs = built.open ? Math.min(...openSegments.map((s) => s.startMs)) : null;
     const dayRange = periodRange("day", nowMs, refs.settings.schedule);
@@ -96,7 +99,7 @@ export function createEventStore(db) {
       fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * MINUTE,
       segments: built.segments.map((segment) => ({
         ...segment, startMs: Math.max(segment.startMs, dayRange.fromMs),
-        endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * MINUTE),
+        endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * MINUTE, nowMs),
       })).filter((segment) => segment.endMs > segment.startMs),
     };
     return {
@@ -112,7 +115,7 @@ export function createEventStore(db) {
       crew,
       segments,
       day,
-      summary: summarizeDay(segments, [shift], { [shift.shiftNo]: events.length > 0 || !!ping }, { nowMs, dataFromMs: firstEventMs(events) ?? nowMs }),
+      summary: { shift: summarizeShift(built.segments, shift, refs, nowMs, firstEventMs(events) ?? (ping ? nowMs : null)) },
       closed,
       dataFromMs: firstEventMs(events),
       runningSinceMs: lastRunningMs(events, nowMs),

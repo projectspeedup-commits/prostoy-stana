@@ -298,6 +298,7 @@ try {
   // Уход с экрана пульта закрывает панель
   await chrome.clickText(".shift-action", "Простои за смену");
   await chrome.waitFor("!document.querySelector('.rep-btn')", { what: "экран смены без пульта" });
+  await sleep(450); // защита от двойного касания гасит нажатия в первые 400 мс после смены экрана
   await E("document.querySelector('#demo').click()");
   await waitButton("возврат на пульт");
   check(await E("document.querySelector('.rep-panel').hidden"), "после ухода с экрана панель не появляется сама");
