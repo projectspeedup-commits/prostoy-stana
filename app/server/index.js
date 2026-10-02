@@ -14,7 +14,9 @@ import { settingsFromRefs, validateSettings } from "../core/settings.js";
 import { computeStats, periodRange } from "../core/stats.js";
 import { createReportHandler } from "./report.js";
 import { createMailer, mailConfigFromEnv } from "./mailer.js";
-import { createMailService } from "./mail-service.js";
+import { createMailService, envRecipients } from "./mail-service.js";
+import { createMailSettingsStore, versionOf } from "./mail-store.js";
+import { validateMailSettings } from "../core/mail-settings.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -112,12 +114,14 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   const eventStore = createEventStore(db);
   const reportHandler = createReportHandler({ db, readRefs, clock });
   // Рассылка сводки смены: по умолчанию выключена (в тестах), боевой запуск передаёт mailConfig из окружения
-  const mailCfg = mailConfig ?? { enabled: false };
+  const mailCfg = mailConfig ?? { enabled: false, to: [] };
+  const mailStore = createMailSettingsStore(dataDir);
   const readAllEvents = db.prepare("SELECT body FROM events ORDER BY at_ms, rowid");
   const mail = createMailService({
     mailer: mailCfg.enabled ? createMailer(mailCfg, mailTransportFactory ? { transportFactory: mailTransportFactory } : undefined) : null,
     config: mailCfg,
     readEvents: () => readAllEvents.all().map((row) => JSON.parse(row.body)),
+    readMail: () => mailStore.read(),
     readRefs,
     clock,
     dataDir,
@@ -226,6 +230,8 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isAdminGet = pathname === "/api/admin/settings" && req.method === "GET";
     const isAdminPut = pathname === "/api/admin/settings" && req.method === "PUT";
     const isMailTest = pathname === "/api/mail/test" && req.method === "POST";
+    const isMailGet = pathname === "/api/admin/mail" && req.method === "GET";
+    const isMailPut = pathname === "/api/admin/mail" && req.method === "PUT";
 
     const address = clientAddress(req);
     const ms = clock().getTime();
@@ -245,14 +251,23 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     }
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
     if (pathname === "/api/report.xlsx" && req.method === "GET") return reportHandler(res, searchParams);
-    if (isMailTest) {
-      if (!canAdmin(device)) {
-        return send(res, 403, { ok: false, error: "forbidden", message: "Проверка рассылки открывается только ключом владельца." });
-      }
-      const result = await mail.sendTest();
-      return send(res, result.ok ? 200 : result.error === "mail_disabled" ? 409 : 502, result);
+    if ((isMailTest || isMailGet || isMailPut) && !canAdmin(device)) {
+      return send(res, 403, { ok: false, error: "forbidden", message: "Рассылка на почту открывается только ключом владельца." });
     }
-    if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
+    const mailView = () => {
+      const mailSettings = mailStore.read();
+      return { ok: true, mail: mailSettings, mailVersion: versionOf(mailSettings), smtpConfigured: Boolean(mailCfg.enabled), envFallback: mailSettings.recipients.length ? 0 : envRecipients(mailCfg).length };
+    };
+    if (isMailGet) return send(res, 200, mailView());
+    if (isMailTest) {
+      let body = {};
+      try { const raw = await readBody(req); body = raw.trim() ? JSON.parse(raw) : {}; }
+      catch (e) { return send(res, e && e.code === "too_large" ? 413 : 400, { ok: false, error: "bad_request", message: "Некорректное тело запроса." }); }
+      if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+      const result = await mail.sendTest({ email: body.email, what: body.what });
+      return send(res, result.ok ? 200 : result.error === "mail_disabled" ? 409 : result.error === "bad_request" ? 400 : 502, result);
+    }
+    if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut && !isMailPut) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
     if (isRefs) return send(res, 200, { ok: true, ...readRefs(), canAdmin: canAdmin(device) });
@@ -290,6 +305,18 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
         ok: false, error: "bad_request",
         ...(isAdminPut ? { message: tooLarge ? "Тело запроса не должно превышать 64 КБ." : "Некорректный JSON в теле запроса." } : {}),
       });
+    }
+    if (isMailPut) {
+      try {
+        if (data?.mailVersion !== versionOf(mailStore.read())) {
+          return send(res, 409, { ok: false, error: "conflict", message: "Рассылку уже изменили на другом устройстве. Обновите экран и повторите." });
+        }
+        mailStore.write(validateMailSettings(data?.mail));
+        return send(res, 200, mailView());
+      } catch (e) {
+        if (e.code !== "bad_request") throw e;
+        return send(res, 400, { ok: false, error: "bad_request", message: e.message });
+      }
     }
     if (isAdminPut) {
       try { return send(res, 200, await updateSettings(data?.settings, data?.refsVersion)); }

@@ -1,137 +1,136 @@
-// Рассылка сводки смены: выбор смены, планировщик, отметка «уже отправлено», повторы при ошибке.
-import fs from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
-import { shiftOf } from "../core/core.js";
+// Рассылка сводок: получатели и расписание берутся из настроек владельца, раз в минуту проверяется,
+// какие отправки наступили. Отметка «отправлено» стоит на уровне (получатель, время, вид, момент),
+// поэтому после перезапуска и правки расписания нет ни дублей, ни пропусков.
 import { buildDigest } from "./digest.js";
+import { createMailSentStore, readLegacyMailMark } from "./mail-store.js";
+import { dueSends, periodFor, sendKey, lastFinishedShift, MAX_LATE_MS } from "../core/mail-schedule.js";
+import { normalizeEmail } from "../core/mail-settings.js";
 
-export const SEND_DELAY_MS = 5 * 60_000; // письмо через 5 минут после конца смены (08:05 и 20:05)
-export const MAX_LATE_MS = 2 * 3_600_000; // при запуске досылаем, только если с конца смены прошло меньше 2 часов
+export { lastFinishedShift, MAX_LATE_MS };
 export const RETRY_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 3;
-const STATE_FILE = "mail-state.json";
+export const TICK_MS = 60_000;
+export const KEEP_MARKS_MS = 30 * 24 * 3_600_000;
+const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
 
-/**
- * Последняя смена, закончившаяся не позже nowMs - delayMs. Границы смен берёт shiftOf из расписания (МСК),
- * часовой пояс процесса не участвует.
- */
-export function lastFinishedShift(nowMs, schedule, delayMs = 0) {
-  const current = shiftOf(nowMs, schedule);
-  let prev = shiftOf(current.startMs - 1, schedule);
-  while (prev.endMs + delayMs > nowMs) prev = shiftOf(prev.startMs - 1, schedule);
-  return prev;
-}
-
-/** Ближайший момент отправки строго позже nowMs: граница смены + задержка. */
-export function nextDueMs(nowMs, schedule, delayMs = SEND_DELAY_MS) {
-  const current = shiftOf(nowMs, schedule);
-  const start = current.startMs + delayMs;
-  return start > nowMs ? start : current.endMs + delayMs;
-}
-
-/** Отметка об отправленной смене в файле каталога данных (в памяти, если база :memory:). */
-export function createMailState(dataDir) {
-  const file = !dataDir || dataDir === ":memory:" ? null : path.join(dataDir, STATE_FILE);
-  let memory = null;
-  return {
-    file,
-    read() {
-      if (!file) return memory;
-      try {
-        const data = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
-        return data && Number.isFinite(data.lastSentEndMs) ? data : null;
-      } catch (e) {
-        if (e.code !== "ENOENT") console.error("mail-state.json не прочитан:", e.code || e.name);
-        return null;
-      }
-    },
-    write(data) {
-      if (!file) { memory = data; return; }
-      const tmp = `${file}.${process.pid}-${crypto.randomBytes(4).toString("hex")}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
-      try { fs.renameSync(tmp, file); } finally { fs.rmSync(tmp, { force: true }); }
-    },
-  };
+/** Запасной список из MAIL_TO: после каждой смены, в 08:05 и 20:05. Используется, пока в настройках нет получателей. */
+export function envRecipients(config) {
+  return (config?.to || []).map((email) => ({
+    id: `env-${email}`, name: email, email, enabled: true, source: "env",
+    sends: ["08:05", "20:05"].map((time) => ({ time, what: "shift", days: ALL_DAYS })),
+  }));
 }
 
 /**
- * Служба рассылки.
- * mailer — { send } или null (рассылка выключена); readEvents() -> события; readRefs() -> { refs };
- * clock() -> Date; timers — подмена setTimeout/clearTimeout в тестах.
+ * mailer — { send } или null (SMTP не настроен); readMail() -> { recipients }; readEvents(); readRefs();
+ * clock() -> Date; timers — подмена setTimeout/clearTimeout для тестов.
  */
 export function createMailService({
-  mailer, config, readEvents, readRefs, clock, dataDir, log = console,
+  mailer, config, readMail = () => ({ recipients: [] }), readEvents, readRefs, clock, dataDir, log = console,
   timers = { setTimeout, clearTimeout }, retryMs = RETRY_MS, maxAttempts = MAX_ATTEMPTS,
 }) {
   const enabled = Boolean(mailer && config?.enabled);
-  const state = createMailState(dataDir);
-  const attempts = new Map(); // endMs смены -> число неудачных попыток
+  const store = createMailSentStore(dataDir);
+  const attempts = new Map(); // markKey -> { n, nextAt }
   let timer = null;
-  let retryTimer = null;
   let busy = null;
   let stopped = false;
-
   const nowMs = () => clock().getTime();
-  const build = (shift) => buildDigest({
-    events: readEvents(), refs: readRefs().refs, nowMs: nowMs(), shift, publicUrl: config?.publicUrl,
-  });
-  const deliver = async (digest) => mailer.send({
-    subject: digest.subject, html: digest.html, text: digest.text, attachments: [digest.attachment],
+
+  const recipients = () => {
+    const saved = readMail().recipients;
+    return saved.length ? saved : envRecipients(config);
+  };
+
+  const build = (period) => buildDigest({ events: readEvents(), refs: readRefs().refs, nowMs: nowMs(), period, publicUrl: config?.publicUrl });
+  const deliver = (digest, to) => mailer.send({
+    subject: digest.subject, html: digest.html, text: digest.text, attachments: [digest.attachment], to,
   });
 
-  /** Письмо о последней закончившейся смене. Состояние не трогает. */
-  async function buildLast() {
-    const { refs } = readRefs();
-    return build(lastFinishedShift(nowMs(), refs.settings.schedule, 0));
-  }
-
-  /** Ручная проверка: отправить сейчас, результат или ошибка SMTP. Отметку не ставит. */
-  async function sendTest() {
-    if (!enabled) return { ok: false, error: "mail_disabled", message: "Рассылка выключена: не заданы SMTP_USER, SMTP_PASS или MAIL_TO." };
+  /** Письмо для проверки: последний закончившийся период, адрес только этот (или MAIL_TO), отметок нет. */
+  async function sendTest({ email, what = "shift" } = {}) {
+    if (!enabled) return { ok: false, error: "mail_disabled", message: "Отправка почты не настроена на сервере (нет SMTP_USER или SMTP_PASS)." };
+    let to;
+    if (email !== undefined && email !== null && email !== "") {
+      const normal = normalizeEmail(email);
+      if (!normal) return { ok: false, error: "bad_request", message: "Укажите настоящий адрес электронной почты." };
+      to = [normal];
+    } else {
+      to = config.to;
+      if (!to.length) return { ok: false, error: "bad_request", message: "Не указан адрес: передайте email или задайте MAIL_TO." };
+    }
+    if (!["shift", "day", "week"].includes(what)) return { ok: false, error: "bad_request", message: "Вид сводки: shift, day или week." };
     try {
-      const digest = await buildLast();
-      const info = await deliver(digest);
-      return { ok: true, subject: digest.subject, to: config.to, messageId: info.messageId, accepted: info.accepted };
+      const { refs } = readRefs();
+      const digest = build(periodFor(what, nowMs(), refs.settings.schedule));
+      const info = await deliver(digest, to);
+      return { ok: true, subject: digest.subject, to, messageId: info.messageId, accepted: info.accepted };
     } catch (e) {
       return { ok: false, error: "smtp", message: String(e?.message || e) };
     }
   }
 
-  /** Отправить, если последняя закончившаяся смена ещё не отправлена. */
+  /** Один проход планировщика. */
   async function runDue() {
-    if (!enabled) return { status: "disabled" };
+    if (!enabled) return { status: "disabled", sent: [], failed: [] };
     const { refs } = readRefs();
+    const schedule = refs.settings.schedule;
     const now = nowMs();
-    const shift = lastFinishedShift(now, refs.settings.schedule, SEND_DELAY_MS);
-    const sent = state.read();
-    if (sent && sent.lastSentEndMs >= shift.endMs) return { status: "already_sent", shift };
-    if (now - shift.endMs >= MAX_LATE_MS) return { status: "too_late", shift };
-    if ((attempts.get(shift.endMs) || 0) >= maxAttempts) return { status: "gave_up", shift };
-    try {
-      const digest = build(shift);
-      const info = await deliver(digest);
-      try {
-        state.write({ version: 1, lastSentEndMs: shift.endMs, lastSentAt: new Date(now).toISOString(), shift: `${shift.day}|${shift.shiftNo}`, messageId: info.messageId });
-      } catch (e) {
-        log.error(`Рассылка: письмо отправлено, но отметку записать не удалось (${e.code || e.name}); возможен повтор после перезапуска.`);
-      }
-      attempts.delete(shift.endMs);
-      log.log(`Рассылка: отправлено «${digest.subject}» -> ${config.to.length} адр.`);
-      return { status: "sent", shift, subject: digest.subject };
-    } catch (e) {
-      const n = (attempts.get(shift.endMs) || 0) + 1;
-      attempts.set(shift.endMs, n);
-      const more = n < maxAttempts;
-      log.error(`Рассылка: ошибка отправки (попытка ${n} из ${maxAttempts}): ${e?.message || e}${more ? `; повтор через ${Math.round(retryMs / 60_000)} мин` : "; больше не повторяем"}`);
-      if (more && !stopped) {
-        retryTimer = timers.setTimeout(() => { retryTimer = null; void tick(); }, retryMs);
-        retryTimer?.unref?.();
-      }
-      return { status: "failed", shift, attempt: n, error: String(e?.message || e) };
+    const list = recipients();
+    const state = store.read();
+    let dirty = false;
+
+    // Новые отправки запоминаем «с этого момента»: добавленный в 09:00 получатель не получит письмо за 08:05.
+    // Отправки из MAIL_TO были всегда (0), поэтому догоняются после простоя.
+    const keys = new Set();
+    for (const r of list) for (const s of r.sends) {
+      const key = sendKey(r, s);
+      keys.add(key);
+      if (state.firstSeen[key] === undefined) { state.firstSeen[key] = r.source === "env" ? 0 : now; dirty = true; }
     }
+    for (const key of Object.keys(state.firstSeen)) if (!keys.has(key)) { delete state.firstSeen[key]; dirty = true; }
+    for (const [mark, at] of Object.entries(state.sent)) {
+      if (now - Number(mark.slice(mark.lastIndexOf("|") + 1)) > KEEP_MARKS_MS || now - at > KEEP_MARKS_MS) { delete state.sent[mark]; dirty = true; }
+    }
+
+    const legacyEndMs = readLegacyMailMark(dataDir);
+    const due = dueSends(list, now, schedule, MAX_LATE_MS).filter((d) => {
+      if (state.sent[d.markKey] !== undefined) return false;
+      if (d.occMs < state.firstSeen[d.key]) return false;
+      if (d.recipient.source === "env" && legacyEndMs !== null && d.period.toMs <= legacyEndMs) return false;
+      const a = attempts.get(d.markKey);
+      return !a || (a.n < maxAttempts && a.nextAt <= now);
+    }).sort((x, y) => x.occMs - y.occMs);
+
+    const sent = [];
+    const failed = [];
+    const digests = new Map();
+    for (const d of due) {
+      const groupKey = `${d.send.what}|${d.occMs}`;
+      try {
+        if (!digests.has(groupKey)) digests.set(groupKey, build(d.period));
+        const digest = digests.get(groupKey);
+        const info = await deliver(digest, [d.recipient.email]);
+        state.sent[d.markKey] = now;
+        store.write(state); // сразу: падение на следующем письме не должно стереть отметку
+        dirty = false;
+        attempts.delete(d.markKey);
+        sent.push({ markKey: d.markKey, email: d.recipient.email, subject: digest.subject, messageId: info.messageId });
+        log.log(`Рассылка: отправлено «${digest.subject}» -> ${d.recipient.email}`);
+      } catch (e) {
+        const n = (attempts.get(d.markKey)?.n || 0) + 1;
+        attempts.set(d.markKey, { n, nextAt: now + retryMs });
+        failed.push({ markKey: d.markKey, email: d.recipient.email, attempt: n, error: String(e?.message || e) });
+        log.error(`Рассылка: ошибка отправки на ${d.recipient.email} (попытка ${n} из ${maxAttempts}): ${e?.message || e}${n < maxAttempts ? `; повтор через ${Math.round(retryMs / 60_000)} мин` : "; больше не повторяем"}`);
+      }
+    }
+    if (dirty) {
+      try { store.write(state); } catch (e) { log.error("Рассылка: отметки не записаны:", e.code || e.name); }
+    }
+    return { status: "ok", sent, failed, due: due.length };
   }
 
-  /** Один проход; параллельные вызовы сливаются в один. */
+  /** Параллельные вызовы сливаются в один проход. */
   function tick() {
     busy ??= runDue().finally(() => { busy = null; });
     return busy;
@@ -140,8 +139,7 @@ export function createMailService({
   function arm() {
     if (stopped) return;
     timers.clearTimeout(timer);
-    const { refs } = readRefs();
-    const wait = Math.max(1000, nextDueMs(nowMs(), refs.settings.schedule) - nowMs());
+    const wait = TICK_MS - (nowMs() % TICK_MS) + 1000; // ближайшая минута плюс секунда
     timer = timers.setTimeout(async () => {
       try { await tick(); } catch (e) { log.error("Рассылка: сбой планировщика:", e?.message || e); }
       arm();
@@ -151,7 +149,7 @@ export function createMailService({
 
   function start() {
     if (!enabled) { log.log("рассылка выключена"); return; }
-    log.log(`Рассылка включена: ${config.host}:${config.port}, получателей: ${config.to.length}`);
+    log.log(`Рассылка включена: ${config.host}:${config.port}`);
     arm();
     tick().catch((e) => log.error("Рассылка: сбой при запуске:", e?.message || e));
   }
@@ -159,8 +157,7 @@ export function createMailService({
   function stop() {
     stopped = true;
     timers.clearTimeout(timer);
-    timers.clearTimeout(retryTimer);
   }
 
-  return { enabled, start, stop, tick, sendTest, buildLast, state };
+  return { enabled, start, stop, tick, sendTest, store };
 }

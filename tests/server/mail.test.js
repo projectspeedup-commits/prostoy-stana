@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createApp } from "../../app/server/index.js";
 import { mailConfigFromEnv, createMailer } from "../../app/server/mailer.js";
 import { buildDigest, hoursMinutes } from "../../app/server/digest.js";
-import { createMailService, lastFinishedShift, nextDueMs, MAX_LATE_MS, RETRY_MS } from "../../app/server/mail-service.js";
+import { createMailService, lastFinishedShift, MAX_LATE_MS, RETRY_MS } from "../../app/server/mail-service.js";
 import { computeStats } from "../../app/core/stats.js";
 import { durationWords } from "../../app/core/report.js";
 import { DEFAULT_SCHEDULE, shiftOf } from "../../app/core/core.js";
@@ -38,10 +38,11 @@ test("настройки: по умолчанию Яндекс 465/SSL, MAIL_FRO
   assert.equal(d.publicUrl, "https://p/");
 });
 
-test("настройки: пустые SMTP_USER, SMTP_PASS или MAIL_TO выключают рассылку", () => {
+test("настройки: пустые SMTP_USER или SMTP_PASS выключают отправку, MAIL_TO не обязателен", () => {
   const full = { SMTP_USER: "u", SMTP_PASS: "p", MAIL_TO: "a@x.ru" };
   assert.equal(mailConfigFromEnv(full).enabled, true);
-  for (const key of Object.keys(full)) assert.equal(mailConfigFromEnv({ ...full, [key]: "  " }).enabled, false, key);
+  for (const key of ["SMTP_USER", "SMTP_PASS"]) assert.equal(mailConfigFromEnv({ ...full, [key]: "  " }).enabled, false, key);
+  assert.equal(mailConfigFromEnv({ ...full, MAIL_TO: "" }).enabled, true);
   assert.equal(mailConfigFromEnv({}).enabled, false);
 });
 
@@ -63,13 +64,6 @@ test("последняя закончившаяся смена: границы 0
   assert.equal(lastFinishedShift(msk("2026-10-02", "07:59:59"), DEFAULT_SCHEDULE, 0).shiftNo, 1);
 });
 
-test("следующая отправка: 08:05 и 20:05 по Москве", () => {
-  assert.equal(nextDueMs(msk("2026-10-02", "03:00:00"), DEFAULT_SCHEDULE), msk("2026-10-02", "08:05:00"));
-  assert.equal(nextDueMs(msk("2026-10-02", "08:05:00"), DEFAULT_SCHEDULE), msk("2026-10-02", "20:05:00"));
-  assert.equal(nextDueMs(msk("2026-10-02", "08:02:00"), DEFAULT_SCHEDULE), msk("2026-10-02", "08:05:00"));
-  assert.equal(nextDueMs(msk("2026-10-02", "21:00:00"), DEFAULT_SCHEDULE), msk("2026-10-03", "08:05:00"));
-});
-
 test("выбор смены не зависит от часового пояса процесса", () => {
   const saved = process.env.TZ;
   try {
@@ -78,7 +72,6 @@ test("выбор смены не зависит от часового пояса
       assert.equal(pick(msk("2026-10-02", "08:04:59")), "2026-10-01|1", tz);
       assert.equal(pick(msk("2026-10-02", "08:05:00")), "2026-10-01|2", tz);
       assert.equal(pick(msk("2026-10-02", "20:05:00")), "2026-10-02|1", tz);
-      assert.equal(nextDueMs(msk("2026-10-02", "09:00:00"), DEFAULT_SCHEDULE), msk("2026-10-02", "20:05:00"), tz);
       const digest = buildDigest({ events: fx.events, refs, nowMs: fx.now, shift: shiftOf(msk("2026-10-01", "10:00:00"), DEFAULT_SCHEDULE) });
       assert.match(digest.text, /08:00–20:00 \(МСК\)/, tz);
       assert.match(digest.text, /09:00–09:45/, tz);
@@ -151,7 +144,7 @@ test("письмо: смена без простоев", () => {
   assert.match(d.text, /простоев не было/);
 });
 
-// ---- служба: защита от повтора, повторы при ошибке, выключенная рассылка
+// ---- служба (подробные сценарии расписания — в mail-schedule.test.js)
 
 function mockMailer({ failTimes = 0 } = {}) {
   const sent = [];
@@ -162,7 +155,7 @@ function mockMailer({ failTimes = 0 } = {}) {
       async send(message) {
         if (failures > 0) { failures--; throw new Error("535 5.7.8 Authentication failed"); }
         sent.push(message);
-        return { messageId: `<m${sent.length}@test>`, accepted: CONFIG.to, rejected: [] };
+        return { messageId: `<m${sent.length}@test>`, accepted: message.to, rejected: [] };
       },
     },
   };
@@ -180,102 +173,99 @@ function fakeTimers() {
   };
 }
 
-function service({ now, dataDir, mailer, config = CONFIG, timers, retryMs }) {
-  const clockRef = { now };
+function service({ now, dataDir = tmp(), mailer, config = CONFIG, mail = { recipients: [] }, timers }) {
+  const clockRef = { now, mail };
   const svc = createMailService({
-    mailer, config, readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(clockRef.now),
-    dataDir, log: quiet, ...(timers ? { timers } : {}), ...(retryMs ? { retryMs } : {}),
+    mailer, config, readMail: () => clockRef.mail, readEvents: () => fx.events, readRefs: () => ({ refs }),
+    clock: () => new Date(clockRef.now), dataDir, log: quiet, ...(timers ? { timers } : {}),
   });
-  return { svc, clockRef };
+  return { svc, clockRef, dataDir };
 }
 
-test("служба: письмо уходит один раз, после перезапуска не повторяется", async () => {
-  const dir = tmp();
-  const now = T("2026-10-02", "08:06:00"); // с конца ночной смены 6 минут
+function oneRecipient(extra = {}) {
+  return { recipients: [{ id: "r1", name: "Иванов", email: "ivanov@example.test", enabled: true, sends: [{ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }], ...extra }] };
+}
+
+test("совместимость с MAIL_TO: без получателей в настройках смена уходит в 08:05 и 20:05 на адреса из окружения", async () => {
   const m = mockMailer();
-  const { svc } = service({ now, dataDir: dir, mailer: m.mailer });
+  const { svc, clockRef, dataDir } = service({ now: T("2026-10-02", "08:06:00"), mailer: m.mailer });
   const first = await svc.tick();
-  assert.equal(first.status, "sent");
-  assert.equal(first.shift.shiftNo, 2);
-  assert.equal(m.sent.length, 1);
-  assert.deepEqual(m.sent[0].attachments.map((a) => a.filename).length, 1);
+  assert.equal(first.sent.length, 2, "по письму на каждый адрес MAIL_TO");
+  assert.deepEqual(m.sent.map((x) => x.to), [["a@example.test"], ["b@example.test"]]);
   assert.match(m.sent[0].subject, /^Стан: ночная смена 01\.10\.2026 — простой /);
-  assert.equal((await svc.tick()).status, "already_sent");
-  // перезапуск сервера: новая служба читает отметку из файла
-  const again = service({ now: now + 30 * MIN, dataDir: dir, mailer: m.mailer });
-  assert.equal((await again.svc.tick()).status, "already_sent");
-  assert.equal(m.sent.length, 1);
-  const mark = JSON.parse(fs.readFileSync(path.join(dir, "mail-state.json"), "utf8"));
-  assert.equal(mark.lastSentEndMs, shiftOf(T("2026-10-01", "21:00:00"), DEFAULT_SCHEDULE).endMs);
-  // следующая смена — отправляется
-  again.clockRef.now = T("2026-10-02", "20:05:00");
-  assert.equal((await again.svc.tick()).status, "sent");
+  assert.equal(m.sent[0].attachments.length, 1);
+  assert.equal((await svc.tick()).sent.length, 0);
+  // перезапуск: новая служба на том же каталоге
+  const again = service({ now: clockRef.now + 30 * MIN, dataDir, mailer: m.mailer });
+  assert.equal((await again.svc.tick()).sent.length, 0);
   assert.equal(m.sent.length, 2);
-  assert.match(m.sent[1].subject, /дневная смена 02\.10\.2026/);
+  again.clockRef.now = T("2026-10-02", "20:05:00");
+  assert.equal((await again.svc.tick()).sent.length, 2);
+  assert.match(m.sent[2].subject, /дневная смена 02\.10\.2026/);
 });
 
-test("служба: при запуске шлёт, если с конца смены меньше 2 часов, и не шлёт, если больше", async () => {
-  const end = shiftOf(T("2026-10-01", "21:00:00"), DEFAULT_SCHEDULE).endMs; // 02.10 08:00
+test("совместимость: старая отметка mail-state.json не даёт повторить письмо после обновления", async () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "mail-state.json"), JSON.stringify({ lastSentEndMs: msk("2026-10-02", "08:00:00") }));
+  const m = mockMailer();
+  const { svc } = service({ now: msk("2026-10-02", "08:30:00"), dataDir: dir, mailer: m.mailer });
+  assert.equal((await svc.tick()).sent.length, 0);
+});
+
+test("служба: при запуске догоняет в пределах 2 часов и не догоняет позже", async () => {
   const late = mockMailer();
-  const s1 = service({ now: end + MAX_LATE_MS, dataDir: tmp(), mailer: late.mailer });
-  assert.equal((await s1.svc.tick()).status, "too_late");
-  assert.equal(late.sent.length, 0);
+  const s1 = service({ now: msk("2026-10-02", "08:05:00") + MAX_LATE_MS, mailer: late.mailer });
+  assert.equal((await s1.svc.tick()).sent.length, 0);
   const ok = mockMailer();
-  const s2 = service({ now: end + MAX_LATE_MS - MIN, dataDir: tmp(), mailer: ok.mailer });
-  assert.equal((await s2.svc.tick()).status, "sent");
-  assert.equal(ok.sent.length, 1);
+  const s2 = service({ now: msk("2026-10-02", "08:05:00") + MAX_LATE_MS - MIN, mailer: ok.mailer });
+  assert.equal((await s2.svc.tick()).sent.length, 2);
 });
 
-test("служба: ошибка отправки не роняет, повтор через 10 минут, не более 3 попыток", async () => {
-  const t = fakeTimers();
+test("служба: ошибка не роняет, повтор через 10 минут, не более 3 попыток", async () => {
   const m = mockMailer({ failTimes: 99 });
-  const { svc } = service({ now: T("2026-10-02", "08:05:00"), dataDir: tmp(), mailer: m.mailer, timers: t.timers });
-  const retries = () => t.list.filter((x) => x.ms === RETRY_MS);
-  assert.equal((await svc.tick()).status, "failed");
-  assert.equal(retries().length, 1, "после 1-й неудачи планируется повтор через 10 минут");
-  assert.equal((await svc.tick()).status, "failed");
-  assert.equal(retries().length, 2, "после 2-й — ещё один");
-  assert.equal((await svc.tick()).status, "failed");
-  assert.equal(retries().length, 2, "после 3-й повторов больше нет");
-  assert.equal((await svc.tick()).status, "gave_up");
+  const { svc, clockRef } = service({ now: msk("2026-10-02", "08:05:00"), mailer: m.mailer, mail: oneRecipient() });
+  assert.equal((await svc.tick()).failed.length, 1);
+  assert.equal((await svc.tick()).due, 0, "раньше чем через 10 минут повтора нет");
+  clockRef.now += RETRY_MS;
+  assert.equal((await svc.tick()).failed[0].attempt, 2);
+  clockRef.now += RETRY_MS;
+  assert.equal((await svc.tick()).failed[0].attempt, 3);
+  clockRef.now += RETRY_MS;
+  assert.equal((await svc.tick()).due, 0, "после третьей попытки больше не пробуем");
   assert.equal(m.sent.length, 0);
 });
 
 test("служба: после неудачи повтор доставляет письмо и ставит отметку", async () => {
-  const t = fakeTimers();
   const m = mockMailer({ failTimes: 1 });
-  const dir = tmp();
-  const { svc, clockRef } = service({ now: T("2026-10-02", "08:05:00"), dataDir: dir, mailer: m.mailer, timers: t.timers });
-  assert.equal((await svc.tick()).status, "failed");
-  assert.equal(fs.existsSync(path.join(dir, "mail-state.json")), false, "отметки нет, пока не доставлено");
+  const { svc, clockRef, dataDir } = service({ now: msk("2026-10-02", "08:05:00"), mailer: m.mailer, mail: oneRecipient() });
+  assert.equal((await svc.tick()).failed.length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dataDir, "mail-sent.json"), "utf8")).sent, {});
   clockRef.now += RETRY_MS;
-  assert.equal((await svc.tick()).status, "sent");
-  assert.equal(m.sent.length, 1);
-  assert.equal(fs.existsSync(path.join(dir, "mail-state.json")), true);
+  assert.equal((await svc.tick()).sent.length, 1);
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(dataDir, "mail-sent.json"), "utf8")).sent).length, 1);
 });
 
-test("служба: planned-таймер ставится на ближайшие 08:05 / 20:05", () => {
+test("служба: планировщик просыпается раз в минуту", () => {
   const t = fakeTimers();
   const m = mockMailer();
-  const logs = [];
-  const now = T("2026-10-02", "09:00:00");
-  const svc = createMailService({ mailer: m.mailer, config: CONFIG, readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(now), dataDir: tmp(), log: { log: (x) => logs.push(x), error() {} }, timers: t.timers });
+  const now = msk("2026-10-02", "09:00:20");
+  const svc = createMailService({ mailer: m.mailer, config: CONFIG, readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(now), dataDir: tmp(), log: quiet, timers: t.timers });
   svc.start();
-  assert.equal(t.active()[0].ms, msk("2026-10-02", "20:05:00") - now);
+  assert.equal(t.active()[0].ms, 41_000, "до следующей минуты плюс секунда");
   svc.stop();
   assert.equal(t.active().length, 0);
 });
 
-test("служба: выключенная рассылка ничего не шлёт и пишет одну строку", async () => {
+test("служба: SMTP не настроен — ничего не шлёт и пишет одну строку", async () => {
   const logs = [];
   const m = mockMailer();
   const t = fakeTimers();
-  const svc = createMailService({ mailer: null, config: { enabled: false }, readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(T("2026-10-02", "08:06:00")), dataDir: tmp(), log: { log: (x) => logs.push(x), error: (x) => logs.push(x) }, timers: t.timers });
+  const svc = createMailService({ mailer: null, config: { enabled: false, to: [] }, readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(T("2026-10-02", "08:06:00")), dataDir: tmp(), log: { log: (x) => logs.push(x), error: (x) => logs.push(x) }, timers: t.timers });
   svc.start();
   assert.deepEqual(logs, ["рассылка выключена"]);
   assert.equal(t.list.length, 0);
   assert.equal((await svc.tick()).status, "disabled");
-  assert.equal((await svc.sendTest()).error, "mail_disabled");
+  assert.equal((await svc.sendTest({})).error, "mail_disabled");
   assert.equal(m.sent.length, 0);
 });
 
@@ -329,7 +319,7 @@ test("POST /api/mail/test: владелец отправляет письмо о
     assert.equal(sent.length, 1);
     assert.match(sent[0].subject, /^Стан: ночная смена 01\.10\.2026 — простой 0 ч 0 мин$/);
     assert.equal(sent[0].attachments.length, 1);
-    assert.equal(app.mail.state.read(), null, "ручная проверка не ставит отметку отправки");
+    assert.deepEqual(app.mail.store.read().sent, {}, "ручная проверка не ставит отметку отправки");
   } finally { await app.close(); }
 });
 

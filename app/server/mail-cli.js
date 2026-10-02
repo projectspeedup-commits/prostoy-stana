@@ -1,5 +1,5 @@
 // Сборка письма по базе без отправки:
-//   node app/server/mail-cli.js --dry-run --out <папка> [--now 2026-10-02T09:00:00+03:00]
+//   node app/server/mail-cli.js --dry-run --out <папка> [--what shift|day|week] [--now 2026-10-02T09:00:00+03:00]
 // Данные берутся оттуда же, откуда у сервера: STAN_DATA_DIR (stan.db, settings.json), STAN_PEOPLE_FILE.
 // Сохраняет digest.html, digest.txt и Excel-вложение; в консоль пишет тему и имена файлов.
 import fs from "node:fs";
@@ -9,17 +9,18 @@ import { fileURLToPath } from "node:url";
 import { toMs } from "../core/core.js";
 import { createRefsReader } from "./people.js";
 import { createSettingsStore } from "./settings.js";
-import { lastFinishedShift } from "./mail-service.js";
+import { periodFor } from "../core/mail-schedule.js";
 import { buildDigest } from "./digest.js";
 import { mailConfigFromEnv } from "./mailer.js";
 
 function parseArgs(argv) {
-  const args = { dryRun: false, out: null, now: null };
+  const args = { dryRun: false, out: null, now: null, what: "shift" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") args.dryRun = true;
     else if (a === "--out") args.out = argv[++i];
     else if (a === "--now") args.now = argv[++i];
+    else if (a === "--what") args.what = argv[++i];
     else throw new Error(`Неизвестный параметр: ${a}`);
   }
   return args;
@@ -38,8 +39,9 @@ export function runCli(argv, env = process.env, out = console) {
     const readRefs = createRefsReader(env.STAN_PEOPLE_FILE, createSettingsStore(path.join(dataDir, "settings.json")));
     const { refs } = readRefs();
     const events = db.prepare("SELECT body FROM events ORDER BY at_ms, rowid").all().map((row) => JSON.parse(row.body));
-    const shift = lastFinishedShift(nowMs, refs.settings.schedule, 0);
-    const digest = buildDigest({ events, refs, nowMs, shift, publicUrl: mailConfigFromEnv(env).publicUrl });
+    if (!["shift", "day", "week"].includes(args.what)) throw new Error("--what: shift, day или week");
+    const period = periodFor(args.what, nowMs, refs.settings.schedule);
+    const digest = buildDigest({ events, refs, nowMs, period, publicUrl: mailConfigFromEnv(env).publicUrl });
     fs.mkdirSync(args.out, { recursive: true });
     const files = {
       html: path.join(args.out, "digest.html"),

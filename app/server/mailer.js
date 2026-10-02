@@ -3,7 +3,10 @@
 
 const DEFAULT_URL = "https://stan.tmpz-engineering.ru/";
 
-/** Настройки из окружения. Рассылка включена только при заданных SMTP_USER, SMTP_PASS и MAIL_TO. */
+/**
+ * Настройки из окружения. SMTP настроен (enabled), если заданы SMTP_USER и SMTP_PASS.
+ * MAIL_TO — запасной список получателей, когда в настройках владельца их нет.
+ */
 export function mailConfigFromEnv(env = process.env) {
   const clean = (v) => String(v ?? "").trim();
   const user = clean(env.SMTP_USER);
@@ -11,7 +14,7 @@ export function mailConfigFromEnv(env = process.env) {
   const to = clean(env.MAIL_TO).split(",").map((s) => s.trim()).filter(Boolean);
   const port = Number(env.SMTP_PORT) || 465;
   return {
-    enabled: Boolean(user && pass && to.length),
+    enabled: Boolean(user && pass),
     host: clean(env.SMTP_HOST) || "smtp.yandex.ru",
     port,
     secure: port === 465, // 465 — SSL сразу; иной порт (587) — STARTTLS
@@ -35,7 +38,7 @@ async function defaultTransportFactory(options) {
 export function createMailer(config, { transportFactory = defaultTransportFactory } = {}) {
   let transport;
   return {
-    async send({ subject, html, text, attachments = [] }) {
+    async send({ subject, html, text, attachments = [], to = config.to }) {
       transport ??= await transportFactory({
         host: config.host,
         port: config.port,
@@ -45,11 +48,11 @@ export function createMailer(config, { transportFactory = defaultTransportFactor
         greetingTimeout: 15_000,
         socketTimeout: 30_000,
       });
-      const info = await transport.sendMail({ from: config.from, to: config.to, subject, html, text, attachments });
+      const info = await transport.sendMail({ from: config.from, to, subject, html, text, attachments });
       if (Array.isArray(info?.accepted) && info.accepted.length === 0) {
-        throw new Error(`SMTP отклонил всех получателей: ${(info.rejected || []).join(", ") || config.to.join(", ")}`);
+        throw new Error(`SMTP отклонил всех получателей: ${(info.rejected || []).join(", ") || to.join(", ")}`);
       }
-      return { messageId: info?.messageId ?? null, accepted: info?.accepted ?? config.to, rejected: info?.rejected ?? [] };
+      return { messageId: info?.messageId ?? null, accepted: info?.accepted ?? to, rejected: info?.rejected ?? [] };
     },
   };
 }
