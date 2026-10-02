@@ -140,6 +140,10 @@ const MEASURE = `(() => {
     mainGrew: mainWith - mainWithout, pageGrew: pageWith - pageWithout,
     ariaLabel: btn.getAttribute('aria-label'), title: btn.title, btnW: b.w, btnH: b.h,
     fit: matchMedia('(min-width:1100px) and (min-height:600px) and (orientation: landscape)').matches,
+    big: matchMedia('(min-width: 1024px) and (hover: hover) and (pointer: fine)').matches,
+    titleFont: parseFloat(getComputedStyle(q('.mill-state-title')).fontSize), clockFont: parseFloat(getComputedStyle(clock).fontSize),
+    subFont: parseFloat(getComputedStyle(q('.mill-status .mill-subtitle') || strip).fontSize),
+    stateClockOverlap: overlap(st, c), clockOverflow: clock.scrollWidth > clock.clientWidth + 1,
   };
 })()`;
 const PANEL = `(() => {
@@ -175,8 +179,14 @@ async function layoutRun(label, w, h, { shot = false } = {}) {
   // Ширину сравниваем с областью без полосы прокрутки (clientWidth): прокрутка, что была и без кнопки, — отдельная находка
   if (m.scrollWWithout > m.clientW) results.notes.push({ baselineOverflow: label, scrollW: m.scrollWWithout, clientWidth: m.clientW, innerWidth: m.innerWidth });
   else check(m.scrollW <= m.clientW, `${label}: нет горизонтальной прокрутки`, { scrollW: m.scrollW, clientWidth: m.clientW });
-  check(Math.abs(m.stripWith - m.stripWithout) < 0.6, `${label}: полоса не выросла в высоту`, { with: m.stripWith, without: m.stripWithout });
-  check(m.mainGrew <= 0 && m.pageGrew <= 0, `${label}: кнопка не прибавила высоты экрану`, { main: m.mainGrew, page: m.pageGrew });
+  // На мониторе (крупная полоса) длинная надпись состояния вправе перенестись из-за кнопки — высоту тогда не сравниваем
+  if (!m.big) {
+    check(Math.abs(m.stripWith - m.stripWithout) < 0.6, `${label}: полоса не выросла в высоту`, { with: m.stripWith, without: m.stripWithout });
+    check(m.mainGrew <= 0 && m.pageGrew <= 0, `${label}: кнопка не прибавила высоты экрану`, { main: m.mainGrew, page: m.pageGrew });
+  } else {
+    check(m.titleFont >= 28 && m.clockFont >= 28, `${label}: на мониторе надпись и часы крупные`, { title: m.titleFont, clock: m.clockFont });
+    check(!m.stateClockOverlap && !m.titleOverflow && !m.clockOverflow, `${label}: крупная надпись не налезает на часы и не обрезается`, { overlap: m.stateClockOverlap, title: m.titleOverflow, clock: m.clockOverflow });
+  }
   check(m.btnInsideStrip, `${label}: кнопка внутри полосы`);
   check(!m.btnOverlapsClock && !m.btnOverlapsState, `${label}: кнопка не налезает на состояние и часы`);
   check(!m.stripOverflowX, `${label}: полоса без переполнения по ширине`);
@@ -241,6 +251,22 @@ try {
       for (const [w, h] of REQUIRED) await layoutRun(`${w}x${h}-${t}-${stateName(running)}`, w, h, { shot: true });
       for (const [w, h] of SWEEP) await layoutRun(`sweep ${w}x${h} ${t} ${stateName(running)}`, w, h);
     }
+  }
+
+  // Планшет в альбомной ориентации (касание, без наведения) шире 1024 px: полоса остаётся прежнего размера
+  for (const running of [true, false]) {
+    await ensureMill(running);
+    await chrome.reload();
+    await waitButton();
+    for (const [w, h] of [[1180, 820], [1366, 1024]]) {
+      await chrome.viewport(w, h, { mobile: true });
+      await chrome.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      await sleep(150);
+      const t = await E(MEASURE);
+      check(!t.big && t.titleFont <= 30 && t.clockFont <= 28, `планшет ${w}x${h} ${stateName(running)}: полоса не увеличена`, { big: t.big, title: t.titleFont, clock: t.clockFont });
+      await chrome.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+    }
+    await chrome.viewport(1280, 800);
   }
 
   // Поведение панели: стан стоит, светлая тема, ширина монитора
