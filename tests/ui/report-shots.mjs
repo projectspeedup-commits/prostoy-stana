@@ -365,6 +365,8 @@ try {
       path.join(DOWNLOADS, saved[0])], { encoding: "utf8" });
     if (!py.error) check(py.status === 0 && py.stdout.trim() === "Сводка|По сменам|Журнал простоев|Приём и сдача смен", "openpyxl открывает скачанный файл", py.stderr || py.stdout);
   }
+  // Файл с сервера откладываем под другим именем: демо ниже скачает отчёт с тем же именем, и его надо отличить
+  if (saved.length) fs.renameSync(path.join(DOWNLOADS, saved[0]), path.join(DOWNLOADS, "с сервера — " + saved[0]));
   check(await E("document.querySelector('.rep-panel').hidden"), "после скачивания панель закрыта");
   check((await E("document.querySelector('#toast').textContent")) === "Отчёт скачан", "сообщение «Отчёт скачан»");
 
@@ -397,6 +399,7 @@ try {
   check(/^Отчёт по простоям стана за \d\d\.\d\d\.\d{4}, скачан/.test(downloads.at(-1).name), "демо: русское имя файла", downloads.at(-1).name);
   const demoFile = path.join(DOWNLOADS, downloads.at(-1).name);
   check(fs.existsSync(demoFile) && readXlsx(new Uint8Array(fs.readFileSync(demoFile))).sheets.length === 4, "демо: файл — книга из четырёх листов");
+  if (fs.existsSync(demoFile)) fs.renameSync(demoFile, path.join(DOWNLOADS, "из демо — " + downloads.at(-1).name));
   await chrome.screenshot(path.join(OUT, "demo-after-download.png"));
 
   // Консоль: ни ошибок, ни нарушений политики безопасности (ожидаемые сетевые отказы из проверок выше не считаются)
