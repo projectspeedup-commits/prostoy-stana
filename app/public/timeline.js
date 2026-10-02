@@ -15,9 +15,9 @@ const STATES = [
 
 const LEGEND = [
   ["work", "Работает"],
-  ["plan", "Плановый"],
-  ["unplanned", "Внеплановый"],
-  ["failure", "Авария"],
+  ["plan", "Плановый простой"],
+  ["unplanned", "Внеплановый простой"],
+  ["failure", "Аварийный простой"],
 ];
 
 function fmtDuration(ms) {

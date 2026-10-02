@@ -25,7 +25,7 @@ export const REPORT_SHEETS = ["Сводка", "По сменам", "Журнал
 // Цвета зон — токены --z-plan, --z-unplanned, --z-failure светлой темы (app.css); тест сверяет их с файлом.
 export const ZONE_FILL = { plan: "3B82F6", unplanned: "F2A900", failure: "E5383B" };
 const ZONE_TEXT = { plan: "FFFFFF", unplanned: "1A1C20", failure: "FFFFFF" };
-export const ZONE_LABEL = { plan: "Плановый", unplanned: "Внеплановый", failure: "Авария" };
+export const ZONE_LABEL = { plan: "Плановый простой", unplanned: "Внеплановый простой", failure: "Аварийный простой" };
 const ZONES = ["plan", "unplanned", "failure"];
 
 const FORMAT = {
@@ -428,7 +428,7 @@ function journalSheet(data, ctx, masters) {
   const { parts } = data;
   const { refs } = ctx;
   const tz = refs.settings.schedule.tzOffsetMinutes || 0;
-  const widths = [5, 11, 9, 30, 16, 16, 21, 14, 20, 34, 34, 8, 28, 13];
+  const widths = [5, 11, 9, 30, 16, 16, 21, 22, 20, 34, 34, 8, 28, 13];
   const f = frame("Отчёт по простоям стана — журнал простоев", ctx.context, widths);
   const rows = [...f.rows, headerRow(["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка", "Длительность, мин"])];
   const merges = [...f.merges];

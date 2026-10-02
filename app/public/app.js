@@ -1600,7 +1600,7 @@ function zoneMark(zone) {
 }
 // Кольцо «работа и простой»: доли зон теми же цветами, что шкала суток
 function zoneDonut(st) {
-  const names = { work: "Работа", plan: "Плановый", unplanned: "Внеплановый", failure: "Авария" };
+  const names = { work: "Работа", plan: "Плановый простой", unplanned: "Внеплановый простой", failure: "Аварийный простой" };
   const rows = Object.keys(names).map((zone) => {
     const row = (st.byZone || []).find((item) => item.zone === zone);
     return { name: names[zone], minutes: row ? row.minutes : 0, cls: "z-" + zone };
