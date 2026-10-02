@@ -381,6 +381,9 @@ try {
   await chrome.navigate(ORIGIN + "/?mock=1");
   await chrome.waitFor("!!document.querySelector('.tiles .tile')", { what: "демо: выбор смены" });
   await chrome.clickElement(".tiles .tile");
+  // Другая смена, чем идёт по часам, просит подтверждения («Принять выбранную смену») — в новых версиях страницы
+  await chrome.waitFor("/Принять выбранную смену/.test(document.body.innerText) || (/Мастер/.test(document.body.innerText) && !!document.querySelector('.tiles .tile'))", { what: "демо: подтверждение смены или выбор мастера" });
+  if (await E("/Принять выбранную смену/.test(document.body.innerText)")) await chrome.clickText("button", "Принять выбранную смену");
   await chrome.waitFor("document.querySelector('.tiles .tile') && /Мастер/.test(document.body.innerText)", { what: "демо: выбор мастера" });
   await chrome.clickElement(".tiles .tile");
   await waitButton("демо: кнопка отчёта");
