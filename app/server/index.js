@@ -311,7 +311,10 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
         if (data?.mailVersion !== versionOf(mailStore.read())) {
           return send(res, 409, { ok: false, error: "conflict", message: "Рассылку уже изменили на другом устройстве. Обновите экран и повторите." });
         }
-        mailStore.write(validateMailSettings(data?.mail));
+        const previous = mailStore.read();
+        const next = validateMailSettings(data?.mail);
+        mailStore.write(next);
+        mail.noteSettingsChange(previous, next, clock().getTime());
         return send(res, 200, mailView());
       } catch (e) {
         if (e.code !== "bad_request") throw e;

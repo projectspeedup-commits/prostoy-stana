@@ -62,7 +62,11 @@ export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "h
   const isShift = period.kind === "shift";
   shift = period.shift;
   const stats = computeStats(events, { fromMs: period.fromMs, toMs: period.toMs, nowMs, refs });
-  const file = reportFile({ from: period.fromDay, to: period.toDay, events, refs, nowMs });
+  // Письмо о смене: Excel только за эту смену (границы смены), о сутках и неделе — за целые сутки
+  const file = reportFile({
+    from: period.fromDay, to: period.toDay, events, refs, nowMs,
+    ...(isShift ? { interval: { fromMs: period.fromMs, toMs: period.toMs }, label: shiftKind(shift) } : {}),
+  });
   if (!file.ok) throw new Error(file.message);
   const { parts, masters, shiftRows } = file.book.meta;
   const stops = isShift ? parts.filter((p) => p.day === shift.day && p.shiftNo === shift.shiftNo) : parts;
@@ -117,7 +121,7 @@ export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "h
     ...(crews.length ? [["Бригада", crews.join(", ")]] : []),
   ];
   const attachNote = isShift
-    ? `Во вложении — Excel-отчёт за сутки ${dateText} (смена выделена на листе «По сменам»).`
+    ? `Во вложении — Excel-отчёт только за эту смену (${kind} ${dateText}).`
     : `Во вложении — Excel-отчёт за ${period.kind === "day" ? "сутки" : "период"} ${dateText}.`;
   const hiddenNote = hidden > 0 ? `Показаны первые ${MAX_STOP_ROWS} простоев, ещё ${hidden} — в Excel.` : "";
 

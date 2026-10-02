@@ -128,9 +128,9 @@ test("письмо: ночная смена с идущим простоем, т
   assert.ok(d.text.includes("https://stan.tmpz-engineering.ru/"), "ссылка по умолчанию");
 });
 
-test("письмо: вложение — настоящий Excel-отчёт за сутки смены", () => {
+test("письмо: вложение — настоящий Excel-отчёт только за эту смену", () => {
   const d = buildDigest({ events: fx.events, refs, nowMs: fx.now, shift: shift1 });
-  assert.match(d.attachment.filename, /^Отчёт по простоям стана за 01\.10\.2026, скачан 01\.10\.2026 в 22-30\.xlsx$/);
+  assert.match(d.attachment.filename, /^Отчёт по простоям стана за 01\.10\.2026 \(дневная смена\), скачан 01\.10\.2026 в 22-30\.xlsx$/);
   const wb = readXlsx(new Uint8Array(d.attachment.content));
   assert.deepEqual(wb.sheets.map((x) => x.name), ["Сводка", "По сменам", "Журнал простоев", "Приём и сдача смен"]);
 });
@@ -331,7 +331,9 @@ test("POST /api/mail/test: ошибка SMTP возвращается текст
     assert.equal(res.status, 502);
     const body = await res.json();
     assert.equal(body.ok, false);
-    assert.match(body.message, /authentication failed/);
+    assert.match(body.message, /не принял логин или пароль/);
+    assert.equal(body.smtpCode, 535);
+    assert.ok(!body.message.includes("authentication failed"), "сырой текст SMTP наружу не идёт");
     assert.ok(!JSON.stringify(body).includes("secret"));
     assert.equal((await fetch(`${base}/api/health`, { headers: { "X-Device-Key": "owner-key" } })).status, 200);
   } finally { await app.close(); }

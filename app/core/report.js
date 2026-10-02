@@ -268,6 +268,16 @@ function contextText({ fromDay, toDay, nowMs, schedule, includesNow }) {
     `${includesNow ? " Период включает текущий момент: время считается до момента скачивания." : ""}`;
 }
 
+/** Контекст отчёта за интервал внутри суток (одна смена): период подписан точными границами. */
+function intervalContextText({ fromMs, endMs, nowMs, schedule, includesNow }) {
+  const tz = schedule.tzOffsetMinutes || 0;
+  const zone = tzName(tz);
+  const [date, time] = ruDateTime(nowMs, tz).split(" ");
+  return `Период: с ${ruDateTime(fromMs, tz)} по ${ruDateTime(endMs, tz)} ${zone} (только эта смена). ` +
+    `Скачан: ${date} в ${time} ${zone}. Смены: ${shiftsText(schedule)}.` +
+    `${includesNow ? " Период включает текущий момент: время считается до момента скачивания." : ""}`;
+}
+
 /** Первые две строки листа: заголовок и контекст; высота контекста — по числу строк текста. */
 function frame(title, context, widths) {
   const total = widths.reduce((sum, w) => sum + w, 0);
@@ -482,25 +492,31 @@ function handoverSheet(handovers, ctx) {
  * Модель книги отчёта за производственные сутки fromDay…toDay включительно (мс — по часам nowMs).
  * events — события из базы (объекты); refs — справочники (reasons, people, settings.schedule).
  */
-export function buildReport(events, { fromDay, toDay, nowMs, refs, settings } = {}) {
+export function buildReport(events, { fromDay, toDay, nowMs, refs, settings, interval } = {}) {
   const useRefs = settings ? { ...refs, settings } : refs;
   const schedule = useRefs.settings.schedule;
   const period = checkReportPeriod({ from: fromDay, to: toDay }, nowMs, schedule);
   if (!period.ok) throw new Error(period.message);
   const tz = schedule.tzOffsetMinutes || 0;
-  const data = collect(events, { fromMs: period.fromMs, endMs: period.endMs, nowMs, refs: useRefs });
-  const includesNow = nowMs < period.endMs;
-  const context = contextText({ fromDay, toDay, nowMs, schedule, includesNow });
+  // interval: отчёт только за [fromMs, toMs) внутри запрошенных суток (письмо о смене); без него — сутки целиком
+  const fromMs = interval ? Math.max(period.fromMs, interval.fromMs) : period.fromMs;
+  const endMs = interval ? Math.min(period.endMs, interval.toMs) : period.endMs;
+  if (!(endMs > fromMs)) throw new Error("Интервал отчёта пуст или вне запрошенных суток.");
+  const data = collect(events, { fromMs, endMs, nowMs, refs: useRefs });
+  const includesNow = nowMs < endMs;
+  const context = interval
+    ? intervalContextText({ fromMs, endMs, nowMs, schedule, includesNow })
+    : contextText({ fromDay, toDay, nowMs, schedule, includesNow });
   const ctx = { refs: useRefs, nowMs, context };
   const masters = mastersByShift(events, useRefs, schedule);
-  const handovers = handoverRows(events, useRefs, schedule, period.fromMs, data.toEff);
+  const handovers = handoverRows(events, useRefs, schedule, fromMs, data.toEff);
   return {
     title: "Отчёт по простоям стана",
     creator: "Простой стана",
     createdMs: nowMs,
     sheets: [summarySheet(data, ctx), shiftSheet(data, ctx, masters), journalSheet(data, ctx, masters), handoverSheet(handovers, ctx)],
     meta: {
-      fromDay, toDay, fromMs: period.fromMs, endMs: period.endMs, toMs: data.toEff, nowMs, tzOffsetMinutes: tz, includesNow,
+      fromDay, toDay, fromMs, endMs, toMs: data.toEff, nowMs, tzOffsetMinutes: tz, includesNow,
       stats: data.stats, parts: data.parts, shiftRows: data.shiftRows, handovers, masters: Object.fromEntries(masters),
     },
   };
@@ -510,15 +526,16 @@ export function buildReport(events, { fromDay, toDay, nowMs, refs, settings } = 
  * Файл отчёта по запросу ?from=…&to=…: проверка периода, книга, байты .xlsx и имя файла.
  * Одно и то же для сервера и для демо. Отказ: { ok: false, message }.
  */
-export function reportFile({ from, to, events, refs, nowMs }) {
+export function reportFile({ from, to, events, refs, nowMs, interval, label }) {
   const schedule = refs.settings.schedule;
   const period = checkReportPeriod({ from, to }, nowMs, schedule);
   if (!period.ok) return period;
-  const book = buildReport(events, { fromDay: period.fromDay, toDay: period.toDay, nowMs, refs });
+  const book = buildReport(events, { fromDay: period.fromDay, toDay: period.toDay, nowMs, refs, interval });
+  const name = reportFileName({ fromDay: period.fromDay, toDay: period.toDay, nowMs, tzOffsetMinutes: schedule.tzOffsetMinutes || 0 });
   return {
     ok: true,
     bytes: buildXlsx(book),
-    filename: reportFileName({ fromDay: period.fromDay, toDay: period.toDay, nowMs, tzOffsetMinutes: schedule.tzOffsetMinutes || 0 }),
+    filename: label ? name.replace(", скачан", ` (${label}), скачан`) : name,
     book,
   };
 }

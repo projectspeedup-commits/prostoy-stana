@@ -12,6 +12,8 @@ import { computeStats } from "../../app/core/stats.js";
 import { durationWords } from "../../app/core/report.js";
 import { DEFAULT_SCHEDULE } from "../../app/core/core.js";
 import { readXlsx } from "../helpers/xlsx-read.js";
+import { redactSecrets, describeMailError } from "../../app/server/mail-errors.js";
+import { shiftOf } from "../../app/core/core.js";
 import { refs, dayFixture, T } from "../helpers/report-fixtures.js";
 
 const MIN = 60_000;
@@ -21,6 +23,8 @@ const CONFIG = { enabled: true, host: "smtp.example.test", port: 465, secure: tr
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "stan-mail2-"));
 const ALL = [1, 2, 3, 4, 5, 6, 7];
 const fx = dayFixture();
+const shift1 = shiftOf(T(fx.day, "10:00:00"), S);
+const shift2 = shiftOf(T(fx.day, "21:00:00"), S);
 
 const rec = (id, email, sends, extra = {}) => ({ id, name: `Имя ${id}`, email, enabled: true, sends, ...extra });
 const snd = (time, what = "shift", days = ALL) => ({ time, what, days });
@@ -330,7 +334,9 @@ test("API: ошибка SMTP при пробном письме приходит
   try {
     const res = await call(base, "owner-key", "POST", "/api/mail/test", { email: "a@y.ru" });
     assert.equal(res.status, 502);
-    assert.match((await res.json()).message, /authentication failed/);
+    const body = await res.json();
+    assert.match(body.message, /Код ответа SMTP: 535/);
+    assert.ok(!body.message.includes("authentication failed"));
   } finally { await app.close(); }
 });
 
@@ -346,4 +352,154 @@ test("страница: общий модуль настроек рассылк�
     assert.equal(res.status, 200);
     assert.match(await res.text(), /validateMailSettings/);
   } finally { await app.close(); }
+});
+
+
+// ---- проверка Codex от 02.10.2026: четыре дефекта
+
+const textsOf = (bytes) => readXlsx(new Uint8Array(bytes)).sheets.flatMap((sheet) => sheet.values.flat()).filter((v) => typeof v === "string").join("\n");
+
+test("дефект 1: отправка, сохранённая в 08:04:50, не теряется (момент фиксирует сохранение настроек)", async () => {
+  const clock = { now: T("2026-10-02", "08:04:50") };
+  const sent = [];
+  const transport = async () => ({ sendMail: async (m) => { sent.push(m); return { messageId: "<x>", accepted: m.to, rejected: [] }; } });
+  const app = createApp({
+    dataDir: ":memory:", now: () => new Date(clock.now), mailConfig: CONFIG, mailTransportFactory: transport,
+    deviceKeys: [{ name: "owner", key: "owner-key" }], adminDevices: ["owner"],
+  });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  try {
+    const view = await (await call(base, "owner-key", "GET", "/api/admin/mail")).json();
+    const put = await call(base, "owner-key", "PUT", "/api/admin/mail", { mail: { recipients: [rec("", "a@y.ru", [snd("08:05")])] }, mailVersion: view.mailVersion });
+    assert.equal(put.status, 200);
+    clock.now = T("2026-10-02", "08:05:01"); // первый проход планировщика уже после срока
+    assert.equal((await app.mail.tick()).sent.length, 1);
+    // а то, что сохранено уже после срока, прошлое письмо не получает
+    clock.now = T("2026-10-02", "08:20:00");
+    const view2 = await (await call(base, "owner-key", "GET", "/api/admin/mail")).json();
+    await call(base, "owner-key", "PUT", "/api/admin/mail", { mail: { recipients: [...view2.mail.recipients, rec("", "b@y.ru", [snd("08:05")])] }, mailVersion: view2.mailVersion });
+    clock.now = T("2026-10-02", "08:25:00");
+    assert.equal((await app.mail.tick()).sent.length, 0);
+    assert.equal(sent.length, 1);
+  } finally { await app.close(); }
+});
+
+test("дефект 2: получатель выключен в момент срока — письма за этот срок нет и после повторного включения", async () => {
+  const ref = { now: T("2026-10-02", "08:00:00"), enabled: true };
+  const sent = [];
+  const mailer = { async send(m) { sent.push(m); return { messageId: "<x>", accepted: m.to, rejected: [] }; } };
+  const make = (dataDir) => createMailService({
+    mailer, config: CONFIG, readMail: () => ({ recipients: [rec("r", "a@y.ru", [snd("08:05")], { enabled: ref.enabled })] }),
+    readEvents: () => fx.events, readRefs: () => ({ refs }), clock: () => new Date(ref.now), dataDir, log: quiet,
+  });
+  const svc = make(tmp());
+  await svc.tick();
+  ref.enabled = false; ref.now = T("2026-10-02", "08:05:01");
+  await svc.tick();
+  ref.enabled = true; ref.now = T("2026-10-02", "08:30:00");
+  await svc.tick();
+  assert.equal(sent.length, 0, "письмо за 08:05 не приходит после включения в 08:30");
+  // включение действует как новая отправка: следующее письмо — завтра
+  ref.now = T("2026-10-03", "08:06:00");
+  assert.equal((await svc.tick()).sent.length, 1);
+});
+
+test("дефект 2: то же через API — выключили до срока, включили после", async () => {
+  const clock = { now: T("2026-10-02", "08:00:00") };
+  const sent = [];
+  const transport = async () => ({ sendMail: async (m) => { sent.push(m); return { messageId: "<x>", accepted: m.to, rejected: [] }; } });
+  const app = createApp({
+    dataDir: ":memory:", now: () => new Date(clock.now), mailConfig: CONFIG, mailTransportFactory: transport,
+    deviceKeys: [{ name: "owner", key: "owner-key" }], adminDevices: ["owner"],
+  });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const save = async (enabled) => {
+    const v = await (await call(base, "owner-key", "GET", "/api/admin/mail")).json();
+    const recipients = v.mail.recipients.length ? v.mail.recipients.map((r) => ({ ...r, enabled })) : [rec("", "a@y.ru", [snd("08:05")], { enabled })];
+    assert.equal((await call(base, "owner-key", "PUT", "/api/admin/mail", { mail: { recipients }, mailVersion: v.mailVersion })).status, 200);
+  };
+  try {
+    await save(true);
+    clock.now = T("2026-10-02", "08:04:00");
+    await save(false); // выключен на момент срока, между проходами планировщика
+    clock.now = T("2026-10-02", "08:30:00");
+    await save(true);
+    assert.equal((await app.mail.tick()).sent.length, 0);
+    assert.equal(sent.length, 0);
+  } finally { await app.close(); }
+});
+
+test("дефект 3: вложение к письму о смене содержит только эту смену", () => {
+  const night = buildDigest({ events: fx.events, refs, nowMs: fx.now, shift: shift1 });
+  const attachment = textsOf(night.attachment.content);
+  assert.ok(!attachment.includes("Петров"), "мастера ночной смены в вложении нет");
+  assert.ok(attachment.includes("Иванов Иван Иванович"));
+  assert.ok(attachment.includes("только эта смена"));
+  const wb = readXlsx(new Uint8Array(night.attachment.content));
+  const journal = wb.sheets.find((x) => x.name === "Журнал простоев");
+  const rows = journal.values.slice(3).filter((r) => r[0] !== null);
+  assert.ok(rows.length > 0 && rows.every((r) => r[2] === "Смена 1"), "в журнале только Смена 1");
+  assert.equal(wb.sheets.find((x) => x.name === "По сменам").values.flat().filter((v) => v === "Смена 2").length, 0);
+  // письмо о ночной смене — наоборот
+  const other = textsOf(buildDigest({ events: fx.events, refs, nowMs: fx.now, shift: shift2 }).attachment.content);
+  assert.ok(other.includes("Петров") && !other.includes("Иванов Иван Иванович"));
+  // сутки целиком — по-прежнему обе смены
+  const day = textsOf(buildDigest({ events: fx.events, refs, nowMs: T("2026-10-02", "08:10:00"), period: periodFor("day", T("2026-10-02", "08:10:00"), S) }).attachment.content);
+  assert.ok(day.includes("Петров") && day.includes("Иванов Иван Иванович"));
+});
+
+test("дефект 3: /api/report.xlsx за сутки не затронут ограничением по интервалу", async () => {
+  const { app, base } = await startApp();
+  try {
+    const insert = app.db.prepare("INSERT INTO events (id, type, at_ms, received_ms, device, body, flag) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const e of fx.events) insert.run(e.id, e.type, Date.parse(e.at), Date.parse(e.at), "web", JSON.stringify(e), null);
+    const res = await fetch(`${base}/api/report.xlsx?from=2026-10-01&to=2026-10-01`, { headers: { "X-Device-Key": "owner-key" } });
+    assert.equal(res.status, 200);
+    const text = textsOf(new Uint8Array(await res.arrayBuffer()));
+    assert.ok(text.includes("Петров") && text.includes("Иванов Иван Иванович"));
+    assert.ok(!text.includes("только эта смена"));
+  } finally { await app.close(); }
+});
+
+test("дефект 4: пароль SMTP вырезается из любого текста, в том числе base64 AUTH", () => {
+  const cfg = { user: "robot@yandex.ru", pass: "p@ss/w0rd!" };
+  const b64 = (x) => Buffer.from(x).toString("base64");
+  const text = [
+    `plain ${cfg.pass}`, `url ${encodeURIComponent(cfg.pass)}`, `login ${b64(cfg.pass)}`,
+    `plain-auth AUTH PLAIN ${b64(`\0${cfg.user}\0${cfg.pass}`)}`, `AUTH LOGIN ${b64(cfg.user)}`, `pair ${b64(`${cfg.user}:${cfg.pass}`)}`,
+  ].join("\n");
+  const out = redactSecrets(text, cfg);
+  for (const leak of [cfg.pass, encodeURIComponent(cfg.pass), b64(cfg.pass), b64(`\0${cfg.user}\0${cfg.pass}`), b64(`${cfg.user}:${cfg.pass}`), b64(cfg.user)]) {
+    assert.ok(!out.includes(leak), `утекло: ${leak}`);
+  }
+  assert.equal(describeMailError(Object.assign(new Error("Invalid login: 535 5.7.8 bad"), { responseCode: 535 }), cfg).code, 535);
+  assert.equal(describeMailError(new Error("535 5.7.8 Authentication failed"), cfg).code, 535);
+  assert.match(describeMailError(Object.assign(new Error("x"), { code: "ECONNREFUSED" }), cfg).message, /не принимает соединение/);
+});
+
+test("дефект 4: ни журнал планировщика, ни ответ API не содержат пароля и сырого текста ошибки", async () => {
+  const pass = "S3cret-Pass-123";
+  const cfg = { ...CONFIG, pass };
+  const raw = `Invalid login: 535 5.7.8 Authentication failed for ${pass} AUTH PLAIN ${Buffer.from(`\0${cfg.user}\0${pass}`).toString("base64")}`;
+  const logs = [];
+  const ref = { now: T("2026-10-02", "08:00:00") };
+  const svc = createMailService({
+    mailer: { async send() { throw Object.assign(new Error(raw), { responseCode: 535 }); } }, config: cfg,
+    readMail: () => ({ recipients: [rec("r", "a@y.ru", [snd("08:05")])] }), readEvents: () => fx.events, readRefs: () => ({ refs }),
+    clock: () => new Date(ref.now), dataDir: tmp(), log: { log: (x) => logs.push(String(x)), error: (...a) => logs.push(a.join(" ")) },
+  });
+  await svc.tick();
+  ref.now = T("2026-10-02", "08:05:01");
+  const run = await svc.tick();
+  const test = await svc.sendTest({ email: "a@y.ru" });
+  for (const text of [...logs, JSON.stringify(run), JSON.stringify(test)]) {
+    assert.ok(!text.includes(pass), text);
+    assert.ok(!text.includes("AUTH PLAIN"), text);
+    assert.ok(!text.includes("Invalid login"), text);
+  }
+  assert.match(logs.join("\n"), /Код ответа SMTP: 535/);
+  assert.equal(test.smtpCode, 535);
+  assert.match(test.message, /не принял логин или пароль/);
 });

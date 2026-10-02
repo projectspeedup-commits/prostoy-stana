@@ -5,6 +5,7 @@ import { buildDigest } from "./digest.js";
 import { createMailSentStore, readLegacyMailMark } from "./mail-store.js";
 import { dueSends, periodFor, sendKey, lastFinishedShift, MAX_LATE_MS } from "../core/mail-schedule.js";
 import { normalizeEmail } from "../core/mail-settings.js";
+import { describeMailError } from "./mail-errors.js";
 
 export { lastFinishedShift, MAX_LATE_MS };
 export const RETRY_MS = 10 * 60_000;
@@ -66,7 +67,8 @@ export function createMailService({
       const info = await deliver(digest, to);
       return { ok: true, subject: digest.subject, to, messageId: info.messageId, accepted: info.accepted };
     } catch (e) {
-      return { ok: false, error: "smtp", message: String(e?.message || e) };
+      const d = describeMailError(e, config);
+      return { ok: false, error: "smtp", message: d.message, smtpCode: d.code };
     }
   }
 
@@ -80,17 +82,26 @@ export function createMailService({
     const state = store.read();
     let dirty = false;
 
-    // Новые отправки запоминаем «с этого момента»: добавленный в 09:00 получатель не получит письмо за 08:05.
+    // Отправка действует «с момента появления или включения»: добавленный или включённый в 09:00 получатель
+    // не получает письмо за 08:05. Момент фиксирует сохранение настроек (noteSettingsChange); здесь —
+    // запасной путь для отправок, о которых сервер узнал не через API (файл правили вручную, запасной список).
+    // Выключенный получатель не имеет момента: включение начинает отсчёт заново.
     // Отправки из MAIL_TO были всегда (0), поэтому догоняются после простоя.
     const keys = new Set();
-    for (const r of list) for (const s of r.sends) {
-      const key = sendKey(r, s);
-      keys.add(key);
-      if (state.firstSeen[key] === undefined) { state.firstSeen[key] = r.source === "env" ? 0 : now; dirty = true; }
+    for (const r of list) {
+      if (!r.enabled) continue;
+      for (const x of r.sends) {
+        const key = sendKey(r, x);
+        keys.add(key);
+        if (state.firstSeen[key] === undefined) { state.firstSeen[key] = r.source === "env" ? 0 : now; dirty = true; }
+      }
     }
     for (const key of Object.keys(state.firstSeen)) if (!keys.has(key)) { delete state.firstSeen[key]; dirty = true; }
     for (const [mark, at] of Object.entries(state.sent)) {
       if (now - Number(mark.slice(mark.lastIndexOf("|") + 1)) > KEEP_MARKS_MS || now - at > KEEP_MARKS_MS) { delete state.sent[mark]; dirty = true; }
+    }
+    if (dirty) {
+      try { store.write(state); dirty = false; } catch (e) { log.error("Рассылка: отметки не записаны:", e.code || e.name); }
     }
 
     const legacyEndMs = readLegacyMailMark(dataDir);
@@ -111,23 +122,42 @@ export function createMailService({
         if (!digests.has(groupKey)) digests.set(groupKey, build(d.period));
         const digest = digests.get(groupKey);
         const info = await deliver(digest, [d.recipient.email]);
+        // по свежему состоянию: пока шла отправка, настройки могли измениться (noteSettingsChange)
+        const fresh = store.read();
+        fresh.sent[d.markKey] = now;
+        store.write(fresh);
         state.sent[d.markKey] = now;
-        store.write(state); // сразу: падение на следующем письме не должно стереть отметку
-        dirty = false;
         attempts.delete(d.markKey);
         sent.push({ markKey: d.markKey, email: d.recipient.email, subject: digest.subject, messageId: info.messageId });
         log.log(`Рассылка: отправлено «${digest.subject}» -> ${d.recipient.email}`);
       } catch (e) {
         const n = (attempts.get(d.markKey)?.n || 0) + 1;
         attempts.set(d.markKey, { n, nextAt: now + retryMs });
-        failed.push({ markKey: d.markKey, email: d.recipient.email, attempt: n, error: String(e?.message || e) });
-        log.error(`Рассылка: ошибка отправки на ${d.recipient.email} (попытка ${n} из ${maxAttempts}): ${e?.message || e}${n < maxAttempts ? `; повтор через ${Math.round(retryMs / 60_000)} мин` : "; больше не повторяем"}`);
+        const info = describeMailError(e, config);
+        failed.push({ markKey: d.markKey, email: d.recipient.email, attempt: n, error: info.message, smtpCode: info.code });
+        log.error(`Рассылка: ошибка отправки на ${d.recipient.email} (попытка ${n} из ${maxAttempts}): ${info.message}${n < maxAttempts ? `; повтор через ${Math.round(retryMs / 60_000)} мин` : "; больше не повторяем"}`);
       }
     }
-    if (dirty) {
-      try { store.write(state); } catch (e) { log.error("Рассылка: отметки не записаны:", e.code || e.name); }
-    }
     return { status: "ok", sent, failed, due: due.length };
+  }
+
+  /**
+   * Вызывается при сохранении настроек (PUT /api/admin/mail): фиксирует момент появления или включения отправок.
+   * Отправка, сохранённая в 08:04:50, получает момент 08:04:50, и письмо за 08:05 уйдёт; выключенная и убранные
+   * теряют момент, повторное включение начинает отсчёт с нуля.
+   */
+  function noteSettingsChange(prev, next, at = nowMs()) {
+    const active = (mail) => {
+      const set = new Set();
+      for (const r of mail.recipients) if (r.enabled) for (const x of r.sends) set.add(sendKey(r, x));
+      return set;
+    };
+    const before = active(prev);
+    const after = active(next);
+    const state = store.read();
+    for (const key of after) if (!before.has(key) || state.firstSeen[key] === undefined) state.firstSeen[key] = at;
+    for (const key of before) if (!after.has(key)) delete state.firstSeen[key];
+    store.write(state);
   }
 
   /** Параллельные вызовы сливаются в один проход. */
@@ -159,5 +189,5 @@ export function createMailService({
     timers.clearTimeout(timer);
   }
 
-  return { enabled, start, stop, tick, sendTest, store };
+  return { enabled, start, stop, tick, sendTest, noteSettingsChange, store };
 }
