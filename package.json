@@ -3,9 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "test": "node --test \"tests/**/*.test.js\"",
     "start": "node app/server/index.js"
+  },
+  "dependencies": {
+    "nodemailer": "^10.0.13"
   }
 }

@@ -6,6 +6,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev && npm cache clean --force
 COPY app/ /app/app/
 RUN mkdir -p /app/data && chown -R node:node /app/data
 

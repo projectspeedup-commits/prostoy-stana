@@ -13,6 +13,8 @@ import { createSettingsStore } from "./settings.js";
 import { settingsFromRefs, validateSettings } from "../core/settings.js";
 import { computeStats, periodRange } from "../core/stats.js";
 import { createReportHandler } from "./report.js";
+import { createMailer, mailConfigFromEnv } from "./mailer.js";
+import { createMailService } from "./mail-service.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -63,7 +65,7 @@ function median(values) {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
 
-export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT } = {}) {
+export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT, mailConfig, mailTransportFactory } = {}) {
   const clock = () => new Date(now());
   // Раздел «Администратор» — только перечисленным устройствам; без списка — всем (тесты, старый запуск)
   const canAdmin = (device) => !Array.isArray(adminDevices) || adminDevices.includes(device.name);
@@ -109,6 +111,17 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   `);
   const eventStore = createEventStore(db);
   const reportHandler = createReportHandler({ db, readRefs, clock });
+  // Рассылка сводки смены: по умолчанию выключена (в тестах), боевой запуск передаёт mailConfig из окружения
+  const mailCfg = mailConfig ?? { enabled: false };
+  const readAllEvents = db.prepare("SELECT body FROM events ORDER BY at_ms, rowid");
+  const mail = createMailService({
+    mailer: mailCfg.enabled ? createMailer(mailCfg, mailTransportFactory ? { transportFactory: mailTransportFactory } : undefined) : null,
+    config: mailCfg,
+    readEvents: () => readAllEvents.all().map((row) => JSON.parse(row.body)),
+    readRefs,
+    clock,
+    dataDir,
+  });
 
   const insertPing = db.prepare(
     "INSERT INTO pings (device, client_at, server_at, prev_ms, prev_ok) VALUES (?, ?, ?, ?, ?)"
@@ -212,6 +225,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isEvents = pathname === "/api/events" && req.method === "POST";
     const isAdminGet = pathname === "/api/admin/settings" && req.method === "GET";
     const isAdminPut = pathname === "/api/admin/settings" && req.method === "PUT";
+    const isMailTest = pathname === "/api/mail/test" && req.method === "POST";
 
     const address = clientAddress(req);
     const ms = clock().getTime();
@@ -231,6 +245,13 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     }
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
     if (pathname === "/api/report.xlsx" && req.method === "GET") return reportHandler(res, searchParams);
+    if (isMailTest) {
+      if (!canAdmin(device)) {
+        return send(res, 403, { ok: false, error: "forbidden", message: "Проверка рассылки открывается только ключом владельца." });
+      }
+      const result = await mail.sendTest();
+      return send(res, result.ok ? 200 : result.error === "mail_disabled" ? 409 : 502, result);
+    }
     if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
@@ -366,6 +387,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     if (closed) return Promise.resolve();
     closed = true;
     clearInterval(timer);
+    mail.stop();
     return new Promise((resolve) => {
       const done = () => { try { db.close(); } catch { /* уже закрыта */ } resolve(); };
       if (!server.listening) return done();
@@ -374,7 +396,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     });
   }
 
-  return { server, db, close };
+  return { server, db, close, mail };
 }
 
 // Адрес клиента для лимита неверных ключей. На бою запрос идёт через nginx и туннель: у сокета
@@ -403,6 +425,7 @@ function main() {
       deviceKeys: parseDeviceKeys(process.env.STAN_DEVICE_KEYS),
       adminDevices: adminDevicesFrom(process.env.STAN_ADMIN_DEVICES, parseDeviceKeys(process.env.STAN_DEVICE_KEYS)),
       rateLimit: Number(process.env.STAN_RATE_LIMIT) || RATE_LIMIT_SHARED,
+      mailConfig: mailConfigFromEnv(process.env),
     });
   } catch (e) {
     console.error(`Ошибка запуска: ${e.message}`);
@@ -411,6 +434,7 @@ function main() {
   const port = Number(process.env.PORT) || 8080;
   const host = process.env.HOST || "0.0.0.0";
   app.server.listen(port, host, () => console.log(`Сервер слушает ${host}:${port}`));
+  app.mail.start();
   process.on("SIGTERM", async () => {
     await app.close();
     process.exit(0);

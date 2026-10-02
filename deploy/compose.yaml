@@ -13,6 +13,13 @@ services:
     restart: unless-stopped
     environment:
       STAN_DEVICE_KEYS: ${STAN_DEVICE_KEYS:?задайте в .env}
+      SMTP_HOST: ${SMTP_HOST:-smtp.yandex.ru}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_TO: ${MAIL_TO:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      PUBLIC_URL: ${PUBLIC_URL:-https://stan.tmpz-engineering.ru/}
     mem_limit: 512m
 
   stan-test:
