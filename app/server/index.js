@@ -11,6 +11,7 @@ import { createRefsReader } from "./people.js";
 import { createSettingsStore } from "./settings.js";
 import { settingsFromRefs, validateSettings } from "../core/settings.js";
 import { computeStats, periodRange } from "../core/stats.js";
+import { createReportHandler } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -100,6 +101,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     CREATE TABLE IF NOT EXISTS alive (at TEXT PRIMARY KEY);
   `);
   const eventStore = createEventStore(db);
+  const reportHandler = createReportHandler({ db, readRefs, clock });
 
   const insertPing = db.prepare(
     "INSERT INTO pings (device, client_at, server_at, prev_ms, prev_ok) VALUES (?, ?, ?, ?, ?)"
@@ -206,6 +208,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const device = identify(req);
     if (!device) return send(res, 401, { ok: false, error: "bad_key" });
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
+    if (pathname === "/api/report.xlsx" && req.method === "GET") return reportHandler(res, searchParams);
     if (!isPing && !isSummary && !isRefs && !isState && !isStats && !isEvents && !isAdminGet && !isAdminPut) return send(res, 404, { ok: false, error: "not_found" });
 
     if (isSummary) return send(res, 200, summary());
@@ -288,7 +291,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return res.end("Плохой запрос");
     }
     if (rel.endsWith("/")) rel += "index.html";
-    const isCore = rel === "/core/core.js" || rel === "/core/refs.js" || rel === "/core/stats.js" || rel === "/core/zones.js" || rel === "/core/settings.js";
+    const isCore = /^\/core\/[\w-]+\.js$/.test(rel); // общее ядро: странице отдаются все модули app/core
     const full = isCore ? path.resolve(HERE, "..", "core", rel.slice("/core/".length)) : path.resolve(PUBLIC_DIR, "." + path.sep + rel);
     if (!isCore && full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
