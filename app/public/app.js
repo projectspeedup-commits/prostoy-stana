@@ -2115,8 +2115,8 @@ function finishRestart(rawAction) {
   // Брак — к последнему отрезку этого простоя (тот же fix, что правка «Брак» в итоге смены)
   if (restartNeedsBillet(rw, buildView())) {
     if (!validBillet(rw.billet)) { render(); return; }
-    const segs = openNow.segments || [];
-    const index = segs.length ? segs[segs.length - 1].index : 0;
+    // Номер последнего отрезка открытого простоя: после смены причины их несколько
+    const index = openNow.index ?? 0;
     events.push({ type: "fix", fields: { downtimeId: rw.downtimeId, index,
       billet: Number(String(rw.billet).trim().replace(",", ".")), at } });
   }
