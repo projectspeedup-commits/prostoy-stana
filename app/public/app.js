@@ -1353,6 +1353,14 @@ function withScale(view, ...kids) {
   return h("div", { class: "with-scale" }, scaleFor(view), h("div", { class: "with-scale__main" }, ...kids));
 }
 
+// «Отчёт в Excel» подключается отдельно: если файл не загрузится, пульт работает как раньше
+let reportMenu = () => null;
+import("./report-ui.js").then((m) => {
+  reportMenu = m.createReportMenu({ h, nowMs, demo: DEMO, toast: showToast, getKey: () => key, getApi: () => api,
+    getSchedule: () => refs?.settings?.schedule });
+  softRender();
+}).catch(() => { /* кнопки отчёта не будет */ });
+
 // Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
 function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
   const btn = (kind, on, label, onclick) => h("button", {
@@ -1367,6 +1375,7 @@ function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
       h("div", { class: "mill-state" }, icon("pulse"),
         h("div", null, h("div", { class: "mill-state-title" }, running ? "Стан работает · " : "Стан стоит · ", info),
           subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
+      reportMenu(),
       h("div", { class: "mill-clock" }, icon("clock"),
         h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
           h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
