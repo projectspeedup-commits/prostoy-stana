@@ -109,7 +109,7 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
   receiptStatus, receiptFor, renderRejects, render, renderTopbar, go, nowMs, persistClient, shiftCloseEvents, eventTitle, humanError,
   renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, board, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
   groupFor, transferButton, conflictTarget, loadStats, renderShift, renderStats, renderClosed, resetStopDrafts,
-  renderFio,
+  renderFio, mergeStored, armShiftTimer,
 };`;
   // перехват тостов: showToast пишет в элемент #toast; соберём в массив
   code = code.replace("let toastTimer = null;", "let toastTimer = null; const __toasts = [];")
@@ -119,9 +119,10 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
     "queueTools", "setTimeout", "clearTimeout", "document", "window", "location", "localStorage", "history", "navigator", "setInterval", "clearInterval", "fetch", "Date", code);
   const windowStub = { scrollTo() {}, addEventListener(t, f) { (this.handlers[t] ||= []).push(f); }, handlers: {} };
   const historyStub = { replaceState() {} };
+  const timers = [];
   const build = async () => fn(core, zones.zoneOf, zones.dayCells, () => null, () => null, () => null,
-    queueTools, () => 0, () => {}, document, windowStub, location, localStorage, historyStub, {}, () => 0, () => {}, fetchStub, FakeDate);
-  return { build, net, els, storage, document, name, window: windowStub };
+    queueTools, (fn, delay) => { timers.push({fn, delay}); return timers.length; }, () => {}, document, windowStub, location, localStorage, historyStub, {}, () => 0, () => {}, fetchStub, FakeDate);
+  return { build, net, els, storage, document, name, timers, window: windowStub };
 }
 
 // Запуск планшета: реальный boot() без таймеров

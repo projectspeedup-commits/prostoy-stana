@@ -1,6 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
-import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey } from "./queue.js";
+import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -89,6 +89,10 @@ let stateEpoch = 0;
 let loadingState = false;
 let online = false;
 let flushing = false;
+let shiftTimer = null;
+let statsEpoch = 0;
+let handlingStorage = false;
+const taps = tapGuard();
 
 // Экран и данные мастеров. screen: auto | crew | reason | confirmChange |
 // manual | manualCheck | closeCheck | forgotStop | restartTime | restartConfirm | restartAction | actionFix |
@@ -115,19 +119,34 @@ for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
 settleRejected();
+function mergeStored() {
+  if (!queueStoredSeparately) return;
+  const saved = readJSON(SESSION_KEY, {});
+  const diskQueue = loadQueue();
+  const missing = diskQueue.filter((e) => !records.some((r) => r.event.id === e.id))
+    .map((event) => ({ ...saved.pendingReplacements?.find((r) => r.id === event.id), event, status: "pending" }));
+  records = mergeRecords(saved.records || [], missing, records);
+  settleRejected();
+  queue = mergeQueue(records, diskQueue, queue);
+}
 function persistClient() {
+  mergeStored();
   // При обновлении старой версии сначала переносим очередь, потом убираем её из снимка.
   if (!queueStoredSeparately) {
     if (!writeStore(QUEUE_KEY, JSON.stringify(queue))) return false;
     queueStoredSeparately = true;
   }
   settleRejected();
+  queue = mergeQueue(records, queue);
+  if (JSON.stringify(loadQueue()) !== JSON.stringify(queue)) writeStore(QUEUE_KEY, JSON.stringify(queue));
   records = pruneRecords(records, nowMs());
   const draft = Object.fromEntries(DRAFT_FIELDS.map((field) => [field, ui[field]]));
   // Очередь имеет отдельную запись и не переписывается при каждом вводе текста.
   const savedRecords = records.filter((r) => r.status !== "pending");
   const pendingReplacements = records.filter((r) => r.status === "pending" && (r.replaces || r.rootAccepted || r.transfers)).map(({ event, status, ...r }) => ({ ...r, id: event.id }));
-  const snapshot = (list) => JSON.stringify({ state: serverState, stateAt, records: list, pendingReplacements, clockOffset, draft, queueSeparated: true });
+  const peer = handlingStorage ? readJSON(SESSION_KEY, {}) : null;
+  const snapshot = (list) => JSON.stringify({ state: peer?.state || serverState, stateAt: peer?.stateAt || stateAt,
+    records: list, pendingReplacements, clockOffset: peer?.clockOffset ?? clockOffset, draft: peer?.draft || draft, queueSeparated: true });
   if (writeStore(SESSION_KEY, snapshot(savedRecords))) return true;
   records = records.filter((r) => !["saved", "replaced", "adopted", "dismissed"].includes(r.status));
   return writeStore(SESSION_KEY, snapshot(records.filter((r) => r.status !== "pending")));
@@ -135,8 +154,10 @@ function persistClient() {
 function acceptState(state, time) {
   if (!state) return;
   serverState = state;
+  invalidateStats();
   stateAt = time || new Date(nowMs()).toISOString();
   updateClock(time);
+  armShiftTimer();
   syncStopContext();
   settleRejected();
   persistClient();
@@ -158,6 +179,7 @@ function loadQueue() {
   return [];
 }
 function persistQueue() {
+  mergeStored();
   const json = JSON.stringify(queue);
   let stored = writeStore(QUEUE_KEY, json);
   if (!stored) {
@@ -185,6 +207,8 @@ function updateClock(serverTime) {
 
 // --- Очередь событий ---
 function queueEvent(type, fields = {}) {
+  mergeStored();
+  invalidateStats();
   // Кто нажал: бригада и человек из текущего приёма смены
   const who = type === "shift_open" ? null : buildView()?.crew;
   const { at, ...rest } = fields;
@@ -255,13 +279,23 @@ async function flush() {
           record.conflict = rejection?.conflict || null;
           if (rejection?.error === "already_stopped" && rejection.downtimeId) {
             record.status = "adopted";
+            record.adoptedDowntimeId = rejection.downtimeId;
             record.confirmedAt = d.serverTime || new Date(nowMs()).toISOString();
             if (ui.stopContext?.endsWith("|" + downtimeKey(event))) ui.stopContext = ui.stopContext.slice(0, ui.stopContext.lastIndexOf("|") + 1) + rejection.downtimeId;
             for (const e of queue) if (e.id !== event.id && e.downtimeId === (event.downtimeId || event.id)) e.downtimeId = rejection.downtimeId;
             for (const field of ["wz", "rw", "fw", "rec", "af", "bl"]) {
               if (ui[field]?.downtimeId === (event.downtimeId || event.id)) ui[field].downtimeId = rejection.downtimeId;
             }
-            showToast(`Стан уже остановлен с ${fmtClock(rejection.startMs ?? d.state?.open?.startMs)}`);
+            const current = d.state?.open?.segments?.at(-1);
+            if (current?.reason) {
+              for (const e of queue) if (e.downtimeId === rejection.downtimeId && ["reason", "split"].includes(e.type)) {
+                const r = records.find((r) => r.event.id === e.id);
+                if (r) { r.status = "rejected"; r.error = "fields_taken"; r.conflict = d.state.open; }
+              }
+              queue = queue.filter((e) => records.find((r) => r.event.id === e.id)?.status === "pending");
+              ui.wz = null; ui.screen = "auto";
+              showToast(`Причина уже указана с другого устройства: ${reasonLabel(current.reason)}`);
+            } else showToast(`Стан уже остановлен с ${fmtClock(rejection.startMs ?? d.state?.open?.startMs)}`);
           }
         }
       }
@@ -826,8 +860,13 @@ function renderRejects() {
   box.hidden = false;
   fill(box,
     storageErrors.size ? h("button", { class: "btn", onclick: () => { persistQueue(); render(); } }, "Повторить сохранение на планшете") : null,
-    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => dismissRejected(rejected.map((g) => g.record.event.id)) },
-      `Убрать все отклонённые записи (${rejected.length})`) : null,
+    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => {
+      const ids = rejected.map((g) => g.record.event.id);
+      const token = ids.join("|");
+      if (ui.dismissAllConfirm === token) { ui.dismissAllConfirm = null; dismissRejected(ids, true); }
+      else { ui.dismissAllConfirm = token; renderRejects(); }
+    } }, ui.dismissAllConfirm === rejected.map((g) => g.record.event.id).join("|")
+      ? `Точно убрать ${rejected.length} записей?` : `Убрать все отклонённые записи (${rejected.length})`) : null,
     ...rejected.map((g) => { const r = g.record; return h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: conflictMessage(g) }),
@@ -890,19 +929,17 @@ function transferButton(g) {
 }
 // Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
 // На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
-function dismissRejected(ids) {
+function dismissRejected(ids, confirmed = false) {
   const groups = rejectionGroups(records).filter((g) => g.records.some((r) => ids.includes(r.event.id)));
   const related = new Set(groups.flatMap((g) => g.records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.id)));
-  if (groups.some((g) => g.records.some((r) => r.event.type === "stop") && g.records.length > 1) && ui.dismissConfirm !== ids.join("|")) {
-    ui.dismissConfirm = ids.join("|");
-    fill($("main"), question("Убрать остановку вместе с причиной, пуском и браком? В учёт они не попадут"),
-      h("button", { class: "btn", onclick: () => { ui.dismissConfirm = null; render(); } }, "Оставить запись"),
-      h("button", { class: "btn warn-btn", onclick: () => dismissRejected(ids) }, "Убрать вместе с ответами"));
-    return;
+  if (!confirmed && groups.some((g) => g.records.some((r) => r.event.type === "stop") && g.records.length > 1)) {
+    ui.dismissPendingIds = ids;
+    ui.dismissBack = ui.screen;
+    return go("dismissConfirm");
   }
-  ui.dismissConfirm = null;
+  if (ui.screen === "dismissConfirm") ui.screen = ui.dismissBack || "auto";
   let n = 0;
-  for (const r of records) if (related.has(r.event.id)) { r.status = "dismissed"; n += 1; }
+  for (const r of records) if (related.has(r.event.id)) { r.status = "dismissed"; r.confirmedAt = new Date(nowMs()).toISOString(); n += 1; }
   queue = queue.filter((e) => !related.has(e.id));
   if (ui.repair && ids.includes(ui.repair.id)) ui.repair = null;
   persistQueue();
@@ -915,6 +952,7 @@ function humanError(code) {
     overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в итоге смены.",
     bad_time: "Дата должна быть не старше 40 суток, длительность ручного простоя — не больше 7 суток. Пуск не может быть раньше остановки или смены причины. Проверьте время записи.",
     not_found: "Простой или его отрезок не найден. Ответы ждут исправления остановки.",
+    fields_taken: "Причина уже указана с другого устройства. Сравните ответы и перенесите только пустые поля либо уберите свою запись.",
     not_open: "Нет открытого простоя для этого пуска. Обновите состояние стана.",
     too_large: "Запись слишком большая. Сократите текст и повторите отправку.",
     bad_range: "Конец простоя должен быть позже начала. Исправьте время.",
@@ -1016,9 +1054,13 @@ function syncStopContext() {
     ui.stopContext = context;
   }
 }
+function needCrewSafe(view) { return view && refs ? needCrew(view) : false; }
 function render() {
   syncStopContext();
   renderScreen();
+  const view = buildView();
+  taps.screen(JSON.stringify([ui.screen, ui.crewId, ui.confirmCrew, !!ui.fio, ui.wz?.step, ui.mw?.step, ui.fw?.step,
+    !!view?.open, needCrewSafe(view), $("main").querySelector("h1")?.textContent]));
   // На первом шаге причины выход уже есть: «Назад». Вторая кнопка лишняя
   const firstReasonStep = ui.screen === "reason" && ui.wz?.step === 1 && !ui.rw;
   // На вопросе о состоянии стана выход уже есть: «На главный экран»
@@ -1040,6 +1082,9 @@ function renderScreen() {
   const view = buildView();
   if (!view) return renderLoading(main);
   switch (ui.screen) {
+    case "dismissConfirm": return fill(main, question("Убрать остановку вместе с причиной, пуском и браком? В учёт они не попадут"),
+      h("button", { class: "btn", onclick: () => go(ui.dismissBack || "auto") }, "Оставить запись"),
+      h("button", { class: "btn warn-btn", onclick: () => dismissRejected(ui.dismissPendingIds, true) }, "Убрать вместе с ответами"));
     case "crew": return renderCrew(main, view);
     case "reason": return renderReasonWizard(main, view);
     case "confirmChange": return renderConfirmChange(main, view);
@@ -1492,14 +1537,16 @@ function renderRun(main, view) {
 // --- Метрики работы стана за период (первый экран) ---
 const PERIODS = [["shift", "Смена"], ["day", "Сутки"], ["week", "7 суток"], ["month", "Месяц"]];
 const STATS_TTL_MS = 60000;
+function invalidateStats() { statsEpoch++; ui.stats = {}; }
 function loadStats(period) {
   ui.stats = ui.stats || {};
   const c = ui.stats[period];
   if (c && (c.loading || nowMs() - c.at < STATS_TTL_MS)) return;
+  const epoch = statsEpoch;
   ui.stats[period] = { ...(c || {}), loading: true };
   api(`/api/stats?period=${period}`)
-    .then((d) => { ui.stats[period] = { data: d.stats, label: d.label, at: nowMs() }; })
-    .catch(() => { ui.stats[period] = { ...(c || {}), error: true, at: nowMs() }; })
+    .then((d) => { if (epoch !== statsEpoch) return; ui.stats[period] = { data: d.stats, label: d.label, at: nowMs() }; })
+    .catch(() => { if (epoch !== statsEpoch) return; ui.stats[period] = { ...(c || {}), error: true, at: nowMs() }; })
     .finally(() => softRender());
 }
 const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 100)}%`);
@@ -2733,7 +2780,7 @@ function submitRepair() {
     repair.error = "Проверьте причину. Для иной причины нужно описание своими словами.";
   }
   if (e.type === "fix" && e.action !== undefined && !validAction(e.action)) repair.error = "Напишите, что сделали.";
-  if (e.type === "manual") repair.error = manualError({ ...view, shift: core.shiftOf(core.toMs(e.from), refs.settings.schedule) }, { ...e, from: core.toMs(e.from), to: core.toMs(e.to) });
+  if (e.type === "manual") repair.error = manualError({ ...view, shift: core.shiftOf(core.toMs(records.find((r) => r.event.id === repair.id)?.event.from || e.from), refs.settings.schedule) }, { ...e, from: core.toMs(e.from), to: core.toMs(e.to) });
   if (e.type === "start") {
     const reason = e.reason || view.open?.reason;
     if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
@@ -2764,9 +2811,17 @@ function submitRepair() {
   flush();
 }
 
+// Точная граница смены не зависит от 30-секундного опроса.
+function armShiftTimer() {
+  clearTimeout(shiftTimer);
+  if (!refs) return;
+  const boundary = core.shiftOf(nowMs(), refs.settings.schedule).endMs;
+  shiftTimer = setTimeout(() => { syncStopContext(); render(); loadState(); armShiftTimer(); }, Math.max(1, boundary - nowMs() + 5));
+}
 // --- Тики часов на экране ---
 function tick() {
   const now = nowMs();
+  if (refs && serverState && serverState.shift.endMs <= now) { syncStopContext(); render(); loadState(); }
   // Московское время в полосах и на табло
   for (const el of document.querySelectorAll("[data-msk]")) el.textContent = fmtClock(now) + " МСК";
   for (const el of document.querySelectorAll("[data-until]")) el.textContent = fmtDurMin((Number(el.dataset.until) - now) / 60000);
@@ -2794,6 +2849,20 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 window.addEventListener("online", () => { flush(); loadState(); });
+document.addEventListener("click", (event) => {
+  if (taps.blocked()) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+  const button = event.target.closest?.("button.primary, button.mill-btn, button.tile");
+  if (button && !button.disabled) {
+    button.disabled = true;
+    setTimeout(() => { if (button.isConnected) button.disabled = false; }, 400);
+  }
+}, true);
+window.addEventListener("storage", (event) => {
+  if (![SESSION_KEY, QUEUE_KEY].map(storageName).includes(event.key)) return;
+  handlingStorage = true;
+  try { mergeStored(); persistQueue(); softRender(); }
+  finally { handlingStorage = false; }
+});
 document.addEventListener("input", (event) => {
   if (!key || event.target.type === "password") return;
   persistClient();

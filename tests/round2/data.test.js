@@ -65,7 +65,7 @@ test('Раунд 2.1: ответы отклонённого stop ждут, ка�
     a.h.ui.repair = { id: bad.event.id, event: { ...bad.event } };
     a.h.submitRepair(); await a.pump();
     assert.equal(a.rejectsBox().cards.length, 1);
-    assert.equal(bad.status, 'replaced');
+    assert.equal(a.h.records.find((r) => r.event.id === bad.event.id).status, 'replaced');
   }
   const restored = await bootTablet({ name: 'reload', key: 'k1', port, clock, storage: a.storage });
   await restored.boot();

@@ -7,7 +7,7 @@ import { createApp } from '../../app/server/index.js';
 
 const chrome = process.env.STAN_TEST_CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-test('UI: выбор ночной смены, квитанции, темы, шапка и пульт 320–1600 px', { timeout: 90000, skip: !fs.existsSync(chrome) }, async (t) => {
+test('UI: выбор ночной смены, квитанции, темы, шапка и пульт 320–1600 px', { timeout: 180000, skip: !fs.existsSync(chrome) }, async (t) => {
   const root = path.resolve(import.meta.dirname, '../../private');
   fs.mkdirSync(root, { recursive: true });
   const profile = fs.mkdtempSync(path.join(root, 'chrome-qa-'));
@@ -53,6 +53,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
     const id = ++seq; pending.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params }));
   });
   const evaluate = async (expression) => {
+    if (expression.includes(".click()")) await sleep(425);
     const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value;
@@ -75,6 +76,9 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await click('К выбору смены');
   await click('Смена 2');
   await evaluate(`document.querySelector('#main .tiles button').click()`);
+  await sleep(150);
+  await send('Runtime.evaluate', { expression: `document.querySelector('.mill-stop')?.click()` });
+  assert.equal(app.db.prepare("SELECT count(*) n FROM events WHERE type = 'stop'").get().n, 0, 'Второй тап после приёма не останавливает стан');
   await wait(`document.querySelector('.mill-panel') && JSON.parse(localStorage.getItem('stan.queue')).length === 0`);
   await post([0, 1, 2].map((i) => ({ id: `short${i}`, type: 'manual', at: new Date(now).toISOString(),
     from: new Date(now - 3600000 + i * 60000).toISOString(), to: new Date(now - 3600000 + i * 60000 + 20000).toISOString() })));
@@ -192,6 +196,8 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await evaluate(`[...document.querySelectorAll('#rejects .reject button')].find(b=>b.textContent==='Убрать запись').click()`);
   assert.equal(await evaluate(`document.querySelectorAll('#rejects .reject').length`), 2);
   await evaluate(`[...document.querySelectorAll('#rejects button')].find(b=>b.textContent==='Убрать все отклонённые записи (2)').click()`);
+  assert.match(await evaluate(`document.querySelector('#rejects').textContent`), /Точно убрать 2 записей/);
+  await evaluate(`[...document.querySelectorAll('#rejects button')].find(b=>b.textContent==='Точно убрать 2 записей?').click()`);
   assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
   for (const id of ['dismiss1', 'dismiss2', 'dismiss3']) assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.find(r=>r.event.id===${JSON.stringify(id)}).status`), 'dismissed');
   await send('Page.reload');

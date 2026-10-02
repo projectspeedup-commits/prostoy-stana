@@ -30,7 +30,7 @@ export async function deliverBatch(api, queue) {
 export function pruneRecords(records, nowMs) {
   const needed = new Set(records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.after));
   const confirmed = records.filter((r) => ["saved", "replaced", "adopted", "dismissed"].includes(r.status)
-    && Date.parse(r.event.at) >= nowMs - 3 * 86400000)
+    && Date.parse(["dismissed", "replaced"].includes(r.status) ? r.confirmedAt || r.event.at : r.event.at) >= nowMs - 3 * 86400000)
     .sort((a, b) => Date.parse(a.confirmedAt || a.event.at) - Date.parse(b.confirmedAt || b.event.at)).slice(-300);
   const keep = new Set(confirmed);
   return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r) || needed.has(r.event.id));
@@ -65,7 +65,15 @@ export function settleRecords(records, state) {
     if (savedRoots.has(r.rootId)) r.rootAccepted = true;
     if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
       r.status = 'replaced';
+      r.confirmedAt ||= records.findLast((next) => next.replaces === r.event.id)?.event.at || r.event.at;
       count++;
+    }
+    if (r.status === 'rejected' && ['start', 'reason', 'split', 'fix'].includes(r.event.type)) {
+      const own = [...(state?.day?.segments || []), ...(state?.segments || [])].filter((s) => s.downtimeId === r.event.downtimeId);
+      if (own.length && state?.open?.downtimeId !== r.event.downtimeId) {
+        r.conflict = { downtimeId: r.event.downtimeId, startMs: Math.min(...own.map((s) => s.startMs)),
+          endMs: Math.max(...own.map((s) => s.endMs)), segments: own.sort((a, b) => a.index - b.index) };
+      }
     }
   }
   return count;
@@ -132,4 +140,36 @@ export function transferFields(fields, target) {
 export function reusableRestart(draft, view, nowMs) {
   return !!(draft && view.open && draft.downtimeId === view.open.downtimeId && draft.index === view.open.index
     && draft.shiftStartMs === view.shift.startMs && nowMs >= draft.createdMs && nowMs - draft.createdMs < 600000);
+}
+
+const statusRank = { pending: 0, rejected: 1, replaced: 2, dismissed: 3, adopted: 4, saved: 4 };
+// Порядок аргументов решает лишь равные версии. Квитанция всегда сильнее старого черновика.
+export function mergeRecords(...lists) {
+  const byId = new Map();
+  for (const r of lists.flat()) {
+    if (!r?.event?.id) continue;
+    const old = byId.get(r.event.id);
+    if (!old || (statusRank[r.status] ?? 0) >= (statusRank[old.status] ?? 0)) byId.set(r.event.id, { ...old, ...r });
+  }
+  return [...byId.values()].sort((a, b) => (a.event.seq || 0) - (b.event.seq || 0));
+}
+export function mergeQueue(records, ...lists) {
+  const receipt = new Map(records.map((r) => [r.event.id, r]));
+  const result = new Map();
+  for (const e of lists.flat()) {
+    if (e?.id && (!receipt.has(e.id) || receipt.get(e.id).status === "pending")) result.set(e.id, receipt.get(e.id)?.event || e);
+  }
+  const queue = [...result.values()].sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  for (const r of records.filter((r) => r.status === 'adopted' && r.adoptedDowntimeId)) {
+    for (const e of queue) if (e.downtimeId === downtimeKey(r.event)) e.downtimeId = r.adoptedDowntimeId;
+  }
+  return queue;
+}
+
+export function tapGuard(now = () => performance.now()) {
+  let screen = null, until = 0;
+  return {
+    screen(value) { if (value !== screen) { screen = value; until = now() + 400; } },
+    blocked() { return now() < until; },
+  };
 }
