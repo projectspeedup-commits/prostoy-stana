@@ -129,7 +129,7 @@ test("ответы содержат заголовки безопасности"
     const r = await fetch(`${base}${p}`);
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
     assert.equal(r.headers.get("referrer-policy"), "no-referrer");
-    assert.equal(r.headers.get("content-security-policy"), "default-src 'self'");
+    assert.equal(r.headers.get("content-security-policy"), "default-src 'self'; frame-ancestors 'none'");
   }
   const api = await fetch(`${base}/api/health`);
   assert.equal(api.headers.get("cache-control"), "no-store");
