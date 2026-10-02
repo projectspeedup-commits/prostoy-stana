@@ -49,7 +49,7 @@ test('P1: исторические интервалы режутся окном 
   assert.equal(state.segments.length, 1);
   assert.equal(state.segments[0].startMs, state.shift.startMs);
   const stats = (await s.req('/api/stats?period=shift')).data.stats;
-  assert.equal(stats.downMin, state.summary.day.downMinutes);
+  assert.equal(stats.downMin, state.summary.shift.downMinutes);
 });
 
 test('P1: stop раньше/в начале открытого — overlap; второй планшет получает ID; лишний start — not_open', async (t) => {

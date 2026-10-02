@@ -1,4 +1,4 @@
-import { buildDowntimes, DEFAULT_SCHEDULE, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeDay, toMs } from "../core/core.js";
+import { buildDowntimes, DEFAULT_SCHEDULE, eventConflict, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeShift, toMs } from "../core/core.js";
 
 import { periodRange } from "../core/stats.js";
 
@@ -55,7 +55,10 @@ export function createEventStore(db) {
             const built = buildDowntimes(accepted, receivedMs);
             rejected.push({ id: event.id, error: timeError, downtimeId: built.open.downtimeId,
               startMs: Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs)) });
-          } else reject(timeError);
+          } else {
+            const conflict = eventConflict(accepted, event, receivedMs);
+            rejected.push({ id: event.id, error: timeError, ...(conflict ? { conflict } : {}) });
+          }
           continue;
         }
         const stored = { ...event, device };
@@ -96,7 +99,7 @@ export function createEventStore(db) {
       fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * MINUTE,
       segments: built.segments.map((segment) => ({
         ...segment, startMs: Math.max(segment.startMs, dayRange.fromMs),
-        endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * MINUTE),
+        endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * MINUTE, nowMs),
       })).filter((segment) => segment.endMs > segment.startMs),
     };
     return {
@@ -112,7 +115,7 @@ export function createEventStore(db) {
       crew,
       segments,
       day,
-      summary: summarizeDay(segments, [shift], { [shift.shiftNo]: events.length > 0 || !!ping }, { nowMs, dataFromMs: firstEventMs(events) ?? nowMs }),
+      summary: { shift: summarizeShift(built.segments, shift, refs, nowMs, firstEventMs(events) ?? (ping ? nowMs : null)) },
       closed,
       dataFromMs: firstEventMs(events),
       runningSinceMs: lastRunningMs(events, nowMs),

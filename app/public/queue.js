@@ -2,10 +2,11 @@
 export function eventBatch(queue, limit = 50, bytes = 40 * 1024) {
   const batch = [];
   for (const event of queue.slice(0, limit)) {
+    if (["stop", "start"].includes(event.type) && batch.length) break;
     const next = [...batch, event];
     if (new TextEncoder().encode(JSON.stringify({ events: next })).length > bytes) break;
     batch.push(event);
-    if (event.type === "stop") break; // сначала получаем ID возможного уже открытого простоя
+    if (["stop", "start"].includes(event.type)) break; // ответы зависят от квитанции управления станом
   }
   return batch;
 }
@@ -27,11 +28,12 @@ export async function deliverBatch(api, queue) {
 }
 
 export function pruneRecords(records, nowMs) {
+  const needed = new Set(records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.after));
   const confirmed = records.filter((r) => ["saved", "replaced", "adopted", "dismissed"].includes(r.status)
     && Date.parse(r.event.at) >= nowMs - 3 * 86400000)
     .sort((a, b) => Date.parse(a.confirmedAt || a.event.at) - Date.parse(b.confirmedAt || b.event.at)).slice(-300);
   const keep = new Set(confirmed);
-  return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r));
+  return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r) || needed.has(r.event.id));
 }
 
 // Цепочка исправлений переживает ограничение истории и перезагрузку с отдельной очередью.
@@ -57,13 +59,77 @@ export function settleRecords(records, state) {
   const known = new Set([...(state?.day?.segments || []), ...(state?.segments || [])].map((s) => s.downtimeId));
   if (state?.open) known.add(state.open.downtimeId);
   let count = 0;
+  const superseded = new Set(records.filter((r) => r.replaces).map((r) => r.replaces));
   for (const r of records) {
     r.rootId = roots.get(r.event.id);
     if (savedRoots.has(r.rootId)) r.rootAccepted = true;
-    if (r.status === 'rejected' && (r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
+    if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
       r.status = 'replaced';
       count++;
     }
   }
   return count;
+}
+
+export const downtimeKey = (e) => e.downtimeId || e.id;
+export const isAccepted = (r) => r && (["saved", "adopted"].includes(r.status) || r.rootAccepted);
+
+// Независимые события продолжают отправляться, даже когда один простой ждёт исправления.
+export function readyEvents(queue, records) {
+  const byId = new Map(records.map((r) => [r.event.id, r]));
+  const latest = (r) => {
+    const seen = new Set();
+    while (r && !seen.has(r.event.id)) {
+      seen.add(r.event.id);
+      const next = records.findLast((x) => x.replaces === r.event.id);
+      if (!next) break;
+      r = next;
+    }
+    return r;
+  };
+  return queue.filter((e) => {
+    if (byId.get(e.id)?.status !== "pending") return false;
+    if (e.onlyEmpty) return true;
+    if (e.after && !isAccepted(latest(byId.get(e.after)))) return false;
+    if (["stop", "manual", "shift_open", "shift_close"].includes(e.type)) return true;
+    const stop = records.findLast((r) => ["stop", "manual"].includes(r.event.type) && downtimeKey(r.event) === downtimeKey(e));
+    if (stop && !isAccepted(latest(stop))) return false;
+    // Очередь старых версий ещё не содержит after. Сохраняем порядок пуска и его ответов.
+    const pos = records.findIndex((r) => r.event.id === e.id);
+    const start = records.slice(0, pos).findLast((r) => r.event.type === "start" && downtimeKey(r.event) === downtimeKey(e));
+    return !["reason", "fix"].includes(e.type) || !start || isAccepted(latest(start));
+  });
+}
+
+export function rejectionGroups(records) {
+  const groups = new Map();
+  for (const r of records) {
+    const key = r.groupId || downtimeKey(r.event);
+    if (!groups.has(key)) groups.set(key, { key, records: [] });
+    groups.get(key).records.push(r);
+  }
+  return [...groups.values()].filter((g) => g.records.some((r) => r.status === "rejected")).map((g) => {
+    const active = g.records.filter((r) => !["dismissed", "replaced"].includes(r.status));
+    const record = active.find((r) => r.status === "rejected" && ["stop", "start", "manual"].includes(r.event.type))
+      || active.find((r) => r.status === "rejected");
+    const fields = {};
+    for (const { event: e } of active) {
+      for (const k of ["reason", "note", "action", "billet"]) if (e[k] !== undefined) fields[k] = e[k];
+      if (e.type === "stop") fields.from = e.at;
+      if (e.type === "start") fields.to = e.at;
+      if (e.type === "manual") { fields.from = e.from; fields.to = e.to; }
+    }
+    return { ...g, record, fields };
+  });
+}
+
+// Не стираем занятые поля даже при одновременном переносе с другого устройства.
+export function transferFields(fields, target) {
+  const empty = (v) => v == null || (typeof v === "string" && !v.trim());
+  return Object.fromEntries(["reason", "note", "action", "billet"].filter((k) => !empty(fields[k]) && empty(target[k])).map((k) => [k, fields[k]]));
+}
+
+export function reusableRestart(draft, view, nowMs) {
+  return !!(draft && view.open && draft.downtimeId === view.open.downtimeId && draft.index === view.open.index
+    && draft.shiftStartMs === view.shift.startMs && nowMs >= draft.createdMs && nowMs - draft.createdMs < 600000);
 }

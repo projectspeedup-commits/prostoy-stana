@@ -58,13 +58,13 @@ function computeState() {
   const openStartMs = built.open
     ? Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs))
     : null;
-  const summary = core.summarizeDay(segments, [shift], { [shift.shiftNo]: events.length > 0 }, { nowMs: now, dataFromMs: firstEventMs() ?? now });
+  const summary = { shift: core.summarizeShift(built.segments, shift, refs, now, firstEventMs()) };
   const dayRange = periodRange("day", now, schedule);
   const day = {
     fromMs: dayRange.fromMs, toMs: dayRange.fromMs + 24 * 60 * 60000,
     segments: built.segments.map((segment) => ({
       ...segment, startMs: Math.max(segment.startMs, dayRange.fromMs),
-      endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * 60000),
+      endMs: Math.min(segment.endMs, dayRange.fromMs + 24 * 60 * 60000, now),
     })).filter((segment) => segment.endMs > segment.startMs),
   };
 
@@ -165,13 +165,15 @@ export async function api(path, options = {}) {
         continue;
       }
       const now = Date.now();
-      const error = core.eventBoundsError(e, now) || core.eventTimeError(events, e, now);
+      const boundsError = core.eventBoundsError(e, now);
+      const error = boundsError || core.eventTimeError(events, e, now);
       if (error) {
         const built = core.buildDowntimes(events, now);
+        const conflict = !boundsError && core.eventConflict(events, e, now);
         rejected.push({ id: e.id, error, ...(error === "already_stopped" ? {
           downtimeId: built.open.downtimeId,
           startMs: Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs)),
-        } : {}) });
+        } : conflict ? { conflict } : {}) });
         continue;
       }
       if (e.type !== "shift_open") {

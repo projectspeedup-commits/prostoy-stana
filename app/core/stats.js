@@ -139,8 +139,8 @@ export function periodRange(period, nowMs, schedule) {
 /** Рассчитывает метрики по отрезку [fromMs, toMs). */
 export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const from = toMsValue(fromMs);
-  const to = toMsValue(toMs);
   const now = toMsValue(nowMs);
+  const to = Math.min(toMsValue(toMs), now);
   if (to < from) throw new Error("Некорректный период");
   const built = buildDowntimes(events, now);
   built.segments = withDowntimeDuration(built.segments);
