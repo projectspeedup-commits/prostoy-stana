@@ -2,12 +2,13 @@
 // только TextEncoder, Uint8Array и DataView. Строки пишутся как inlineStr, ZIP — методом store,
 // CRC32 — по таблице. Порядок элементов в листе жёсткий (Excel иначе предлагает «восстановить файл»):
 // sheetPr → dimension → sheetViews → sheetFormatPr → cols → sheetData → autoFilter → mergeCells →
-// pageMargins → pageSetup → headerFooter.
+// pageMargins → pageSetup → headerFooter → rowBreaks.
 //
 // Модель книги (её строит core/report.js):
 //   { title, creator, createdMs, sheets: [Лист] }
 //   Лист:  { name, columns: [{ width }], rows: [Строка], freeze: { rows, cols }, autoFilter: { r, c, r2, c2 },
-//            merges: [{ r, c, r2, c2 }], printTitleRows: [r, r2], landscape: true, tabColor }
+//            merges: [{ r, c, r2, c2 }], printTitleRows: [r, r2], landscape: true, tabColor,
+//            pageBreaks: [r] — разрыв страницы перед строкой r при печати }
 //   Строка: массив ячеек или { cells: [...], height } (высота в пунктах; без неё Excel подбирает сам)
 //   Ячейка: null | строка | число | boolean | { v, numFmt, bold, italic, size, color, fill, h, va, wrap, border,
 //            borderColor, indent }
@@ -373,6 +374,12 @@ function sheetXml(sheet, sheetIndex, styles) {
   if (sheet.landscape || sheet.fitWidth) {
     parts.push(`<pageSetup paperSize="9"${sheet.landscape ? ' orientation="landscape"' : ""} fitToWidth="1" fitToHeight="0"/>`);
     parts.push("<headerFooter><oddFooter>&amp;L&amp;A&amp;RСтраница &amp;P из &amp;N</oddFooter></headerFooter>");
+  }
+  const breaks = [...new Set((sheet.pageBreaks || []).filter((r) => Number.isInteger(r) && r > 0 && r < MAX_ROWS))].sort((a, b) => a - b);
+  if (breaks.length) {
+    // id — номер строки (с единицы), после которой начинается новая страница, то есть индекс строки с нуля
+    parts.push(`<rowBreaks count="${breaks.length}" manualBreakCount="${breaks.length}">${breaks.map((r) =>
+      `<brk id="${r}" max="16383" man="1"/>`).join("")}</rowBreaks>`);
   }
   return XML_HEAD + `<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">${parts.join("")}</worksheet>`;
 }

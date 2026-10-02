@@ -38,10 +38,10 @@ const FORMAT = {
 };
 
 const GRID = "C9D1DA";
-const BODY = { border: "thin", borderColor: GRID, va: "top" };
+const BODY = { border: "thin", borderColor: GRID, va: "center" };
 const HEAD = { bold: true, fill: "E3E8EF", border: "thin", borderColor: "9AA5B1", wrap: true, h: "center", va: "center" };
 const SECTION = { bold: true, fill: "EEF2F6", border: "thin", borderColor: GRID, va: "center" };
-const TOTAL = { bold: true, fill: "F1F4F8", border: { left: "thin", right: "thin", top: "medium", bottom: "thin" }, borderColor: "6B7685", va: "top" };
+const TOTAL = { bold: true, fill: "F1F4F8", border: { left: "thin", right: "thin", top: "medium", bottom: "thin" }, borderColor: "6B7685", va: "center" };
 
 /** Минуты → «3:57» для текста пояснений. */
 const hm = (minutes) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
@@ -315,8 +315,9 @@ function summarySheet(data, ctx) {
   section("Брак");
   row("Брак заготовки всего, тн", tons(Math.round(parts.reduce((sum, p) => sum + p.billet, 0) * 1000) / 1000));
 
-  // Простои по причинам
+  // Простои по причинам: при печати начинаются с новой страницы, чтобы заголовок не остался без таблицы
   rows.push([]);
+  const reasonsTitleRow = rows.length;
   rows.push({ cells: [{ v: "Простои по причинам", bold: true, size: 12 }], height: 20 });
   const tableTop = rows.length;
   rows.push(headerRow(["Причина", "Тип", "Остановок", "Время", "Доля от всех простоев"]));
@@ -363,7 +364,10 @@ function summarySheet(data, ctx) {
   const merges = [...f.merges];
   for (let r = last - notes.length + 1; r <= last; r++) merges.push({ r, c: 0, r2: r, c2: widths.length - 1 });
   merges.push({ r: tableTop - 1, c: 0, r2: tableTop - 1, c2: widths.length - 1 });
-  return { name: REPORT_SHEETS[0], columns: widths.map((width) => ({ width })), rows, merges, freeze: { rows: 3, cols: 0 }, landscape: true };
+  return {
+    name: REPORT_SHEETS[0], columns: widths.map((width) => ({ width })), rows, merges, freeze: { rows: 3, cols: 0 },
+    landscape: true, pageBreaks: [reasonsTitleRow],
+  };
 }
 
 function shiftSheet(data, ctx, masters) {
@@ -407,7 +411,7 @@ function journalSheet(data, ctx, masters) {
   const { parts } = data;
   const { refs } = ctx;
   const tz = refs.settings.schedule.tzOffsetMinutes || 0;
-  const widths = [5, 11, 9, 24, 16, 16, 12, 12, 20, 34, 34, 8, 28];
+  const widths = [5, 11, 9, 30, 16, 16, 13, 14, 20, 34, 34, 8, 28];
   const f = frame("Отчёт по простоям стана — журнал простоев", ctx.context, widths);
   const rows = [...f.rows, headerRow(["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка"])];
   const merges = [...f.merges];

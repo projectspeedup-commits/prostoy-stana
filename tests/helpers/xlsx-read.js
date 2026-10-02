@@ -198,6 +198,7 @@ export function readXlsx(bytes) {
       autoFilter: kid(sheet, "autoFilter")?.attrs.ref || null,
       merges: kids(kid(sheet, "mergeCells") || { children: [] }, "mergeCell").map((m) => m.attrs.ref),
       pageSetup: kid(sheet, "pageSetup")?.attrs || null,
+      rowBreaks: kids(kid(sheet, "rowBreaks") || { children: [] }, "brk").map((b) => ({ id: Number(b.attrs.id), max: Number(b.attrs.max), man: b.attrs.man })),
       /** значения по строкам: values[r][c] */
       values: Array.from({ length: rows.length }, (_, r) => Array.from({ length: Math.max(0, ...(rows[r] || []).map((x, i) => (x ? i + 1 : 0))) }, (_, c) => rows[r]?.[c]?.value ?? null)),
     };

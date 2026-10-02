@@ -113,6 +113,15 @@ test("сводка: итоги равны ручному расчёту и по�
   assert.equal(summaryCell(sheet, "причина").value, "Плановая", "самый долгий — перевалка 45 мин 20 с");
 });
 
+test("сводка: таблица причин при печати начинается с новой страницы", () => {
+  const { events, now, day } = dayFixture();
+  const sheet = build(events, { fromDay: day, toDay: day, nowMs: now }).wb.sheets[0];
+  const title = sheet.rows.findIndex((r) => r && r[0] && r[0].value === "Простои по причинам");
+  assert.ok(title > 0);
+  assert.deepEqual(sheet.rowBreaks, [{ id: title, max: 16383, man: "1" }]);
+  for (const other of [1, 2, 3]) assert.deepEqual(build(events, { fromDay: day, toDay: day, nowMs: now }).wb.sheets[other].rowBreaks, []);
+});
+
 test("сводка: подписи как на экране, формат ячеек по заданию, шапка «Показатель | Значение»", () => {
   const { events, now, day } = dayFixture();
   const sheet = build(events, { fromDay: day, toDay: day, nowMs: now }).wb.sheets[0];

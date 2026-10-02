@@ -108,6 +108,14 @@ test("лист: порядок элементов, ширины, закрепл�
   ]);
 });
 
+test("разрывы страниц: перед строкой, по возрастанию, без повторов; порядок элементов сохраняется", () => {
+  const book = { sheets: [{ name: "T", rows: Array.from({ length: 60 }, (_, i) => [i]), landscape: true, pageBreaks: [40, 20, 20, 0, -3, 1.5, 61 + 2000000] }] };
+  const sheet = readXlsx(buildXlsx(book)).sheets[0];
+  assert.deepEqual(sheet.rowBreaks, [{ id: 20, max: 16383, man: "1" }, { id: 40, max: 16383, man: "1" }]);
+  assert.deepEqual(sheet.order.slice(-4), ["pageMargins", "pageSetup", "headerFooter", "rowBreaks"]);
+  assert.deepEqual(readXlsx(buildXlsx({ sheets: [{ name: "T", rows: [["a"]] }] })).sheets[0].rowBreaks, []);
+});
+
 test("ячейки: типы, форматы, жирная шапка с заливкой, перенос текста", () => {
   const sheet = readXlsx(buildXlsx(sample())).sheets[0];
   const cell = (ref) => sheet.cells.get(ref);
