@@ -4,7 +4,7 @@ import { DEFAULT_SCHEDULE, shiftOf } from "../../app/core/core.js";
 import { periodRange } from "../../app/core/stats.js";
 import {
   REPORT_MAX_DAYS, REPORT_PRESETS, addDays, checkReportPeriod, currentDay, dayFromIndex, dayIndex, dayStartHm, dayStartMs,
-  presetRange, reportFileName, ruDate, ruDateTime, tzName,
+  maxReportDay, presetRange, reportFileName, ruDate, ruDateTime, tzName,
 } from "../../app/core/report-period.js";
 
 const S = DEFAULT_SCHEDULE;
@@ -59,7 +59,7 @@ test("период: отказы — сообщения по-русски", () =
     [{ from: "вчера", to: "2026-10-01" }, /Дата «С» указана неверно/],
     [{ from: "2026-10-01", to: "2026-02-30" }, /Дата «По» указана неверно/],
     [{ from: "2026-10-02", to: "2026-10-01" }, /«С» не может быть позже даты «По»/],
-    [{ from: "2026-10-03", to: "2026-10-03" }, /Дата «По» \(03\.10\.2026\) ещё не наступила: текущие сутки — 02\.10\.2026/],
+    [{ from: "2026-10-03", to: "2026-10-03" }, /Дата «По» \(03\.10\.2026\) ещё не наступила\. Последняя доступная дата — 02\.10\.2026/],
     [{ from: "2026-01-01", to: "2026-10-01" }, /не может быть длиннее 92 суток: выбрано 274/],
   ];
   for (const [query, pattern] of cases) {
@@ -70,15 +70,43 @@ test("период: отказы — сообщения по-русски", () =
   }
 });
 
-test("период: ровно 92 суток можно, 93 — нельзя; граница «текущих суток» в 08:00", () => {
+test("период: ровно 92 суток можно, 93 — нельзя", () => {
   const now = msk(2, 15);
   assert.equal(REPORT_MAX_DAYS, 92);
   assert.equal(checkReportPeriod({ from: addDays("2026-10-02", -91), to: "2026-10-02" }, now, S).ok, true);
   assert.equal(checkReportPeriod({ from: addDays("2026-10-02", -92), to: "2026-10-02" }, now, S).ok, false);
-  // До 08:00 по Москве ещё идут прошлые сутки: 02.10 в 07:59 — текущие сутки 01.10
-  assert.equal(checkReportPeriod({ from: "2026-10-01", to: "2026-10-02" }, msk(2, 7, 59), S).ok, false);
-  assert.equal(checkReportPeriod({ from: "2026-10-01", to: "2026-10-01" }, msk(2, 7, 59), S).ok, true);
+});
+
+test("последняя доступная дата: сегодняшняя по МСК; ночью — на день впереди текущих производственных суток", () => {
+  // До 08:00 по Москве ещё идут прошлые сутки: 02.10 в 02:05 — текущие сутки 01.10, но сегодня уже 02.10
+  assert.equal(currentDay(msk(2, 2, 5), S), "2026-10-01");
+  assert.equal(maxReportDay(msk(2, 2, 5), S), "2026-10-02");
+  assert.equal(maxReportDay(msk(2, 0, 0), S), "2026-10-02");
+  assert.equal(maxReportDay(msk(1, 23, 59), S), "2026-10-01");
+  assert.equal(maxReportDay(msk(2, 7, 59), S), "2026-10-02");
+  assert.equal(maxReportDay(msk(2, 8, 0), S), "2026-10-02");
+  assert.equal(maxReportDay(msk(2, 20, 0), S), "2026-10-02");
+  // Пример из задания: отчёт 01.10–02.10, скачанный в 02:05 02.10, допустим; третье число — ещё нет
+  const night = msk(2, 2, 5);
+  assert.equal(checkReportPeriod({ from: "2026-10-01", to: "2026-10-02" }, night, S).ok, true);
+  assert.equal(checkReportPeriod({ from: "2026-10-01", to: "2026-10-01" }, night, S).ok, true);
+  const refused = checkReportPeriod({ from: "2026-10-01", to: "2026-10-03" }, night, S);
+  assert.equal(refused.ok, false);
+  assert.match(refused.message, /Последняя доступная дата — 02\.10\.2026/);
   assert.equal(checkReportPeriod({ from: "2026-10-01", to: "2026-10-02" }, msk(2, 8, 0), S).ok, true);
+  // Другой пояс расписания: пятичасовой сдвиг (UTC+5), 02:30 по местному 02.10 — сегодня 02.10, сутки с 08:00 ещё 01.10
+  const ekb = { tzOffsetMinutes: 300, shifts: [{ no: 1, start: "08:00" }, { no: 2, start: "20:00" }] };
+  const ekbNight = Date.UTC(2026, 9, 1, 21, 30); // 02:30 02.10 по UTC+5
+  assert.equal(currentDay(ekbNight, ekb), "2026-10-01");
+  assert.equal(maxReportDay(ekbNight, ekb), "2026-10-02");
+});
+
+test("отчёт за сутки, которые ещё не начались: допустим, но время считается только до «сейчас»", () => {
+  const night = msk(2, 2, 5);
+  const ok = checkReportPeriod({ from: "2026-10-01", to: "2026-10-02" }, night, S);
+  assert.equal(ok.endMs, msk(3, 8));
+  assert.ok(ok.endMs > night && ok.fromMs < night);
+  assert.equal(ok.today, "2026-10-01", "быстрый выбор «Сегодня» остаётся текущими производственными сутками");
 });
 
 test("быстрый выбор: пять вариантов, границы месяцев и года", () => {

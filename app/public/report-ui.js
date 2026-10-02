@@ -2,7 +2,7 @@
 // Подключается из app.js отдельно (import()): если файл не загрузится, пульт работает как раньше.
 // Стили — report.css (классы .rep-*), DOM строится через h() страницы; атрибут style и inline-код
 // запрещены политикой безопасности, поэтому ничего этого здесь нет.
-import { REPORT_PRESETS, XLSX_MIME, checkReportPeriod, currentDay, dayStartHm, presetRange, reportFileName, tzName } from "./core/report-period.js";
+import { REPORT_PRESETS, XLSX_MIME, checkReportPeriod, currentDay, dayStartHm, maxReportDay, presetRange, reportFileName, tzName } from "./core/report-period.js";
 
 const FETCH_TIMEOUT_MS = 60_000;
 const DEFAULT_SCHEDULE = { tzOffsetMinutes: 180, shifts: [{ no: 1, start: "08:00" }, { no: 2, start: "20:00" }] };
@@ -87,7 +87,7 @@ export function createReportMenu({ h, nowMs, getSchedule, getKey, getApi, demo, 
     }
     for (const [input, key] of [[c.from, "from"], [c.to, "to"]]) {
       if (input.value !== state[key]) input.value = state[key];
-      input.max = t;
+      input.max = maxReportDay(nowMs(), schedule());
     }
     c.error.textContent = state.error;
     c.error.hidden = !state.error;

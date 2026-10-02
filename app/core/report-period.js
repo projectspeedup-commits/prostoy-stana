@@ -69,6 +69,17 @@ export function currentDay(nowMs, schedule) {
   return shiftOf(nowMs, schedule).day;
 }
 
+/**
+ * Последняя дата, которую можно запросить: сегодняшняя дата в поясе расписания. Ночью, до начала новых
+ * производственных суток (до 08:00), это следующая за текущими суткам дата: отчёт за 01.10–02.10, поданный в 02:05
+ * 02.10, допустим, а время после «сейчас» всё равно не считается.
+ */
+export function maxReportDay(nowMs, schedule) {
+  const production = currentDay(nowMs, schedule);
+  const calendar = new Date(nowMs + (schedule.tzOffsetMinutes || 0) * MINUTE).toISOString().slice(0, 10);
+  return dayIndex(calendar) > dayIndex(production) ? calendar : production;
+}
+
 const fail = (message) => ({ ok: false, message });
 
 /**
@@ -86,8 +97,9 @@ export function checkReportPeriod({ from, to }, nowMs, schedule) {
   if (b === null) return fail("Дата «По» указана неверно. Нужен формат ГГГГ-ММ-ДД, например 2026-10-01.");
   if (a > b) return fail("Дата «С» не может быть позже даты «По».");
   const today = currentDay(nowMs, schedule);
-  if (b > dayIndex(today)) {
-    return fail(`Дата «По» (${ruDate(to)}) ещё не наступила: текущие сутки — ${ruDate(today)}.`);
+  const last = maxReportDay(nowMs, schedule);
+  if (b > dayIndex(last)) {
+    return fail(`Дата «По» (${ruDate(to)}) ещё не наступила. Последняя доступная дата — ${ruDate(last)}.`);
   }
   const days = b - a + 1;
   if (days > REPORT_MAX_DAYS) {
@@ -96,7 +108,7 @@ export function checkReportPeriod({ from, to }, nowMs, schedule) {
   return { ok: true, fromDay: from, toDay: to, days, today, fromMs: dayStartMs(from, schedule), endMs: dayStartMs(to, schedule) + DAY_MS };
 }
 
-/** Быстрый выбор: today — текущие сутки; возвращает { from, to } в виде «ГГГГ-ММ-ДД». */
+/** Быстрый выбор: today — текущие производственные сутки; возвращает { from, to } в виде «ГГГГ-ММ-ДД». */
 export function presetRange(kind, today) {
   const index = dayIndex(today);
   if (index === null) throw new Error("Некорректные сутки");

@@ -248,10 +248,11 @@ try {
   await waitButton();
   await setTheme("light");
   await chrome.viewport(1280, 800);
-  const today = await E("document.querySelector('.rep-date').max");
-  check(/^\d{4}-\d{2}-\d{2}$/.test(today), "поле даты ограничено текущими сутками", today);
-
   await openPanel();
+  // По умолчанию в полях — текущие производственные сутки; выбрать можно до сегодняшней даты по МСК включительно
+  const today = await E("document.querySelector('#rep-from').value");
+  const maxDay = await E("document.querySelector('.rep-date').max");
+  check(/^\d{4}-\d{2}-\d{2}$/.test(today) && /^\d{4}-\d{2}-\d{2}$/.test(maxDay) && maxDay >= today, "поля дат: по умолчанию текущие сутки, предел — последняя доступная дата", { today, maxDay });
   check((await E("document.querySelector('.rep-title').textContent")) === "Отчёт в Excel", "заголовок панели «Отчёт в Excel»");
   const chips = await E("[...document.querySelectorAll('.rep-chip')].map((c) => c.textContent)");
   check(JSON.stringify(chips) === JSON.stringify(["Сегодня", "Вчера", "7 дней", "Этот месяц", "Прошлый месяц"]), "быстрый выбор: пять вариантов", chips);

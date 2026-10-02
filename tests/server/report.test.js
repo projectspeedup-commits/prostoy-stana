@@ -38,7 +38,7 @@ test("отчёт: неверный период — 400 с русским соо
       ["?from=сегодня&to=2026-01-01", /Дата «С» указана неверно/],
       ["?from=2026-01-01&to=2026-02-30", /Дата «По» указана неверно/],
       ["?from=2026-01-01&to=2025-12-31", /«С» не может быть позже даты «По»/],
-      ["?from=2026-01-01&to=2026-01-02", /Дата «По» \(02\.01\.2026\) ещё не наступила: текущие сутки — 01\.01\.2026/],
+      ["?from=2026-01-01&to=2026-01-02", /Дата «По» \(02\.01\.2026\) ещё не наступила\. Последняя доступная дата — 01\.01\.2026/],
       ["?from=2025-09-01&to=2026-01-01", /не может быть длиннее 92 суток: выбрано 123/],
     ];
     for (const [query, pattern] of cases) {
@@ -138,6 +138,29 @@ test("отчёт: часы сервера — «сейчас»; одни и те
     // С 10:00 01.01 до 09:00 02.01 по часам сервера — 23 часа, и ни минуты после «сейчас»
     assert.equal(minutesOf(summaryCell(wb.sheets[0], "Простой")), 1380);
     assert.equal(minutesOf(summaryCell(wb.sheets[0], "Учтённое время")), 1380);
+  } finally { await app.close(); }
+});
+
+test("отчёт: ночью период 01.10–02.10 допустим (сегодня уже 02.10), а третье число — нет", async () => {
+  const now = new Date("2026-10-01T23:05:00Z"); // 02:05 МСК 02.10.2026: текущие производственные сутки ещё 01.10
+  const { app, base } = await start(() => now);
+  try {
+    await postEvents(base, [
+      { id: "a", type: "shift_open", at: "2026-10-01T18:00:00Z", crewId: "2", personId: "p4", personName: "Волков Евгений Николаевич" },
+      { id: "b", type: "stop", at: "2026-10-01T20:00:00Z", downtimeId: "n1", reason: "burezhka" },
+      { id: "c", type: "start", at: "2026-10-01T20:30:00Z", downtimeId: "n1" },
+    ]);
+    const both = await report(base, "?from=2026-10-01&to=2026-10-02");
+    assert.equal(both.status, 200);
+    const name = decodeURIComponent(both.headers.get("content-disposition").split("filename*=UTF-8''")[1]);
+    assert.equal(name, "Отчёт по простоям стана за 01.10.2026–02.10.2026, скачан 02.10.2026 в 02-05.xlsx");
+    const wb = readXlsx(new Uint8Array(await both.arrayBuffer()));
+    assert.match(wb.sheets[0].rows[1][0].value, /^Период: с 01\.10\.2026 08:00 по 03\.10\.2026 08:00 МСК.*Период включает текущий момент/);
+    const single = readXlsx(new Uint8Array(await (await report(base, "?from=2026-10-01&to=2026-10-01")).arrayBuffer()));
+    assert.deepEqual(wb.sheets[0].values.slice(2), single.sheets[0].values.slice(2), "числа те же: время после «сейчас» не считается");
+    const third = await report(base, "?from=2026-10-01&to=2026-10-03");
+    assert.equal(third.status, 400);
+    assert.match((await third.json()).message, /Последняя доступная дата — 02\.10\.2026/);
   } finally { await app.close(); }
 });
 
