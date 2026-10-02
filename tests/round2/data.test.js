@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../../app/server/index.js';
+import { round2Server } from '../helpers/round2-server.js';
 import { bootTablet, text, findAll } from '../helpers/tablet.js';
 import { eventBatch, reusableRestart, rejectionGroups } from '../../app/public/queue.js';
 
@@ -8,12 +8,10 @@ const base = Date.parse('2026-10-05T05:00:00Z'); // 08:00 МСК
 const at = (minutes) => new Date(base + minutes * 60000).toISOString();
 async function fixture(t, minutes = 160) {
   const clock = { t: base + minutes * 60000 };
-  const app = createApp({ dataDir: ':memory:', deviceKeys: 'a:k1,b:k2', now: () => new Date(clock.t) });
-  await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
-  t.after(() => app.close());
+  const app = await round2Server(t, clock, base);
   const port = app.server.address().port;
   const api = async (route, body) => (await fetch(`http://127.0.0.1:${port}${route}`, {
-    headers: { 'X-Device-Key': 'k2' }, ...(body ? { method: 'POST', body: JSON.stringify({ events: body }) } : {}),
+    headers: { 'X-Device-Key': 'k2', Connection: 'close' }, ...(body ? { method: 'POST', body: JSON.stringify({ events: body }) } : {}),
   })).json();
   const save = (...events) => api('/api/events', events);
   await save({ id: 'crew', type: 'shift_open', at: at(0), crewId: '1', personName: 'Иванов Иван Иванович' });

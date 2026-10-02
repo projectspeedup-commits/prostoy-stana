@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../../app/server/index.js';
+import { round2Server } from '../helpers/round2-server.js';
 import { mergeRecords, mergeQueue, tapGuard, settleRecords } from '../../app/public/queue.js';
 import { bootTablet, text } from '../helpers/tablet.js';
 
@@ -8,10 +8,9 @@ const start = Date.parse('2026-10-05T05:00:00Z');
 const at = (mins) => new Date(start + mins * 60000).toISOString();
 async function fixture(t, minutes = 160) {
   const clock = { t: start + minutes * 60000 };
-  const app = createApp({ dataDir: ':memory:', deviceKeys: 'a:k1,b:k2', now: () => new Date(clock.t) });
-  await new Promise((r) => app.server.listen(0, '127.0.0.1', r)); t.after(() => app.close());
+  const app = await round2Server(t, clock, start);
   const port = app.server.address().port;
-  const save = async (...events) => (await fetch(`http://127.0.0.1:${port}/api/events`, { method: 'POST', headers: { 'X-Device-Key': 'k2' }, body: JSON.stringify({ events }) })).json();
+  const save = async (...events) => (await fetch(`http://127.0.0.1:${port}/api/events`, { method: 'POST', headers: { 'X-Device-Key': 'k2', Connection: 'close' }, body: JSON.stringify({ events }) })).json();
   await save({ id: 'crew', type: 'shift_open', at: at(0), crewId: '1', personName: 'Иванов Иван Иванович' });
   const a = await bootTablet({ name: 'A', key: 'k1', clock, port }); await a.boot();
   return { clock, app, port, save, a };
@@ -24,6 +23,17 @@ test('Раунд 2.8: защита ровно 400 мс после переход
   guard.screen('run'); now += 150; assert.equal(guard.blocked(), true);
   guard.screen('run'); now += 250; assert.equal(guard.blocked(), false);
   guard.screen('reason'); assert.equal(guard.blocked(), true);
+});
+
+test('Раунд 2.8: второй тап через 150 мс перехватывается настоящим обработчиком страницы', async (t) => {
+  const { a, app } = await fixture(t);
+  a.h.go('crew');
+  await new Promise((r) => setTimeout(r, 150));
+  let blocked = false;
+  const click = { target: {}, preventDefault() { blocked = true; }, stopImmediatePropagation() {} };
+  for (const listener of a.document.handlers.click) listener(click);
+  assert.equal(blocked, true);
+  assert.equal(app.db.prepare("SELECT count(*) n FROM events WHERE type='stop' AND id='double-tap'").get().n, 0);
 });
 
 test('Раунд 2.9: окончательные статусы побеждают, очередь объединяется по seq', () => {
@@ -113,4 +123,15 @@ test('Раунд 2.13–14: ручной простой прошлой смен�
   assert.match(text(a.els.get('rejects')), /Точно убрать 2 записей/);
   a.click(a.els.get('rejects'), 'Точно убрать 2 записей');
   assert.equal(a.rejectsBox().cards.length, 0);
+});
+
+test('Раунд 2.18: форма ФИО принимает расширенную кириллицу и объясняет неверный ввод', async (t) => {
+  const { a } = await fixture(t);
+  a.h.ui.fio = { crewId: '1', personId: 'p1', last: 'Әлімқұлов', first: 'Ғалымжан', middle: 'Нұрұлы' };
+  a.h.renderFio(a.main(), a.h.buildView());
+  a.click(a.main(), 'Принять смену'); await a.pump();
+  assert.equal(a.h.serverState.crew.personName, 'Әлімқұлов Ғалымжан Нұрұлы');
+  a.h.ui.fio = { crewId:'1', last:'Иванов', first:'И.', middle:'Иванович' };
+  a.h.renderFio(a.main(), a.h.buildView());
+  assert.match(text(a.main()), /без точек и цифр/);
 });

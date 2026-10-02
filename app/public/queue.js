@@ -173,3 +173,12 @@ export function tapGuard(now = () => performance.now()) {
     blocked() { return now() < until; },
   };
 }
+
+export function fullNameError(parts) {
+  if (parts.some((v) => !String(v || "").trim())) return "Впишите фамилию, имя и отчество полностью.";
+  if (parts.map((s) => s.trim()).join(" ").length > 120) return "ФИО должно содержать не больше 120 символов вместе с пробелами.";
+  if (parts.some((v) => !/^[\p{Script=Cyrillic}A-Za-z][\p{Script=Cyrillic}A-Za-z’' -]+$/u.test(v.trim()))) {
+    return "Используйте буквы кириллицы или латиницы, пробел, дефис или апостроф. Каждое слово — полностью, не меньше двух букв, без точек и цифр.";
+  }
+  return "";
+}

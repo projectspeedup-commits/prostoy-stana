@@ -1,6 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
-import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard } from "./queue.js";
+import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard, fullNameError } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -785,6 +785,7 @@ function question(text) {
 let toastTimer = null;
 function showToast(text) {
   const t = $("toast");
+  t.className = "toast" + (/Укажите|Проверьте|Напишите|Нет |Не |не принят|не сохран|уже |Ошибка/i.test(text) ? " warning" : "");
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toastTimer);
@@ -803,17 +804,24 @@ function renderTopbar() {
   const status = $("save-status");
   if (status) {
     const rejected = rejectionGroups(records).length;
-    status.className = "save-status" + (storageErrors.size || rejected ? " attention" : "");
+    status.className = "save-status " + (!online ? "offline" : storageErrors.size || rejected || queue.length ? "waiting" : "online");
     const statusText = storageErrors.size
       ? "На планшете не сохранено. Не закрывайте страницу. Освободите память и повторите сохранение."
-      : rejected ? `Нужно исправить: ${rejected}. Текст сохранён — откройте запись ниже.`
+      : rejected ? `Нужно исправить: ${rejected} — показать`
       : queue.length ? `Сохранено на планшете · ждут отправки: ${queue.length}`
       : ui.screen === "closeConfirm" ? "Закрытие смены ещё не отправлено"
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
       : "Нет связи с сервером";
-    status.replaceChildren(h("span", { class: "save-status-text", text: statusText }));
+    status.replaceChildren(h("span", { class: "save-status-text", text: statusText }),
+      h("span", { class: "save-status-count", text: String(rejected || queue.length || 0), "aria-hidden": "true" }));
     status.title = statusText;
+    status.setAttribute("aria-label", statusText);
+    status.setAttribute("aria-expanded", String(!!ui.rejectsOpen));
+    if (!status.dataset.bound) {
+      status.dataset.bound = "1";
+      status.addEventListener("click", () => { ui.rejectsOpen = !ui.rejectsOpen; renderRejects(); renderTopbar(); });
+    }
     status.hidden = !key;
   }
   // Главная страница не уничтожает ответы незаконченного шага.
@@ -852,13 +860,17 @@ function renderTopbar() {
 function renderRejects() {
   const box = $("rejects");
   const rejected = rejectionGroups(records);
-  if (!rejected.length && !storageErrors.size) {
+  if (!rejected.length && !storageErrors.size && !ui.rejectsOpen) {
     box.hidden = true;
     fill(box, );
     return;
   }
   box.hidden = false;
+  box.className = "rejects" + (ui.rejectsOpen ? " is-open" : "");
   fill(box,
+    h("div", { class: "rejects-heading" }, h("strong", { text: `Нужно исправить: ${rejected.length}` }),
+      h("button", { class: "btn", onclick: () => { ui.rejectsOpen = false; renderRejects(); renderTopbar(); } }, "Закрыть список")),
+    !rejected.length ? h("p", { text: queue.length ? `Ждут отправки: ${queue.length}` : "Записей для исправления нет." }) : null,
     storageErrors.size ? h("button", { class: "btn", onclick: () => { persistQueue(); render(); } }, "Повторить сохранение на планшете") : null,
     rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => {
       const ids = rejected.map((g) => g.record.event.id);
@@ -873,6 +885,7 @@ function renderRejects() {
       savedAnswers(g),
       h("button", { class: "btn", onclick: () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
+        ui.rejectsOpen = false;
         go("repair");
       } }, "Открыть сохранённую запись"),
       transferButton(g),
@@ -933,6 +946,7 @@ function dismissRejected(ids, confirmed = false) {
   const groups = rejectionGroups(records).filter((g) => g.records.some((r) => ids.includes(r.event.id)));
   const related = new Set(groups.flatMap((g) => g.records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.id)));
   if (!confirmed && groups.some((g) => g.records.some((r) => r.event.type === "stop") && g.records.length > 1)) {
+    ui.rejectsOpen = false;
     ui.dismissPendingIds = ids;
     ui.dismissBack = ui.screen;
     return go("dismissConfirm");
@@ -1375,17 +1389,17 @@ function acceptShift(crewId, personId, personName) {
 function renderFio(main, view) {
   const fio = ui.fio;
   const fields = [["last", "Фамилия"], ["first", "Имя"], ["middle", "Отчество"]];
-  const ok = (v) => /^[А-ЯЁа-яёA-Za-z][А-ЯЁа-яёA-Za-z\u2019' -]{1,39}$/.test(String(v || "").trim());
-  const cap = (v) => String(v || "").trim().replace(/\s+/g, " ").replace(/(^|[ -])([а-яёa-z])/g, (m, p, c) => p + c.toUpperCase());
+  const cap = (v) => String(v || "").trim().replace(/\s+/g, " ").replace(/(^|[ -])([\p{Script=Cyrillic}a-z])/gu, (m, p, c) => p + c.toUpperCase());
   const error = h("p", { class: "error-text", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
   error.hidden = true;
   const submit = h("button", { class: "btn primary", onclick: () => {
-    if (!fields.every(([k]) => ok(fio[k]))) { error.hidden = false; return; }
+    const problem = fullNameError(fields.map(([k]) => fio[k] || ""));
+    if (problem) { error.textContent = problem; error.hidden = false; return; }
     acceptShift(fio.crewId, fio.personId, fields.map(([k]) => cap(fio[k])).join(" "));
   } }, "Принять смену");
-  const update = () => { submit.disabled = !fields.every(([k]) => ok(fio[k])); };
+  const update = () => { const problem = fullNameError(fields.map(([k]) => fio[k] || "")); error.textContent = problem; error.hidden = !problem; submit.disabled = !!problem; };
   const inputs = fields.map(([k, label]) => {
-    const input = h("input", { type: "text", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "40" });
+    const input = h("input", { type: "text", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "120" });
     input.value = fio[k] || "";
     input.addEventListener("input", () => { fio[k] = input.value; error.hidden = true; update(); persistClient(); });
     return [h("label", { for: `fio-${k}`, text: label }), input];
@@ -1569,7 +1583,9 @@ function barList(title, rows, total, label, zone = null, fill = "") {
       h("div", { class: "m-bar-head" },
         h("span", { class: "m-bar-name" }, zone ? zoneMark(zone(r)) : null, label(r)),
         h("span", { class: "m-bar-val", text: barValue(r, total) })),
-      h("div", { class: "m-track" }, h("div", { class: "m-fill" + (zone ? " z-" + zone(r) : fill ? " " + fill : ""), style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
+      h("div", { class: "m-track" }, r.byZone ? r.byZone.filter((z) => z.minutes > 0).map((z) =>
+        h("div", { class: "m-fill z-" + z.zone, style: `width:${z.minutes / max * 100}%`, title: `${z.minutes} мин` }))
+        : h("div", { class: "m-fill" + (zone ? " z-" + zone(r) : fill ? " " + fill : ""), style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
 }
 function zoneMark(zone) {
   return h("span", { class: "reason-zone-mark reason-zone-" + zone, "aria-hidden": "true" });
@@ -1644,7 +1660,7 @@ function metrics() {
     st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
     warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
     zoneDonut(st),
-    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId), null, "neutral"),
+    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
     st.byDay && st.byDay.length > 1 ? h("div", { class: "m-block" },
       h("div", { class: "m-title", text: "По суткам: работа и простой, часы" }),
       dayChart(st.byDay),
@@ -1712,7 +1728,7 @@ function renderHandoverCard(open) {
       const text = handoverText(x);
       return h("div", null,
         h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
-        h("div", { class: "card-note", text: text ? `«${text}»` : "без записи" }));
+        h("details", { class: "handover-preview" }, h("summary", { class: "card-note note-preview", text: text ? `«${text}»` : "без записи" }), h("p", { class: "card-note", text: text || "без записи" })));
     }));
 }
 
@@ -1745,7 +1761,8 @@ function renderStop(main, view) {
   if (cur) {
     card = h("div", { class: "card" },
       h("div", { class: "card-title", text: reasonLabel(cur) }),
-      open.note ? h("div", { class: "card-note", text: `«${open.note}»` }) : null,
+      open.note ? h("div", { class: "card-note note-preview", text: `«${open.note}»`, title: open.note }) : null,
+      h("button", { class: "btn btn-flat", onclick: () => openDetail(open.downtimeId) }, "Открыть полную запись"),
       h("button", { class: "btn", onclick: () => go("confirmChange") }, "Изменить")
     );
   } else {
@@ -2848,6 +2865,8 @@ document.addEventListener("visibilitychange", () => {
     loadState();
   }
 });
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (ui.screen === "stats") render(); }, 100); });
 window.addEventListener("online", () => { flush(); loadState(); });
 document.addEventListener("click", (event) => {
   if (taps.blocked()) { event.preventDefault(); event.stopImmediatePropagation(); return; }

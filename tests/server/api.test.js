@@ -300,7 +300,7 @@ test("events: ремонт через смены — shift_close с action ви�
     const stats = (await fetch(`${base}/api/stats?period=day`, { headers: HEAD }).then((r) => r.json())).stats;
     assert.equal(stats.stops, 1);
     assert.equal(stats.downMin, 360);
-    assert.deepEqual(stats.byCrew.find((row) => row.crewId === "2"), { crewId: "2", minutes: 350, stops: 0, carried: 1 });
+    assert.deepEqual(stats.byCrew.find((row) => row.crewId === "2"), { crewId: "2", minutes: 350, stops: 0, carried: 1, byZone: [{ zone: "plan", minutes: 0 }, { zone: "unplanned", minutes: 0 }, { zone: "failure", minutes: 350 }] });
     assert.equal(stats.byCrew.reduce((sum, row) => sum + row.minutes, 0), stats.downMin);
   } finally {
     await app.close();

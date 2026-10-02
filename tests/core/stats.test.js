@@ -153,7 +153,8 @@ if (process.env.STATS_TZ_CHILD === "1") {
     assert.equal(results[0], results[1]);
   });
 
-  const crewRow = (result, crewId) => result.byCrew.find((row) => row.crewId === crewId);
+  const withoutZones = ({ byZone, ...r }) => r;
+  const crewRow = (result, crewId) => withoutZones(result.byCrew.find((row) => row.crewId === crewId));
   const sumCrew = (result) => result.byCrew.reduce((sum, row) => sum + row.minutes, 0);
 
   test("byCrew: простой, начатый Сменой 1, делится с бригадой, принявшей смену стоящим", () => {
@@ -201,7 +202,7 @@ if (process.env.STATS_TZ_CHILD === "1") {
       { id: "o2", type: "shift_open", at: "2026-01-01T05:00:00Z", crewId: "2", personId: "p4" },
       { id: "e", type: "start", at: "2026-01-01T09:00:00Z", downtimeId: "d", action: "заменили" },
     ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
-    assert.deepEqual(result.byCrew, [{ crewId: "2", minutes: 240, stops: 0, carried: 1 }]);
+    assert.deepEqual(result.byCrew.map(withoutZones), [{ crewId: "2", minutes: 240, stops: 0, carried: 1 }]);
     assert.equal(result.downMin, 240);
   });
 
@@ -211,11 +212,11 @@ if (process.env.STATS_TZ_CHILD === "1") {
       { id: "x", type: "split", at: "2026-01-01T11:00:00Z", downtimeId: "d", reason: "U2", crewId: "2" },
       { id: "e", type: "start", at: "2026-01-01T12:00:00Z", downtimeId: "d", action: "заменили", crewId: "2" },
     ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
-    assert.deepEqual(result.byCrew, [{ crewId: "1", minutes: 120, stops: 1, carried: 0 }]);
+    assert.deepEqual(result.byCrew.map(withoutZones), [{ crewId: "1", minutes: 120, stops: 1, carried: 0 }]);
     const noCrew = stats([
       { id: "m", type: "manual", from: "2026-01-01T08:00:00Z", to: "2026-01-01T09:00:00Z", at: "2026-01-01T08:00:00Z", reason: "U1" },
     ], "2026-01-01T05:00:00Z", "2026-01-01T17:00:00Z");
-    assert.deepEqual(noCrew.byCrew, [{ crewId: null, minutes: 60, stops: 1, carried: 0 }]);
+    assert.deepEqual(noCrew.byCrew.map(withoutZones), [{ crewId: null, minutes: 60, stops: 1, carried: 0 }]);
   });
 
   test("byCrew: сумма минут равна общему простою и при долях минуты", () => {

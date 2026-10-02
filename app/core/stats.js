@@ -192,7 +192,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const crewRow = (crewId) => {
     let row = crewRows.get(crewId);
     if (!row) {
-      row = { crewId, ms: 0, stops: 0, carried: 0 };
+      row = { crewId, ms: 0, stops: 0, carried: 0, zones: { plan: 0, unplanned: 0, failure: 0 } };
       crewRows.set(crewId, row);
     }
     return row;
@@ -205,7 +205,9 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     const onDuty = new Set();
     for (const segment of row.segments) {
       for (const piece of cutByDuty(segment, duties, stopper)) {
-        crewRow(piece.crewId).ms += piece.ms;
+        const crew = crewRow(piece.crewId);
+        crew.ms += piece.ms;
+        crew.zones[zoneOf(segment.reason, refs)] += piece.ms;
         if (piece.duty) onDuty.add(piece.crewId);
       }
     }
@@ -289,7 +291,12 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     longest: longest && { downtimeId: longest.downtimeId, minutes: rounded(longest.ms), reason: longest.reason, startMs: longest.startMs },
     byReason: reasonList.map((row, i) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: reasonMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
     byGroup: groupList.map((row, i) => ({ group: row.group, minutes: groupMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
-    byCrew: crewList.map((row, i) => ({ crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried })).sort((a, b) => compareRows(a, b, "crewId")),
+    byCrew: crewList.map((row, i) => {
+      const zones = Object.keys(row.zones);
+      const parts = apportionMinutes(Object.values(row.zones), crewMinutes[i]);
+      return { crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried,
+        byZone: zones.map((zone, j) => ({ zone, minutes: parts[j] })) };
+    }).sort((a, b) => compareRows(a, b, "crewId")),
     byDay: days,
     quality: { noReason, noAction, otherShare: downMs ? otherMs / downMs : 0 },
   };
