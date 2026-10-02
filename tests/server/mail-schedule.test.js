@@ -333,3 +333,17 @@ test("API: ошибка SMTP при пробном письме приходит
     assert.match((await res.json()).message, /authentication failed/);
   } finally { await app.close(); }
 });
+
+// ---- страница: файлы раздела отдаются и закешированы
+
+test("страница: общий модуль настроек рассылки есть в кеше service worker и отдаётся сервером; версия кеша поднята", async () => {
+  const sw = fs.readFileSync(new URL("../../app/public/sw.js", import.meta.url), "utf8");
+  assert.match(sw, /"\.\/core\/mail-settings\.js"/);
+  assert.match(sw, /const CACHE = "stan-v(6[5-9]|[7-9]\d)"/);
+  const { app, base } = await startApp();
+  try {
+    const res = await fetch(`${base}/core/mail-settings.js`);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /validateMailSettings/);
+  } finally { await app.close(); }
+});

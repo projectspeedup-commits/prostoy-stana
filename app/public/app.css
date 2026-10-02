@@ -1098,6 +1098,40 @@ main:has(.adm-card) { max-width: 1100px; }
   .adm-field input, .adm-field select { min-height: 48px; padding-inline: 10px; font-size: 0.8em; }
 }
 
+/* Рассылка на почту (в «Администраторе») */
+.adm-banner { margin: 10px 0 0; padding: 12px 14px; border-radius: 12px; background: var(--warn); color: var(--on-warn); font-weight: 700; font-size: 0.85em; }
+.adm-mail-card { margin-top: 14px; padding: 14px; border-radius: 14px; border: 1px solid var(--metal-card-edge); }
+.adm-mail-card.is-off { opacity: 0.7; }
+.adm-mail-head { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; padding-bottom: 6px; }
+.adm-switch { display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 14px 6px 8px; border-radius: 26px;
+  border: 1px solid var(--metal-card-edge); background: transparent; color: inherit; font: inherit; font-size: 0.85em; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.adm-switch-knob { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--text-muted); box-sizing: border-box; }
+.adm-switch.is-on { border-color: var(--green-solid-edge); }
+.adm-switch.is-on .adm-switch-knob { background: var(--green-solid); border-color: var(--green-solid-edge); }
+.adm-sends { margin-top: 6px; }
+.adm-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; padding: 10px 0; border-bottom: 1px dashed var(--metal-card-edge); }
+.adm-send-main { flex: 1 1 300px; display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; }
+.adm-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.adm-day { min-width: 48px; min-height: 52px; padding: 6px 8px; border-radius: 12px; border: 1px solid var(--metal-card-edge); background: transparent;
+  color: var(--text-muted); font: inherit; font-size: 0.85em; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.adm-day.is-on { background: var(--green-solid); border-color: var(--green-solid-edge); color: var(--on-solid); }
+.adm-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.btn.adm-chip { width: auto; min-height: 48px; margin: 0; padding: 8px 14px; font-size: 0.8em; }
+.adm-mail-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.adm-mail-foot .btn { margin: 0; }
+.adm-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 700; }
+.adm-test-ok { margin: 10px 0 0; color: var(--green-solid); font-weight: 700; }
+@media (max-width: 760px) {
+  .adm-mail-card { padding: 10px; }
+  .adm-mail-head { grid-template-columns: 1fr; }
+  .adm-send-main { flex-basis: 100%; }
+  .adm-send-main { grid-template-columns: 110px minmax(0, 1fr); }
+  .adm-days { gap: 4px; }
+  .adm-day { min-width: 0; flex: 1 1 0; padding-inline: 2px; }
+  .adm-mail-foot { flex-direction: column; align-items: stretch; }
+  .adm-mail-foot .btn { width: 100%; }
+}
+
 /* Пульт: прямоугольные клавиши во всю половину панели (владелец, 01.10.2026), табличка под клавишей */
 .mill-btn { flex-direction: column; gap: 16px; padding: 8px clamp(10px, 3cqi, 30px); }
 .mill-lamp { width: 100%; max-width: 400px; aspect-ratio: 4 / 3; border-radius: 18px; }

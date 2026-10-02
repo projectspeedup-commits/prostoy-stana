@@ -6,6 +6,7 @@ import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
 import { dayCells } from "./core/zones.js";
 import { dayScale } from "./timeline.js";
+import { validateMailSettings, normalizeEmail, MAIL_WHAT_TITLE } from "./core/mail-settings.js";
 
 const STORE_KEY = "stan.deviceKey";
 const QUEUE_KEY = "stan.queue";
@@ -1174,7 +1175,10 @@ function loadAdmin() {
   if (adminReq) return;
   ui.admin = { loading: true };
   adminReq = api("/api/admin/settings")
-    .then((d) => { ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion }; })
+    .then(async (d) => {
+      ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion };
+      await loadAdminMail(ui.admin); // рассылка не должна ломать остальной раздел
+    })
     .catch((err) => {
       if (err && err.status === 401) badKey();
       ui.admin = { loadError: err && err.status === 403 ? (err.data?.message || "Раздел «Администратор» открывается только ключом владельца.")
@@ -1183,6 +1187,54 @@ function loadAdmin() {
         : "Нет связи с сервером. Настройки открываются и сохраняются только при связи." };
     })
     .finally(() => { adminReq = null; if (ui.screen === "admin") render(); });
+}
+
+// --- «Рассылка на почту»: получатели и расписание (отдельное хранилище на сервере, GET/PUT /api/admin/mail)
+const MAIL_DAYS = [[1, "Пн"], [2, "Вт"], [3, "Ср"], [4, "Чт"], [5, "Пт"], [6, "Сб"], [7, "Вс"]];
+const MAIL_QUICK = [
+  ["После каждой смены", [["08:05", "shift", [1, 2, 3, 4, 5, 6, 7]], ["20:05", "shift", [1, 2, 3, 4, 5, 6, 7]]]],
+  ["Утром за сутки", [["08:10", "day", [1, 2, 3, 4, 5, 6, 7]]]],
+  ["По понедельникам за неделю", [["08:15", "week", [1]]]],
+];
+function mailDraft(m) {
+  return {
+    recipients: ((m && m.recipients) || []).map((r) => ({
+      id: r.id ?? null, name: r.name || "", email: r.email || "", enabled: r.enabled !== false,
+      sends: (r.sends || []).map((x) => ({ time: x.time, what: x.what, days: [...(x.days || [1, 2, 3, 4, 5, 6, 7])] })),
+    })),
+  };
+}
+async function loadAdminMail(a) {
+  try {
+    const d = await api("/api/admin/mail");
+    a.mail = mailDraft(d.mail);
+    a.mailVersion = d.mailVersion;
+    a.smtpConfigured = d.smtpConfigured !== false;
+    a.envFallback = d.envFallback || 0;
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    a.mail = null; // старый сервер без рассылки: раздел просто не показываем
+    a.mailError = err && err.status && err.status !== 404 ? "Рассылку не удалось загрузить." : null;
+  }
+}
+function mailPayload(a) {
+  // Проверка тем же правилом, что на сервере; ошибка — по-русски
+  return validateMailSettings({ recipients: a.mail.recipients.map(({ id, name, email, enabled, sends }) => ({ id, name, email, enabled, sends })) });
+}
+async function sendMailTest(r) {
+  const test = r._test = { busy: true };
+  render();
+  const email = normalizeEmail(r.email);
+  if (!email) { r._test = { ok: false, text: "Сначала впишите настоящий адрес почты." }; return render(); }
+  try {
+    const d = await api("/api/mail/test", { method: "POST", body: JSON.stringify({ email, what: r.sends[0]?.what || "shift" }) });
+    r._test = { ok: true, text: d.message || `Пробное письмо отправлено на ${email}.` };
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    r._test = { ok: false, text: (err && err.data && err.data.message) || "Нет связи с сервером. Пробное письмо не отправлено." };
+  }
+  void test;
+  render();
 }
 const hmMin = (v) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
 const fmtLen = (min) => (min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
@@ -1208,6 +1260,10 @@ async function saveAdmin() {
   if (!a || !a.settings || a.saving) return;
   const s = a.settings;
   const problems = adminProblems(s);
+  let mailOut = null;
+  if (a.mail && a.mailDirty) {
+    try { mailOut = mailPayload(a); } catch (e) { problems.push(e.message); }
+  }
   if (problems.length) { a.error = problems; return render(); }
   a.saving = true;
   a.error = null;
@@ -1219,7 +1275,19 @@ async function saveAdmin() {
   };
   try {
     const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings, refsVersion: a.refsVersion }) });
-    ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion };
+    const keep = { mail: a.mail, mailVersion: a.mailVersion, smtpConfigured: a.smtpConfigured, envFallback: a.envFallback, mailDirty: a.mailDirty };
+    ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion, ...keep };
+    if (mailOut) {
+      try {
+        const m = await api("/api/admin/mail", { method: "PUT", body: JSON.stringify({ mail: mailOut, mailVersion: a.mailVersion }) });
+        Object.assign(ui.admin, { mail: mailDraft(m.mail), mailVersion: m.mailVersion, envFallback: m.envFallback || 0, mailDirty: false });
+      } catch (err) {
+        if (err && err.status === 401) badKey();
+        ui.admin.error = ["Настройки сохранены, а рассылка нет: " + ((err && err.data && err.data.message) || "нет связи с сервером. Повторите, когда связь появится.")];
+        render();
+        return;
+      }
+    }
     showToast("Настройки сохранены");
     await loadRefs();
   } catch (err) {
@@ -1302,6 +1370,66 @@ function renderAdmin(main) {
       s.contacts.splice(s.contacts.indexOf(c), 1); touch(); render();
     } }, "Убрать"));
 
+
+  // --- Рассылка на почту
+  const mailTouch = () => { a.mailDirty = true; touch(); };
+  const addSends = (r, preset) => {
+    for (const [time, what, days] of preset) {
+      if (r.sends.length >= 10) break;
+      if (!r.sends.some((x) => x.time === time && x.what === what)) r.sends.push({ time, what, days: [...days] });
+    }
+    mailTouch(); render();
+  };
+  const sendRow = (r, x) => h("div", { class: "adm-send" },
+    h("div", { class: "adm-send-main" },
+      field("В", (() => {
+        const el = h("input", { type: "time", step: "60", required: true, "aria-label": "Время отправки, московское" });
+        el.value = x.time;
+        el.addEventListener("input", () => { x.time = el.value; mailTouch(); });
+        return el;
+      })()),
+      field("Что слать", sel(x.what, "Что слать", Object.entries(MAIL_WHAT_TITLE), (v) => { x.what = v; mailTouch(); }), "adm-grow")),
+    h("div", { class: "adm-days", role: "group", "aria-label": "Дни недели" },
+      MAIL_DAYS.map(([n, label]) => h("button", {
+        type: "button", class: "adm-day" + (x.days.includes(n) ? " is-on" : ""), "aria-pressed": x.days.includes(n) ? "true" : "false",
+        onclick: () => { x.days = x.days.includes(n) ? x.days.filter((d) => d !== n) : [...x.days, n].sort((p, q) => p - q); mailTouch(); render(); },
+      }, label))),
+    h("button", { type: "button", class: "btn btn-flat adm-del", "aria-label": "Убрать отправку", onclick: () => {
+      r.sends.splice(r.sends.indexOf(x), 1); mailTouch(); render();
+    } }, "Убрать"));
+  const recipientCard = (r) => {
+    const name = txt(r.name, { maxlength: "80", placeholder: "Например: Иванов И. И.", autocapitalize: "words" }, (v) => { r.name = v; mailTouch(); });
+    const email = txt(r.email, { type: "email", inputmode: "email", maxlength: "120", placeholder: "master@example.ru", autocapitalize: "none", spellcheck: "false" }, (v) => { r.email = v; mailTouch(); });
+    const on = h("button", { type: "button", class: "adm-switch" + (r.enabled ? " is-on" : ""), role: "switch", "aria-checked": r.enabled ? "true" : "false",
+      onclick: () => { r.enabled = !r.enabled; mailTouch(); render(); } }, h("span", { class: "adm-switch-knob" }), h("span", { text: r.enabled ? "Включён" : "Выключен" }));
+    const t = r._test;
+    return h("div", { class: "adm-mail-card" + (r.enabled ? "" : " is-off") },
+      h("div", { class: "adm-row adm-mail-head" }, field("Имя", name, "adm-grow"), field("Адрес почты", email, "adm-grow"), on),
+      h("div", { class: "adm-sends" },
+        r.sends.length ? r.sends.map((x) => sendRow(r, x)) : h("p", { class: "muted", text: "Отправок нет: этому получателю ничего не придёт." }),
+        r.sends.length < 10 ? h("button", { type: "button", class: "btn adm-add", onclick: () => { r.sends.push({ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }); mailTouch(); render(); } }, "Добавить отправку") : null),
+      h("div", { class: "adm-quick", role: "group", "aria-label": "Быстрый выбор" },
+        MAIL_QUICK.map(([title, preset]) => h("button", { type: "button", class: "btn btn-flat adm-chip", onclick: () => addSends(r, preset) }, title))),
+      h("div", { class: "adm-mail-foot" },
+        h("button", { type: "button", class: "btn adm-add", disabled: !!(t && t.busy), onclick: () => sendMailTest(r) }, t && t.busy ? "Отправляем…" : "Отправить пробное письмо"),
+        r._confirmDel
+          ? h("div", { class: "adm-confirm", role: "alert" }, h("span", { text: "Удалить получателя?" }),
+            h("button", { type: "button", class: "btn adm-del", onclick: () => { a.mail.recipients.splice(a.mail.recipients.indexOf(r), 1); mailTouch(); render(); } }, "Да, удалить"),
+            h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = false; render(); } }, "Отмена"))
+          : h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = true; render(); } }, "Удалить получателя")),
+      t && !t.busy && t.text ? h("p", { class: t.ok ? "adm-test-ok" : "error-text", role: "status", text: t.text }) : null);
+  };
+  const mailSection = a.mail ? h("section", { class: "adm-card", "aria-label": "Рассылка на почту" },
+    h("h2", { text: "Рассылка на почту" }),
+    a.smtpConfigured === false ? h("p", { class: "adm-banner", role: "status", text: "Отправка почты не настроена на сервере. Список можно править, но письма не уйдут." }) : null,
+    a.envFallback && !a.mail.recipients.length ? h("p", { class: "muted adm-note", text: `Пока список пуст, письма о смене уходят на адреса из настроек сервера (${a.envFallback}).` }) : null,
+    h("p", { class: "muted adm-note", text: "Время — московское. Письмо о смене приходит после её окончания: дневная заканчивается в 20:00, ночная в 08:00" }),
+    a.mail.recipients.length ? a.mail.recipients.map(recipientCard) : h("p", { class: "muted", text: "Получателей нет." }),
+    a.mail.recipients.length < 30 ? h("button", { type: "button", class: "btn adm-add", onclick: () => {
+      a.mail.recipients.push({ id: null, name: "", email: "", enabled: true, sends: [{ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }] });
+      mailTouch(); render();
+    } }, "Добавить получателя") : null) : (a.mailError ? h("p", { class: "error-text", text: a.mailError }) : null);
+
   fill(main, ...head,
     h("p", { class: "muted", text: "Изменения вступают в силу после «Сохранить» — сразу на всех планшетах." }),
     h("section", { class: "adm-card", "aria-label": "Время смен" },
@@ -1316,6 +1444,7 @@ function renderAdmin(main) {
       h("p", { class: "muted adm-note", text: "Первая кнопка на экране «Связаться» сама звонит мастеру, который принял смену, — по его телефону выше. Здесь — остальные номера." }),
       s.contacts.length ? s.contacts.map(contactRow) : h("p", { class: "muted", text: "Номеров нет." }),
       s.contacts.length < 12 ? h("button", { class: "btn adm-add", onclick: () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); } }, "Добавить номер") : null),
+    mailSection,
     a.error ? h("div", { class: "adm-errors", role: "alert" }, a.error.map((t) => h("p", { class: "error-text", text: t }))) : null,
     h("div", { class: "adm-actions" },
       h("button", { class: "btn primary", disabled: a.saving, onclick: saveAdmin }, a.saving ? "Сохраняем…" : "Сохранить"),
