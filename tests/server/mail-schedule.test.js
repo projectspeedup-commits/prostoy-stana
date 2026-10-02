@@ -7,7 +7,7 @@ import { createApp } from "../../app/server/index.js";
 import { createMailService } from "../../app/server/mail-service.js";
 import { buildDigest } from "../../app/server/digest.js";
 import { validateMailSettings } from "../../app/core/mail-settings.js";
-import { dueSends, occurrences, periodFor, MAX_LATE_MS } from "../../app/core/mail-schedule.js";
+import { dueSends, occurrences, periodFor, sendKey, MAX_LATE_MS } from "../../app/core/mail-schedule.js";
 import { computeStats } from "../../app/core/stats.js";
 import { durationWords } from "../../app/core/report.js";
 import { DEFAULT_SCHEDULE } from "../../app/core/core.js";
@@ -502,4 +502,68 @@ test("дефект 4: ни журнал планировщика, ни отве�
   assert.match(logs.join("\n"), /Код ответа SMTP: 535/);
   assert.equal(test.smtpCode, 535);
   assert.match(test.message, /не принял логин или пароль/);
+});
+
+// ---- проверка Codex боевой выкладки: ключ отправки учитывает адрес и дни недели
+
+async function apiWithClock(startAt) {
+  const clock = { now: startAt };
+  const sent = [];
+  const transport = async () => ({ sendMail: async (m) => { sent.push(m); return { messageId: "<x>", accepted: m.to, rejected: [] }; } });
+  const app = createApp({
+    dataDir: ":memory:", now: () => new Date(clock.now), mailConfig: CONFIG, mailTransportFactory: transport,
+    deviceKeys: [{ name: "owner", key: "owner-key" }], adminDevices: ["owner"],
+  });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const save = async (recipients) => {
+    const v = await (await call(base, "owner-key", "GET", "/api/admin/mail")).json();
+    const res = await call(base, "owner-key", "PUT", "/api/admin/mail", { mail: { recipients }, mailVersion: v.mailVersion });
+    assert.equal(res.status, 200);
+    return (await res.json()).mail.recipients;
+  };
+  return { app, clock, sent, save };
+}
+
+test("дефект: смена адреса в 08:30 не рождает письмо за 08:05 новому адресу, а будущие письма на него идут", async () => {
+  const { app, clock, sent, save } = await apiWithClock(T("2026-10-02", "08:00:00"));
+  try {
+    let saved = await save([rec("r", "old@y.ru", [snd("08:05")])]);
+    // планировщик в 08:05 не успел (сервер перезапускался), в 08:30 владелец меняет адрес
+    clock.now = T("2026-10-02", "08:30:00");
+    saved = await save([{ ...saved[0], email: "new@y.ru" }]);
+    clock.now = T("2026-10-02", "08:31:00");
+    assert.equal((await app.mail.tick()).sent.length, 0, "новый адрес не получает письмо за прошедший срок");
+    clock.now = T("2026-10-03", "08:06:00");
+    assert.deepEqual((await app.mail.tick()).sent.map((x) => x.email), ["new@y.ru"], "отметки старого адреса завтрашнее письмо не блокируют");
+    assert.deepEqual(sent.map((m) => m.to[0]), ["new@y.ru"]);
+  } finally { await app.close(); }
+});
+
+test("дефект: добавление сегодняшнего дня недели в 08:30 не отправляет пропущенное письмо за 08:05", async () => {
+  const { app, clock, sent, save } = await apiWithClock(T("2026-10-02", "08:00:00")); // пятница
+  try {
+    let saved = await save([rec("r", "a@y.ru", [snd("08:05", "shift", [1, 2, 3, 4])])]);
+    clock.now = T("2026-10-02", "08:06:00");
+    assert.equal((await app.mail.tick()).sent.length, 0, "в пятницу отправки нет");
+    clock.now = T("2026-10-02", "08:30:00");
+    saved = await save([rec(saved[0].id, "a@y.ru", [snd("08:05", "shift", [1, 2, 3, 4, 5])])]);
+    clock.now = T("2026-10-02", "08:31:00");
+    assert.equal((await app.mail.tick()).sent.length, 0, "пропущенное письмо не уходит");
+    clock.now = T("2026-10-03", "08:06:00"); // суббота: дня нет в списке
+    assert.equal((await app.mail.tick()).sent.length, 0);
+    clock.now = T("2026-10-09", "08:06:00"); // следующая пятница
+    assert.equal((await app.mail.tick()).sent.length, 1);
+    assert.equal(sent.length, 1);
+  } finally { await app.close(); }
+});
+
+test("ключ отправки меняется при смене адреса, времени, вида и дней", () => {
+  const base = { id: "r", email: "a@y.ru" };
+  const keys = [
+    sendKey(base, snd("08:05")), sendKey({ ...base, email: "b@y.ru" }, snd("08:05")), sendKey(base, snd("08:06")),
+    sendKey(base, snd("08:05", "day")), sendKey(base, snd("08:05", "shift", [1])),
+  ];
+  assert.equal(new Set(keys).size, keys.length);
+  assert.equal(sendKey(base, snd("08:05")), sendKey(base, { time: "08:05", what: "shift" }), "дни по умолчанию — все");
 });

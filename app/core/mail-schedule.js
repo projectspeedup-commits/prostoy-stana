@@ -75,5 +75,11 @@ export function dueSends(recipients, nowMs, schedule, maxLateMs = MAX_LATE_MS) {
   return out;
 }
 
-export const sendKey = (recipient, send) => `${recipient.id}|${send.time}|${send.what}`;
+/**
+ * Ключ отправки: получатель, адрес, время, вид и дни недели. Любое изменение этих полей даёт новый ключ,
+ * то есть новую отправку: отсчёт «с момента сохранения» начинается заново, письмо за уже прошедший срок не уходит,
+ * а отметки «отправлено» старого адреса или старых дней не блокируют будущие письма.
+ */
+export const sendKey = (recipient, send) =>
+  `${recipient.id}|${recipient.email}|${send.time}|${send.what}|${(send.days?.length ? send.days : DAYS_ALL).join("")}`;
 export { dayFromIndex };
