@@ -53,7 +53,7 @@ test('бурёжка: плитка → «Что именно?» (5 кнопок)
   assert.ok(buttons(a).some((b) => b.includes('К выбору пункта')));
   tap(a, 'К выбору пункта');
   assert.equal(question(a), 'Что именно?'); assert.equal(step(a), 'Шаг 2 из 3');
-  assert.ok(findAll(a.main(), (e) => /\bsel\b/.test(e.className) && text(e).includes('В ножницах')).length === 1, 'выбранный подсвечен');
+  assert.equal(findAll(a.main(), (e) => /\bsel\b/.test(e.className)).length, 0, 'пункты одного цвета, без подсветки');
   tap(a, 'К выбору причины');
   assert.equal(question(a), 'Почему стоит?'); assert.equal(step(a), 'Шаг 1 из 3');
   tap(a, 'Бурёжка'); tap(a, 'В ножницах');

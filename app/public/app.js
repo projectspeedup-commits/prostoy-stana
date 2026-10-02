@@ -2028,7 +2028,7 @@ function chooseReasonItem(draft, tile, item) {
 // Плитка → next(true), если пункт выбран сразу (он один); иначе next(false) — нужен шаг «Что именно?»
 function reasonGroups(draft, next) {
   return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
-    h("button", { class: "tile reason-group reason-zone-" + tile.zone + (draft.group === tile.id ? " sel" : ""),
+    h("button", { class: "tile reason-group reason-zone-" + tile.zone,
       onclick: () => {
         draft.group = tile.id;
         draft.unknown = false;
@@ -2046,7 +2046,7 @@ function reasonChoices(draft, next) {
   const tile = (refs.tiles || []).find((item) => item.id === draft.group);
   return h("div", { class: "tiles reason-groups reason-items" }, reasonItems(tile).map((item) => {
     const zone = zoneOf(core.reasonKey(item.code), refs);
-    return h("button", { class: "tile reason-group reason-zone-" + zone + (draft.itemKey === reasonItemKey(tile, item) ? " sel" : ""),
+    return h("button", { class: "tile reason-group reason-zone-" + zone,
       onclick: () => { chooseReasonItem(draft, tile, item); next(); } },
     h("span", { class: "reason-group-title", text: item.label }),
     h("span", { class: "reason-group-subtitle", text: ITEM_ZONE_LABEL[zone] || "" }));
