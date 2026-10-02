@@ -111,9 +111,19 @@ export function splitByShifts(segment, schedule) {
 
 // Проверка времени запоздалой остановки и пуска — одна для сервера и демо.
 export function eventTimeError(events, event, nowMs) {
-  if (!["stop", "start", "manual"].includes(event.type)) return "";
+  if (!["stop", "start", "manual", "reason", "split", "fix"].includes(event.type)) return "";
   const at = toMs(event.at);
   const built = buildDowntimes(events, nowMs);
+  if (["reason", "split", "fix"].includes(event.type)) {
+    const id = event.downtimeId ?? built.open?.downtimeId;
+    const own = built.segments.filter((s) => s.downtimeId === id);
+    const target = event.index == null ? own.at(-1) : own.find((s) => s.index === event.index);
+    if (!target) return "not_found";
+    if (event.type === "split" && (!built.open || built.open.downtimeId !== id || target.index !== built.open.index)) return "not_open";
+    if (at < target.startMs) return "bad_time";
+    if (buildDowntimes([...events, event], nowMs).ignored.includes(event.id)) return "bad_time";
+    return "";
+  }
   if (event.type === "stop") {
     if (built.open) {
       const start = Math.min(...built.segments.filter((s) => s.downtimeId === built.open.downtimeId).map((s) => s.startMs));
@@ -159,14 +169,27 @@ export function shiftStatus(events, nowMs, schedule) {
 }
 
 /** Полная длительность сохраняется до обрезки границами отчёта. */
-export function withDowntimeDuration(segments) {
+export function withDowntimeDuration(segments, nowMs = Infinity) {
   const durations = new Map();
-  for (const s of segments) durations.set(s.downtimeId, (durations.get(s.downtimeId) || 0) + s.endMs - s.startMs);
-  return segments.map((s) => ({ ...s, durationMs: durations.get(s.downtimeId) }));
+  for (const s of segments) durations.set(s.downtimeId, (durations.get(s.downtimeId) || 0) + Math.max(0, Math.min(s.endMs, nowMs) - s.startMs));
+  return segments.map((s) => ({ ...s, durationMs: Math.max(s.durationMs || 0, durations.get(s.downtimeId)) }));
 }
 
-export function periodParts(segments, fromMs, toMs, refs) {
-  return withDowntimeDuration(segments).flatMap((s) => {
+// Контекст отказа доступен и для простоя прошлой смены, которого нет в текущем снимке.
+export function eventConflict(events, event, nowMs) {
+  const built = buildDowntimes(events, nowMs);
+  const id = event.type === "stop"
+    ? built.open?.downtimeId || built.segments.find((s) => s.endMs > toMs(event.at))?.downtimeId
+    : event.downtimeId;
+  const segments = built.segments.filter((s) => s.downtimeId === id);
+  return segments.length ? { downtimeId: id, startMs: segments[0].startMs,
+    endMs: segments.some((s) => s.open) ? null : segments.at(-1).endMs, segments } : null;
+}
+
+export const emptyField = (value) => value == null || (typeof value === "string" && !value.trim());
+
+export function periodParts(segments, fromMs, toMs, refs, nowMs = Infinity) {
+  return withDowntimeDuration(segments, nowMs).flatMap((s) => {
     const startMs = Math.max(s.startMs, fromMs), endMs = Math.min(s.endMs, toMs);
     if (endMs <= startMs) return [];
     return splitByShifts({ ...s, startMs, endMs, ...classify(s, refs, refs.settings) }, refs.settings.schedule)
@@ -233,8 +256,8 @@ export function buildDowntimes(events, nowMs) {
         else cur = open(e, t, e.downtimeId ?? e.id, 0, null);
         break;
       case "reason": {
-        const target = cur && matches(e) ? cur : e.downtimeId != null
-          ? segments.findLast((s) => s.downtimeId === e.downtimeId) : null;
+        const target = [cur, ...segments.slice().reverse()].find((s) => s &&
+          s.downtimeId === (e.downtimeId ?? cur?.downtimeId) && (e.index == null || s.index === e.index));
         if (!target) ignored.push(e.id);
         else {
           target.reason = e.reason !== undefined ? e.reason : null;
@@ -248,7 +271,7 @@ export function buildDowntimes(events, nowMs) {
           s.downtimeId === e.downtimeId && s.index === e.index);
         if (!target) ignored.push(e.id);
         else for (const field of ["reason", "node", "billet", "note", "action"]) {
-          if (e[field] !== undefined) target[field] = e[field];
+          if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
         }
         break;
       }
@@ -348,7 +371,7 @@ export function apportionMinutes(msList, totalMin = Math.round(msList.reduce((a,
 const stopCount = (parts) => new Set(parts.filter((p) => p.downtimeId != null).map((p) => p.downtimeId)).size
   + parts.filter((p) => p.downtimeId == null && !p.continued).length;
 const partMs = (p) => p.endMs - p.startMs;
-function sumParts(parts, totalMs, hasData) {
+export function summarizeParts(parts, totalMs, hasData) {
   const modes = ["planned", "unplanned", "short"];
   const downMs = parts.reduce((sum, p) => sum + partMs(p), 0);
   const downMinutes = Math.round(downMs / MIN);
@@ -357,6 +380,13 @@ function sumParts(parts, totalMs, hasData) {
   const totalMinutes = Math.round(totalMs / MIN);
   return { totalMinutes, downMinutes, plannedMinutes, unplannedMinutes, shortMinutes,
     workMinutes: hasData ? Math.max(0, totalMinutes - downMinutes) : null, stops: stopCount(parts), hasData };
+}
+
+/** Единый итог смены для API и всех экранов, включая неотправленные события. */
+export function summarizeShift(segments, shift, refs, nowMs, dataFromMs) {
+  const parts = periodParts(segments, shift.startMs, Math.min(shift.endMs, nowMs), refs, nowMs);
+  return summarizeDay(parts, [shift], { [shift.shiftNo]: dataFromMs != null },
+    { nowMs, dataFromMs: dataFromMs ?? nowMs }).shifts[0];
 }
 
 /** Сводка по прошедшему времени с начала учёта. */
@@ -372,9 +402,9 @@ export function summarizeDay(parts, shiftsOfDay, signals, { nowMs = Infinity, da
   const shifts = shiftsOfDay.map((sh) => {
     const own = visible.filter((p) => p.shiftNo === sh.shiftNo);
     const hasData = sig[sh.shiftNo] === true || own.length > 0;
-    return { shiftNo: sh.shiftNo, ...sumParts(own, elapsed(sh), hasData) };
+    return { shiftNo: sh.shiftNo, ...summarizeParts(own, elapsed(sh), hasData) };
   });
-  const day = sumParts(visible, shiftsOfDay.reduce((sum, sh) => sum + elapsed(sh), 0), shifts.some((s) => s.hasData));
+  const day = summarizeParts(visible, shiftsOfDay.reduce((sum, sh) => sum + elapsed(sh), 0), shifts.some((s) => s.hasData));
   const knownMs = shiftsOfDay.reduce((sum, sh, i) => sum + (shifts[i].hasData ? elapsed(sh) : 0), 0);
   if (day.hasData) day.workMinutes = Math.max(0, Math.round(knownMs / MIN) - day.downMinutes);
   const groups = new Map();
@@ -427,6 +457,9 @@ export function eventInputError(event) {
     }
     if (typeof event.note === "string" && event.note.length > 500) throw new Error();
     if (typeof event.action === "string" && event.action.length > 500) throw new Error();
+    if (event.onlyEmpty !== undefined && typeof event.onlyEmpty !== "boolean") throw new Error();
+    if (event.type === "fix" && ["reason", "node", "note", "action", "billet"].some((f) => event[f] === null)) throw new Error();
+    if (event.index != null && (!Number.isSafeInteger(event.index) || event.index < 0)) throw new Error();
     if (event.personName != null && (typeof event.personName !== "string" || event.personName.length > 120)) throw new Error();
     if (event.billet != null && (typeof event.billet !== "number" || !Number.isFinite(event.billet) || event.billet < 0 || event.billet > 1000)) throw new Error();
     if (event.type === "fix" && (typeof event.downtimeId !== "string" || !event.downtimeId ||

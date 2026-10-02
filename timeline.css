@@ -228,7 +228,7 @@
 }
 
 .ds-legend__item--zero {
-  opacity: 0.4;
+  opacity: 1;
 }
 
 .ds-legend__chip {
@@ -421,7 +421,7 @@
   body:has(#main .with-scale) > .topbar { flex: none; width: 100%; box-sizing: border-box; padding-block: 12px; }
   body:has(#main .with-scale) > #main { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box;
     padding-top: 4px; padding-bottom: 14px; overflow: auto; }
-  body:has(#main .with-scale) > .rejects:not([hidden]) { flex: none; max-height: 30vh; overflow: auto; }
+  /* Отказы находятся в панели поверх экрана и не уменьшают пульт. */
   .with-scale { height: 100%; align-items: stretch; gap: 18px; }
 
   /* Шкала: строки делят высоту поровну */
@@ -507,3 +507,53 @@
   .topbar .pill .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .topbar .save-status { overflow-wrap: anywhere; }
 }
+
+/* Отказы раскрываются из статуса связи поверх страницы. Высота пульта неизменна. */
+#rejects { position: fixed; z-index: 30; inset: 76px var(--screen-gutter) 16px auto;
+  width: min(620px, calc(100vw - 2 * var(--screen-gutter))); box-sizing: border-box;
+  max-height: none; margin: 0; padding: 16px; overflow: auto; overscroll-behavior: contain;
+  background: var(--bg); border: 2px solid var(--text-attn); border-radius: 14px; box-shadow: var(--shadow-toast); }
+#rejects:not(.is-open) { display: none; }
+.rejects-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rejects-heading .btn { width: auto; font-size: 15px; margin: 0; }
+.saved-answers p { margin: 4px 0; }
+.saved-answers, .transfer, .card-note, .card-line, .handover-note, h2, .action-help, .seg, .earlier-text { overflow-wrap: anywhere; }
+.note-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.handover-preview[open] .note-preview { -webkit-line-clamp: 1; }
+.handover-preview summary { cursor: pointer; }
+.topbar { background: var(--metal-page); background-attachment: fixed; }
+.topbar::before { display: none; }
+.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 250px; justify-content: flex-start;
+  min-height: 44px; padding: 6px; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; text-align: left; }
+.save-status .save-status-text, .save-status:not(.attention) .save-status-text {
+  position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: normal; }
+.save-status-count { display: none; font-weight: 800; }
+.save-status.online::before { background: #22863a; box-shadow: none; }
+.save-status.waiting::before { background: #bd7600; box-shadow: none; }
+.save-status.offline::before { background: #cf222e; box-shadow: none; }
+.topbar .pill, .theme-toggle { min-width: 44px; min-height: 44px; box-sizing: border-box; }
+.tile-off { opacity: 1; color: var(--text-muted); }
+.ds-legend__item--zero { opacity: 1; }
+.toast { pointer-events: none; }
+.toast.warning { color: var(--text); background: var(--bg); border: 2px solid var(--text-attn); }
+.m-track { display: flex; }
+.chart .nodata, .chart-legend .nodata::before { fill: none; background: transparent; stroke-dasharray: 4 3; }
+@media (max-width: 600px) {
+  .topbar .pill .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 0 auto; min-width: 44px; min-height: 44px; justify-content: center; margin-left: auto; }
+  .save-status .save-status-text, .save-status:not(.attention) .save-status-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .save-status-count { display: inline; }
+  .toast { position: sticky; top: 68px; bottom: auto; left: auto; right: auto; transform: none; width: 100%; max-width: none;
+    margin: 0; padding: 10px 12px; box-sizing: border-box; border-radius: 0; font-size: 14px; }
+  #rejects { inset: 72px 8px 8px; width: auto; padding: 12px; }
+}
+/* Часы могут быть выше своей получасовой полоски. Не срезаем буквы строкой. */
+@media (min-width: 1100px) {
+  .ds-row { overflow: visible; }
+  .ds-row__label { height: 14px; align-self: center; line-height: 14px; position: relative; z-index: 1; overflow: visible; }
+  .ds-row--tick .ds-row__label { transform: translateY(-1px); }
+}
+
+.stop-grid > :last-child .card > .btn { min-height: 44px; padding: 8px; font-size: 16px; }
+.stop-grid > :last-child .card-title { font-size: 20px; }
+.stop-grid > :last-child .card-note { font-size: 16px; }

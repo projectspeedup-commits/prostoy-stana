@@ -1,5 +1,5 @@
 // Метрики простоев за производственный период. Работает и в браузере, и в Node.
-import { apportionMinutes, buildDowntimes, classify, shiftOf, toMs, withDowntimeDuration } from "./core.js";
+import { apportionMinutes, buildDowntimes, classify, shiftOf, summarizeParts, toMs, withDowntimeDuration } from "./core.js";
 import { zoneOf } from "./zones.js";
 
 const MINUTE = 60_000;
@@ -139,11 +139,11 @@ export function periodRange(period, nowMs, schedule) {
 /** Рассчитывает метрики по отрезку [fromMs, toMs). */
 export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const from = toMsValue(fromMs);
-  const to = toMsValue(toMs);
   const now = toMsValue(nowMs);
+  const to = Math.min(toMsValue(toMs), now);
   if (to < from) throw new Error("Некорректный период");
   const built = buildDowntimes(events, now);
-  built.segments = withDowntimeDuration(built.segments);
+  built.segments = withDowntimeDuration(built.segments, now);
   // Учёт начинается с первого события: раньше данных нет, и считать это время работой нельзя
   let firstAt = Infinity;
   for (const e of events) {
@@ -157,10 +157,11 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const visibleByDowntime = downtimeMap(visible);
   const allByDowntime = downtimeMap(built.segments);
   const totalMs = to - dataFrom;
+  const totals = summarizeParts(visible, totalMs, dataFrom < to);
   const downMs = visible.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
   const modeMs = { planned: 0, unplanned: 0, short: 0 };
   for (const segment of visible) modeMs[segment.mode] += segment.endMs - segment.startMs;
-  const stops = visibleByDowntime.size;
+  const stops = totals.stops;
   const unplannedIds = new Set(visible.filter((segment) => segment.mode === "unplanned").map((segment) => segment.downtimeId));
 
   const reasonRows = new Map();
@@ -192,7 +193,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const crewRow = (crewId) => {
     let row = crewRows.get(crewId);
     if (!row) {
-      row = { crewId, ms: 0, stops: 0, carried: 0 };
+      row = { crewId, ms: 0, stops: 0, carried: 0, zones: { plan: 0, unplanned: 0, failure: 0 } };
       crewRows.set(crewId, row);
     }
     return row;
@@ -205,7 +206,9 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     const onDuty = new Set();
     for (const segment of row.segments) {
       for (const piece of cutByDuty(segment, duties, stopper)) {
-        crewRow(piece.crewId).ms += piece.ms;
+        const crew = crewRow(piece.crewId);
+        crew.ms += piece.ms;
+        crew.zones[zoneOf(segment.reason, refs)] += piece.ms;
         if (piece.duty) onDuty.add(piece.crewId);
       }
     }
@@ -227,8 +230,8 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
       }
       const dayFrom = Math.max(start, from, dataFrom);
       const own = clippedSegments(built.segments, dayFrom, dayTo, refs);
-      const dayDown = own.reduce((sum, segment) => sum + segment.endMs - segment.startMs, 0);
-      days.push({ day: localDate(start, refs.settings.schedule), workMin: minutes(dayTo - dayFrom - dayDown), downMin: minutes(dayDown), stops: new Set(own.map((segment) => segment.downtimeId)).size });
+      const dayTotal = summarizeParts(own, dayTo - dayFrom, true);
+      days.push({ day: localDate(start, refs.settings.schedule), workMin: dayTotal.workMinutes, downMin: dayTotal.downMinutes, stops: dayTotal.stops });
     }
   }
 
@@ -248,8 +251,8 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const workMs = Math.max(0, totalMs - downMs);
   const denominator = totalMs - modeMs.planned;
   const rounded = (value) => minutes(value);
-  const totalMin = rounded(totalMs);
-  const downMin = rounded(downMs);
+  const totalMin = totals.totalMinutes;
+  const downMin = totals.downMinutes;
   const crewList = [...crewRows.values()];
   const crewMinutes = apportionMinutes(crewList.map((row) => row.ms), downMin);
   // Одна остановка считается один раз в каждой затронутой зоне.
@@ -267,19 +270,18 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const reasonList = [...reasonRows.values()], groupList = [...groupRows.values()];
   const reasonMinutes = apportionMinutes(reasonList.map((r) => r.ms), downMin);
   const groupMinutes = apportionMinutes(groupList.map((r) => r.ms), downMin);
-  const modeMinutes = apportionMinutes([modeMs.planned, modeMs.unplanned, modeMs.short], downMin);
   return {
     fromMs: from,
     toMs: to,
     dataFromMs: dataFrom,
     noData: dataFrom >= to,
     totalMin,
-    workMin: Math.max(0, totalMin - downMin),
+    workMin: totals.workMinutes ?? 0,
     downMin,
     byZone,
-    plannedMin: modeMinutes[0],
-    unplannedMin: modeMinutes[1],
-    shortMin: modeMinutes[2],
+    plannedMin: totals.plannedMinutes,
+    unplannedMin: totals.unplannedMinutes,
+    shortMin: totals.shortMinutes,
     stops,
     unplannedStops: unplannedIds.size,
     availability: denominator > 0 ? Math.max(0, Math.min(1, workMs / denominator)) : null,
@@ -289,7 +291,12 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     longest: longest && { downtimeId: longest.downtimeId, minutes: rounded(longest.ms), reason: longest.reason, startMs: longest.startMs },
     byReason: reasonList.map((row, i) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: reasonMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
     byGroup: groupList.map((row, i) => ({ group: row.group, minutes: groupMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
-    byCrew: crewList.map((row, i) => ({ crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried })).sort((a, b) => compareRows(a, b, "crewId")),
+    byCrew: crewList.map((row, i) => {
+      const zones = Object.keys(row.zones);
+      const parts = apportionMinutes(Object.values(row.zones), crewMinutes[i]);
+      return { crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried,
+        byZone: zones.map((zone, j) => ({ zone, minutes: parts[j] })) };
+    }).sort((a, b) => compareRows(a, b, "crewId")),
     byDay: days,
     quality: { noReason, noAction, otherShare: downMs ? otherMs / downMs : 0 },
   };
