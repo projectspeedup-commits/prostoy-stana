@@ -127,39 +127,52 @@ test("events: shift_open попадает в state.crew", async () => {
   }
 });
 
-test("refs: три причины без кодов, 3 блока по одной причине с обязательным описанием, демо-люди", async () => {
+test("refs: классификатор простоев — 16 причин, 3 плитки по 4/5/5 пунктов, флаги описания и брака, демо-люди", async () => {
   const { app, base } = await start();
   try {
     const response = await fetch(`${base}/api/refs`, { headers: HEAD });
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.ok, true);
-    assert.deepEqual(Object.keys(body.refs.reasons), ["perevalka", "burezhka", "avaria"]);
+    const codes = ["plan_profile", "plan_maintenance", "plan_setup", "plan_cooling",
+      "cobble_stand", "cobble_shears", "cobble_tmu", "cobble_coolbed", "cobble_other",
+      "avaria", "tech_stands", "tech_guides", "tech_wear", "tech_electric", "perevalka", "burezhka"];
+    assert.deepEqual(Object.keys(body.refs.reasons), codes);
+    const zones = { plan_profile: "plan", plan_maintenance: "plan", plan_setup: "plan", plan_cooling: "plan",
+      cobble_stand: "unplanned", cobble_shears: "unplanned", cobble_tmu: "unplanned", cobble_coolbed: "unplanned",
+      cobble_other: "unplanned", avaria: "failure", tech_stands: "unplanned", tech_guides: "unplanned",
+      tech_wear: "unplanned", tech_electric: "unplanned", perevalka: "plan", burezhka: "unplanned" };
+    const noteRequired = ["avaria", "cobble_other", "perevalka", "burezhka"];
+    const askBillet = ["cobble_stand", "cobble_shears", "cobble_tmu", "cobble_coolbed", "cobble_other", "avaria", "burezhka"];
     for (const [code, reason] of Object.entries(body.refs.reasons)) {
+      assert.equal(reason.zone, zones[code], `${code}: зона`);
+      assert.equal(reason.planned, zones[code] === "plan", `${code}: planned`);
+      assert.equal(!!reason.noteRequired, noteRequired.includes(code), `${code}: noteRequired`);
+      assert.equal(!!reason.askBillet, askBillet.includes(code), `${code}: askBillet`);
+      assert.equal(!!reason.other, code === "cobble_other", `${code}: other`);
       for (const field of ["hint", "actionHint"]) {
         assert.equal(typeof reason[field], "string", `${code}: ${field}`);
         assert.ok(reason[field].trim().length > 0, `${code}: пустой ${field}`);
         assert.ok(reason[field].length <= 70, `${code}: длинный ${field}`);
       }
       assert.match(reason.actionHint, /^Например: /, `${code}: actionHint`);
-      if (reason.other) assert.equal(reason.hint, "Опишите, что случилось", code);
-      else assert.match(reason.hint, /^Например: /, `${code}: hint`);
+      assert.match(reason.hint, reason.other ? /^Опишите/ : /^Например: /, `${code}: hint`);
     }
-    // Три блока без подпунктов: у каждого одна причина, описание своими словами обязательно
-    assert.deepEqual(body.refs.tiles.map((tile) => [tile.id, tile.zone, tile.codes]), [
-      ["plan", "plan", ["perevalka"]], ["cobble", "unplanned", ["burezhka"]], ["failure", "failure", ["avaria"]]]);
+    assert.deepEqual(body.refs.tiles.map((tile) => [tile.id, tile.zone, tile.items.length]),
+      [["plan", "plan", 4], ["cobble", "unplanned", 5], ["failure", "failure", 5]]);
+    const inTiles = new Set();
     for (const tile of body.refs.tiles) {
       assert.ok(tile.title && tile.subtitle, tile.id);
-      assert.equal(tile.items.length, 1, tile.id);
-      const reason = body.refs.reasons[tile.items[0].code];
-      assert.equal(reason.zone, tile.zone, tile.id);
-      assert.equal(reason.noteRequired, true, tile.id);
-      assert.equal(tile.items[0].text, "", tile.id);
+      assert.deepEqual(tile.codes, tile.items.map((item) => item.code), tile.id);
+      for (const item of tile.items) {
+        assert.ok(body.refs.reasons[item.code], item.code);
+        assert.equal(item.text, "", item.code);
+        inTiles.add(item.code);
+      }
     }
-    for (const [code, reason] of Object.entries(body.refs.reasons)) {
-      assert.equal(reason.zone, { perevalka: "plan", burezhka: "unplanned", avaria: "failure" }[code], code);
-    }
-    assert.equal(body.refs.tiles.length, 3);
+    // Скрытые старые причины в плитках не показываются
+    assert.ok(!inTiles.has("perevalka") && !inTiles.has("burezhka"));
+    assert.equal(inTiles.size, 14);
     assert.equal(body.refs.nodes.length, 14);
     assert.equal(body.refs.demo, true);
     // Две смены по 12 часов, в списке — мастера с полным ФИО

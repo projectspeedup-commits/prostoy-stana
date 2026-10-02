@@ -1861,28 +1861,36 @@ function forgottenTimeFields(view, draft, field, restart, next) {
       } }, label))), error, submit];
 }
 
+// У плитки черновика больше одного пункта — значит, шаг «Что именно?» был
+function tileMulti(draft) {
+  return reasonItems((refs.tiles || []).find((t) => t.id === draft.group)).length > 1;
+}
 function renderForgotStop(main, view) {
   const fw = ui.fw;
   if (!fw) return go("closeCheck");
   const back = () => {
     if (fw.step === 1) { go("closeCheck"); ui.resume = "forgotStop"; persistClient(); }
-    else { fw.step = (fw.step === 5 && fw.unknown) || fw.step === 4 ? 2 : fw.step - 1; render(); }
+    else { fw.step = fw.step === 5 && fw.unknown ? 2 : fw.step === 4 && !tileMulti(fw) ? 2 : fw.step - 1; render(); }
   };
-  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору группы", 4: "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
+  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору причины", 4: tileMulti(fw) ? "К выбору пункта" : "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
   const top = () => [backBtn(backLabels[fw.step], back),
     h("p", { class: "muted", text: "Забыли отметить остановку" }),
-    stepLine(fw.unknown && fw.step === 5 ? 3 : fw.step > 3 ? fw.step - 1 : fw.step, fw.unknown ? 3 : 4)];
+    fw.unknown ? stepLine(fw.step === 5 ? 3 : fw.step, 3) : fw.step >= 4 && !tileMulti(fw) ? stepLine(fw.step - 1, 4) : stepLine(fw.step, 5)];
   const next = () => { fw.step++; render(); };
   if (fw.step === 1) {
     fill(main, ...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, next));
     return;
   }
-  if (fw.step === 3) fw.step = 4; // шага «Что именно?» больше нет
   if (fw.reason) fw.reason = core.reasonKey(fw.reason);
   if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
+  if (fw.step === 3 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 2;
   if (fw.step === 2) {
     fill(main, ...top(), question("Почему стоит?"),
-      reasonGroups(fw, () => { fw.step = 4; render(); }));
+      reasonGroups(fw, (single) => { fw.step = single ? 4 : 3; render(); }));
+    return;
+  }
+  if (fw.step === 3) {
+    fill(main, ...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 4; render(); }));
     return;
   }
   if (fw.step === 4) {
@@ -2017,6 +2025,7 @@ function chooseReasonItem(draft, tile, item) {
   }
   ui.focusNote = true;
 }
+// Плитка → next(true), если пункт выбран сразу (он один); иначе next(false) — нужен шаг «Что именно?»
 function reasonGroups(draft, next) {
   return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
     h("button", { class: "tile reason-group reason-zone-" + tile.zone + (draft.group === tile.id ? " sel" : ""),
@@ -2024,11 +2033,24 @@ function reasonGroups(draft, next) {
         draft.group = tile.id;
         draft.unknown = false;
         const items = reasonItems(tile);
-        if (items.length === 1) chooseReasonItem(draft, tile, items[0]);
-        next();
+        const single = items.length === 1;
+        if (single) chooseReasonItem(draft, tile, items[0]);
+        next(single);
       } },
     h("span", { class: "reason-group-title", text: tile.title }),
     h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
+}
+// Шаг «Что именно?»: пункты плитки, полоска и подпись — по зоне пункта
+const ITEM_ZONE_LABEL = { plan: "плановый простой", unplanned: "внеплановый простой", failure: "аварийный простой" };
+function reasonChoices(draft, next) {
+  const tile = (refs.tiles || []).find((item) => item.id === draft.group);
+  return h("div", { class: "tiles reason-groups reason-items" }, reasonItems(tile).map((item) => {
+    const zone = zoneOf(core.reasonKey(item.code), refs);
+    return h("button", { class: "tile reason-group reason-zone-" + zone + (draft.itemKey === reasonItemKey(tile, item) ? " sel" : ""),
+      onclick: () => { chooseReasonItem(draft, tile, item); next(); } },
+    h("span", { class: "reason-group-title", text: item.label }),
+    h("span", { class: "reason-group-subtitle", text: ITEM_ZONE_LABEL[zone] || "" }));
+  }));
 }
 function focusReasonNote(ta) {
   if (!ui.focusNote) return;
@@ -2045,9 +2067,9 @@ function renderReasonWizard(main, view) {
   if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
   const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
   const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? 2 + offset : 2;
-  // При пуске шага «своими словами» нет: после выбора причины — сразу «Что сделали»
-  if (restarting && wz.step !== 1) wz.step = 1;
+  const total = restarting ? (wz.step === 1 || tileMulti(wz) ? 3 : 2) + offset : 3;
+  // При пуске шага «своими словами» нет: плитка → «Что именно?» → «Что сделали»
+  if (restarting && wz.step === 3) wz.step = 2;
   const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
@@ -2060,14 +2082,18 @@ function renderReasonWizard(main, view) {
       () => restartHasReason ? go("restartConfirm") : ui.rw.thenClose ? go("restartTime") : (ui.resume = "reason", go("auto"))],
   }[wz.mode];
 
+  if (wz.reason) wz.reason = core.reasonKey(wz.reason);
+  if (wz.step === 3 && !reasonRef(wz.reason)) wz.step = 1;
+  if (wz.step === 2 && !(refs.tiles || []).some((t) => t.id === wz.group)) wz.step = 1;
+
   if (wz.step === 1) {
     fill(main,
       backBtn(...back1),
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, () => {
-        if (restarting) return finishReasonWizard(wz.note || "");
-        wz.step = 3; render();
+      reasonGroups(wz, (single) => {
+        if (single && restarting) return finishReasonWizard(wz.note || "");
+        wz.step = single ? 3 : 2; render();
       }),
       !restarting && wz.mode === "past" ? h("button", {
         class: "btn btn-flat reason-later",
@@ -2080,9 +2106,17 @@ function renderReasonWizard(main, view) {
     return;
   }
 
-  if (wz.step === 2) wz.step = 3; // шага «Что именно?» больше нет
-  if (wz.reason) wz.reason = core.reasonKey(wz.reason);
-  if (wz.step >= 2 && !reasonRef(wz.reason)) wz.step = 1;
+  if (wz.step === 2) {
+    fill(main,
+      backBtn("К выбору причины", () => { wz.step = 1; render(); }),
+      stepLine(2 + offset, total),
+      question("Что именно?"),
+      reasonChoices(wz, () => {
+        if (restarting) return finishReasonWizard(wz.note || "");
+        wz.step = 3; render();
+      }));
+    return;
+  }
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
@@ -2105,8 +2139,9 @@ function renderReasonWizard(main, view) {
     finishReasonWizard(withNote ? ta.value : "");
   };
   fill(main,
-    backBtn("К выбору причины", () => { wz.step = 1; render(); }),
-    stepLine(2 + offset, total),
+    backBtn(reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? "К выбору пункта" : "К выбору причины",
+      () => { wz.step = reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? 2 : 1; render(); }),
+    stepLine(tileMulti(wz) ? 3 : 2, tileMulti(wz) ? 3 : 2),
     question(must ? "Что случилось? Опишите своими словами" : "Расскажите своими словами"),
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
     ta,
@@ -2205,12 +2240,12 @@ function renderRestartAction(main, view) {
     finishRestart(ta.value);
   } }, "Сохранить пуск");
   ta.addEventListener("input", () => { rw.action = ta.value; });
-  const total = 2 + (rw.thenClose ? 1 : 0);
+  const total = (rw.route === "reason" && ui.wz && tileMulti(ui.wz) ? 3 : 2) + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
   fill(main,
-    backBtn(rw.route === "reason" ? "К выбору причины" : "К причине", () => {
-      if (rw.route === "reason") { ui.wz.step = 1; go("reason"); }
+    backBtn(rw.route === "reason" ? (tileMulti(ui.wz) ? "К выбору пункта" : "К выбору причины") : "К причине", () => {
+      if (rw.route === "reason") { ui.wz.step = tileMulti(ui.wz) ? 2 : 1; go("reason"); }
       else go("restartConfirm");
     }),
     stepLine(total, total),
@@ -2229,7 +2264,8 @@ function renderRestartAction(main, view) {
 }
 // Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
 function reasonNeedsBillet(reason) {
-  return reason && ["unplanned", "failure"].includes(zoneOf(core.reasonKey(reason), refs));
+  const r = reason && reasonRef(core.reasonKey(reason));
+  return !!(r && r.askBillet);
 }
 function restartBilletSegment(rw, view) {
   const all = [...(serverState?.open?.segments || []), ...view.segments, view.open].filter((s) => s && s.downtimeId === rw.downtimeId);
@@ -2323,10 +2359,11 @@ function renderManual(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
   const back = () => {
-    if (mw.step > 1) { mw.step = mw.step === 5 ? 3 : mw.step - 1; render(); }
+    if (mw.step > 1) { mw.step = mw.step === 5 && !tileMulti(mw) ? 3 : mw.step - 1; render(); }
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
-  const top = () => [backBtn(mw.step > 1 ? "К предыдущему вопросу" : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), stepLine(mw.step > 4 ? mw.step - 1 : mw.step, 6)];
+  const backLabel = mw.step === 4 ? "К выбору причины" : mw.step === 5 && tileMulti(mw) ? "К выбору пункта" : "К предыдущему вопросу";
+  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
   const next = () => { mw.step++; mw.error = ""; render(); };
   if (mw.step <= 2) {
     const start = mw.step === 1;
@@ -2372,11 +2409,15 @@ function renderManual(main, view) {
       error, submit);
     return;
   }
-  if (mw.step === 4) mw.step = 5; // шага «Что именно?» больше нет
   if (mw.reason) mw.reason = core.reasonKey(mw.reason);
   if (mw.step >= 5 && mw.step <= 6 && !reasonRef(mw.reason)) mw.step = 3;
+  if (mw.step === 4 && !(refs.tiles || []).some((t) => t.id === mw.group)) mw.step = 3;
   if (mw.step === 3) {
-    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, () => { mw.step = 5; mw.error = ""; render(); }));
+    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, (single) => { mw.step = single ? 5 : 4; mw.error = ""; render(); }));
+    return;
+  }
+  if (mw.step === 4) {
+    fill(main, ...top(), question("Что именно?"), reasonChoices(mw, () => { mw.step = 5; mw.error = ""; render(); }));
     return;
   }
   const action = mw.step === 6;
@@ -2420,7 +2461,7 @@ function renderManualCheck(main, view) {
   const error = manualError(view, mw);
   fill(main,
     backBtn("К выполненным работам", () => { mw.step = 6; go("manual"); }),
-    stepLine(6, 6), question("Всё верно?"),
+    stepLine(7, 7), question("Всё верно?"),
     h("div", { class: "card" },
       h("div", { class: "card-title", text: `${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}` }),
       h("div", { class: "card-line", text: reasonLabel(mw.reason) }),
