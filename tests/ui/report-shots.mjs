@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { startChrome, sleep } from "./cdp.js";
 import { readXlsx } from "../helpers/xlsx-read.js";
 import { presetRange } from "../../app/core/report-period.js";
+import { durationWords } from "../../app/core/report.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const argv = process.argv.slice(2);
@@ -359,8 +360,10 @@ try {
     check(wb.sheets.map((s) => s.name).join("|") === "Сводка|По сменам|Журнал простоев|Приём и сдача смен", "в скачанном файле все четыре листа");
     const stats = (await api("/api/stats?period=day")).json.stats;
     const cell = (label) => wb.sheets[0].rows.find((r) => r && r[0] && r[0].value === label)[1];
-    check(Math.round(cell("Простой").value * 1440) === stats.downMin && cell("Остановок, шт").value === stats.stops,
-      "скачанная сводка = «Показатели» за сутки", { down: Math.round(cell("Простой").value * 1440), stats: stats.downMin });
+    // Длительность в книге словами («2 часа, 29 минут») — сверяем с той же функцией, что её пишет
+    const downWords = cell("Простой").value;
+    check(downWords === durationWords(stats.downMin) && cell("Остановок, шт").value === stats.stops,
+      "скачанная сводка = «Показатели» за сутки", { down: downWords, stats: stats.downMin });
     const py = spawnSync(PYTHON, ["-c",
       "import sys,zipfile,openpyxl; p=sys.argv[1]; z=zipfile.ZipFile(p); assert z.testzip() is None; wb=openpyxl.load_workbook(p); print('|'.join(wb.sheetnames))",
       path.join(DOWNLOADS, saved[0])], { encoding: "utf8" });

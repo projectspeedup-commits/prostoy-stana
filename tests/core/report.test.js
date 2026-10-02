@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { apportionMs, buildReport, reportFile, ZONE_FILL, ZONE_LABEL, REPORT_SHEETS } from "../../app/core/report.js";
+import { apportionMs, buildReport, durationWords, reportFile, ZONE_FILL, ZONE_LABEL, REPORT_SHEETS } from "../../app/core/report.js";
 import { computeStats, periodRange } from "../../app/core/stats.js";
 import { DEFAULT_SCHEDULE } from "../../app/core/core.js";
 import { serialToMs } from "../helpers/xlsx-read.js";
@@ -131,7 +131,8 @@ test("сводка: подписи как на экране, формат яче
     "Плановые", "Внеплановые", "Брак заготовки всего, тн"]) assert.ok(labels.includes(name), name);
   assert.deepEqual(sheet.rows[2].map((c) => c.value), ["Показатель", "Значение"]);
   for (const label of ["Учтённое время", "Работа", "Простой", "Средний простой", "Самый долгий простой", "Работа между отказами", "Время на ремонт"]) {
-    assert.equal(summaryCell(sheet, label).format, "[h]:mm", label);
+    const cell = summaryCell(sheet, label);
+    if (cell.value !== "—") assert.equal(typeof minutesOf(cell), "number", label); // словами: «2 часа, 29 минут»
   }
   for (const label of ["Доля работы", "Доступность"]) assert.equal(summaryCell(sheet, label).format, "0.0%", label);
   assert.equal(summaryCell(sheet, "Брак заготовки всего, тн").format, "0.0##");
@@ -161,7 +162,7 @@ test("сводка: простои по причинам — одна причи
   for (let r = top + 1; r < top + 5; r++) fills.push(sheet.rows[r][1].fill);
   assert.deepEqual(fills, ["FFE5383B", "FF3B82F6", "FFF2A900", "FFF2A900"]);
   assert.equal(sheet.rows[top + 5][0].bold, true);
-  assert.equal(sheet.rows[top + 5][3].format, "[h]:mm");
+  assert.equal(typeof minutesOf(sheet.rows[top + 5][3]), "number");
 });
 
 test("по сменам: значения как посчитано руками; «Итого» равно сводке; строки складываются", () => {
@@ -197,9 +198,9 @@ test("журнал: часть простоя в пределах смены, т
   const { events, now, day } = dayFixture();
   const { wb } = build(events, { fromDay: day, toDay: day, nowMs: now });
   const sheet = wb.sheets[2];
-  assert.deepEqual(sheet.rows[2].map((c) => c.value), ["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка"]);
+  assert.deepEqual(sheet.rows[2].map((c) => c.value), ["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка", "Длительность, мин"]);
   assert.ok(sheet.rows[2].every((c) => c.bold && c.fill === "FFE3E8EF" && c.wrap), "жирная шапка с заливкой и переносом");
-  assert.equal(sheet.autoFilter, "A3:M9");
+  assert.equal(sheet.autoFilter, "A3:N9");
   assert.equal(sheet.pane.topLeftCell, "A4");
   const rows = journal(wb);
   assert.deepEqual(rows.map((r) => [r.n, r.shift, r.start, r.end, r.minutes, r.type, r.reason, r.billet, r.mark]), [
@@ -217,11 +218,12 @@ test("журнал: часть простоя в пределах смены, т
   ]);
   // Тип залит цветом зоны, как на экране
   assert.deepEqual(rows.map((r) => r.typeFill), ["FF3B82F6", "FFF2A900", "FFE5383B", "FFE5383B", "FFF2A900", "FFF2A900"]);
-  // Даты — настоящие даты Excel по МСК, длительность — доля суток
+  // Даты — настоящие даты Excel по МСК, длительность — словами, число минут — последней колонкой
   assert.equal(sheet.rows[3][1].format, "dd\\.mm\\.yyyy");
   assert.equal(sheet.rows[3][4].format, "dd\\.mm\\.yyyy\\ hh:mm");
-  assert.equal(sheet.rows[3][6].format, "[h]:mm");
-  assert.equal(sheet.rows[3][6].value, 45 / 1440);
+  assert.equal(sheet.rows[3][6].value, "45 минут");
+  assert.equal(sheet.rows[2][13].value, "Длительность, мин");
+  assert.equal(sheet.rows[3][13].value, 45);
   assert.equal(sheet.rows[3][4].value, 25569 + (Date.UTC(2026, 9, 1, 9, 0) / 86400000));
   assert.ok(sheet.rows[8][5].value === null, "у идущего простоя конца нет");
   assert.equal(sheet.rows[4][11].format, "0.0##");
@@ -443,7 +445,7 @@ test("сумма журнала округляется по строкам: ра
   assert.deepEqual(journal(wb).map((r) => r.minutes), [2, 2, 2], "каждая часть округлена, как на экране");
   assert.equal(shiftTable(wb).total.unplanned, 5, "таблица смен сходится со сводкой");
   const note = textsOf(wb).find((t) => t.startsWith("Длительность каждой части простоя в журнале округлена"));
-  assert.ok(note && note.includes("(0:06)") && note.includes("(0:05)"), String(note));
+  assert.ok(note && note.includes("(6 минут)") && note.includes("(5 минут)"), String(note));
 });
 
 test("метод наибольшего остатка: сумма равна цели, каждое число — вниз или вверх от точного", () => {
@@ -510,4 +512,15 @@ test("несколько суток: сводка равна показател�
   assert.equal(total.billet, 5);
   assert.equal(total.accounted, minutesOf(summaryCell(sheet, "Учтённое время")));
   assert.equal(total.work + total.plan + total.unplanned + total.failure, total.accounted);
+});
+
+test("длительность словами, как просил владелец: «1 день, 0 часов, 30 минут»", () => {
+  const cases = {
+    0: "0 минут", 1: "1 минута", 2: "2 минуты", 5: "5 минут", 11: "11 минут", 21: "21 минута", 22: "22 минуты",
+    60: "1 час, 0 минут", 149: "2 часа, 29 минут", 692: "11 часов, 32 минуты", 1260: "21 час, 0 минут",
+    1440: "1 день, 0 часов, 0 минут", 1470: "1 день, 0 часов, 30 минут", 3011: "2 дня, 2 часа, 11 минут",
+    [7 * 1440 + 25]: "7 дней, 0 часов, 25 минут", [21 * 1440 + 61]: "21 день, 1 час, 1 минута",
+  };
+  for (const [minutes, words] of Object.entries(cases)) assert.equal(durationWords(Number(minutes)), words, minutes);
+  assert.equal(durationWords(29.6), "30 минут", "секунды округляются до минуты");
 });

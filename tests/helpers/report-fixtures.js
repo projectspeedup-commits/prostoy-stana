@@ -2,7 +2,7 @@
 import { DEFAULT_REFS } from "../../app/core/refs.js";
 import { SETTINGS_CREWS } from "../../app/core/settings.js";
 import { buildXlsx } from "../../app/core/xlsx.js";
-import { buildReport } from "../../app/core/report.js";
+import { buildReport, durationWords } from "../../app/core/report.js";
 import { readXlsx } from "./xlsx-read.js";
 
 export const people = [
@@ -38,12 +38,13 @@ export function summaryCell(sheet, label) {
   throw new Error("В сводке нет строки «" + label + "»");
 }
 
-/** Длительность ячейки в минутах; ячейка обязана хранить целое число минут долей суток. */
+/** Длительность ячейки в минутах. Ячейка обязана хранить её словами в точности как durationWords: «1 день, 0 часов, 30 минут». */
 export function minutesOf(cell) {
-  if (!cell || typeof cell.value !== "number") throw new Error("Нет длительности: " + JSON.stringify(cell));
-  const minutes = cell.value * 1440;
-  if (Math.abs(minutes - Math.round(minutes)) > 1e-6) throw new Error("Дробные минуты: " + minutes);
-  return Math.round(minutes);
+  const m = /^(?:(\d+) (?:день|дня|дней), )?(?:(\d+) (?:час|часа|часов), )?(\d+) (?:минута|минуты|минут)$/.exec(cell?.value ?? "");
+  if (!m) throw new Error("Нет длительности словами: " + JSON.stringify(cell));
+  const minutes = Number(m[1] || 0) * 1440 + Number(m[2] || 0) * 60 + Number(m[3]);
+  if (durationWords(minutes) !== cell.value) throw new Error("Длительность записана не по правилу: " + cell.value);
+  return minutes;
 }
 
 /** Строки таблицы листа после шапки: массивы значений. */

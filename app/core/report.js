@@ -31,7 +31,6 @@ const ZONES = ["plan", "unplanned", "failure"];
 const FORMAT = {
   date: "dd\\.mm\\.yyyy",
   dateTime: "dd\\.mm\\.yyyy\\ hh:mm",
-  duration: "[h]:mm",
   percent: "0.0%",
   tons: "0.0##",
   integer: "0",
@@ -43,8 +42,25 @@ const HEAD = { bold: true, fill: "E3E8EF", border: "thin", borderColor: "9AA5B1"
 const SECTION = { bold: true, fill: "EEF2F6", border: "thin", borderColor: GRID, va: "center" };
 const TOTAL = { bold: true, fill: "F1F4F8", border: { left: "thin", right: "thin", top: "medium", bottom: "thin" }, borderColor: "6B7685", va: "center" };
 
-/** Минуты → «3:57» для текста пояснений. */
-const hm = (minutes) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+const plural = (n, one, few, many) => {
+  const tens = n % 100, ones = n % 10;
+  if (tens >= 11 && tens <= 14) return many;
+  return ones === 1 ? one : ones >= 2 && ones <= 4 ? few : many;
+};
+/**
+ * Минуты → «1 день, 0 часов, 30 минут» (просьба владельца 02.10.2026).
+ * Начинаем с наибольшей ненулевой единицы, младшие пишем и нулевые: «2 часа, 0 минут», «30 минут».
+ */
+export function durationWords(minutes) {
+  const total = Math.max(0, Math.round(minutes));
+  const days = Math.floor(total / 1440), hours = Math.floor((total % 1440) / 60), mins = total % 60;
+  const parts = [];
+  if (days) parts.push(`${days} ${plural(days, "день", "дня", "дней")}`);
+  if (days || hours) parts.push(`${hours} ${plural(hours, "час", "часа", "часов")}`);
+  parts.push(`${mins} ${plural(mins, "минута", "минуты", "минут")}`);
+  return parts.join(", ");
+}
+const hm = durationWords;
 const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const hasText = (value) => typeof value === "string" && value.trim() !== "";
 const clean = (value) => (hasText(value) ? value.trim() : "");
@@ -54,8 +70,9 @@ const clean = (value) => (hasText(value) ? value.trim() : "");
 const text = (v, extra) => ({ v, ...BODY, wrap: true, ...extra });
 const dash = (extra) => ({ v: "—", ...BODY, h: "right", ...extra });
 const integer = (v, extra) => ({ v, numFmt: FORMAT.integer, ...BODY, h: "right", va: "center", ...extra });
+// Длительность — словами: Excel-формат «[h]:mm» владельцу непривычен. Число минут для сортировки — отдельной колонкой журнала
 const duration = (minutes, extra) => (minutes === null || minutes === undefined ? dash(extra)
-  : { v: minutes / 1440, numFmt: FORMAT.duration, ...BODY, h: "right", va: "center", ...extra });
+  : { v: durationWords(minutes), ...BODY, h: "right", va: "center", ...extra });
 const percent = (share, extra) => (share === null || share === undefined ? dash(extra)
   : { v: share, numFmt: FORMAT.percent, ...BODY, h: "right", va: "center", ...extra });
 const tons = (v, extra) => ({ v, numFmt: FORMAT.tons, ...BODY, h: "right", va: "center", ...extra });
@@ -278,7 +295,7 @@ function noteRow(v, widths) {
 function summarySheet(data, ctx) {
   const { stats, parts } = data;
   const { refs } = ctx;
-  const widths = [46, 22, 14, 14, 22];
+  const widths = [46, 27, 14, 27, 22];
   const f = frame("Отчёт по простоям стана — сводка", ctx.context, widths);
   const rows = [...f.rows, headerRow(["Показатель", "Значение"])];
   const section = (title) => rows.push({ cells: [{ v: title, ...SECTION }, { v: null, ...SECTION }], height: 20 });
@@ -372,7 +389,7 @@ function summarySheet(data, ctx) {
 
 function shiftSheet(data, ctx, masters) {
   const { shiftRows } = data;
-  const widths = [12, 10, 34, 11, 11, 11, 13, 11, 11, 12, 10];
+  const widths = [12, 10, 34, 21, 21, 21, 21, 21, 11, 12, 10];
   const f = frame("Отчёт по простоям стана — по сменам", ctx.context, widths);
   const rows = [...f.rows, headerRow(["Сутки", "Смена", "Мастер", "Учтено", "Работа", "Плановые", "Внеплановые", "Аварии", "Остановок", "Доля работы", "Брак, тн"])];
   const merges = [...f.merges];
@@ -411,9 +428,9 @@ function journalSheet(data, ctx, masters) {
   const { parts } = data;
   const { refs } = ctx;
   const tz = refs.settings.schedule.tzOffsetMinutes || 0;
-  const widths = [5, 11, 9, 30, 16, 16, 13, 14, 20, 34, 34, 8, 28];
+  const widths = [5, 11, 9, 30, 16, 16, 21, 14, 20, 34, 34, 8, 28, 13];
   const f = frame("Отчёт по простоям стана — журнал простоев", ctx.context, widths);
-  const rows = [...f.rows, headerRow(["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка"])];
+  const rows = [...f.rows, headerRow(["№", "Сутки", "Смена", "Мастер", "Начало", "Конец", "Длительность", "Тип", "Причина", "Что случилось", "Что сделали", "Брак, тн", "Отметка", "Длительность, мин"])];
   const merges = [...f.merges];
   parts.forEach((p, i) => {
     const names = masters.get(`${p.day}|${p.shiftNo}`) || [];
@@ -423,6 +440,7 @@ function journalSheet(data, ctx, masters) {
       dateTime(p.startMs, tz), p.ongoing ? text("", { h: "center" }) : dateTime(p.endMs, tz), duration(p.minutes),
       zoneCell(p.zone), text(reasonTitle(p.reason, refs)), text(p.note), text(p.action),
       p.billet > 0 ? tons(Math.round(p.billet * 1000) / 1000) : text(""), text(p.marks.join("; ")),
+      integer(Math.round(p.minutes)),
     ]);
   });
   if (!parts.length) {
