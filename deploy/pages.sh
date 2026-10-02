@@ -18,7 +18,8 @@ fi
 find "$WORK" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp app/public/{index.html,app.js,app.css,theme.js,charts.js,timeline.js,timeline.css,mock.js,sw.js,icon.svg,manifest.webmanifest} "$WORK/"
 mkdir -p "$WORK/core"
-cp app/core/{core.js,refs.js,stats.js,zones.js,settings.js} "$WORK/core/"
+cp app/public/{report-ui.js,report.css} "$WORK/"
+cp app/core/{core.js,refs.js,stats.js,zones.js,settings.js,report-period.js,report.js,xlsx.js} "$WORK/core/"
 touch "$WORK/.nojekyll"
 
 cd "$WORK"

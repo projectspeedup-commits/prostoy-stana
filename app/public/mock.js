@@ -4,6 +4,7 @@ import * as core from "./core/core.js";
 import { DEFAULT_REFS } from "./core/refs.js";
 import { computeStats, periodRange } from "./core/stats.js";
 import { settingsFromRefs, validateSettings } from "./core/settings.js";
+import { reportFile } from "./core/report.js";
 
 // Справочник причин, плиток и узлов — тот же, что у сервера
 const refs = {
@@ -175,6 +176,12 @@ export async function api(path, options = {}) {
     refs.settings = { ...refs.settings, schedule: { tzOffsetMinutes: 180, ...settings.schedule }, contacts: settings.contacts };
     REFS_VERSION = refsVersion();
     return { ok: true, settings: settingsFromRefs(refs), refsVersion: REFS_VERSION };
+  }
+  if (url.pathname === "/api/report.xlsx" && method === "GET") {
+    // Отчёт — тем же ядром, что на сервере; отказ — как 400 сервера, с русским сообщением
+    const result = reportFile({ from: url.searchParams.get("from"), to: url.searchParams.get("to"), events, refs, nowMs: Date.now() });
+    if (!result.ok) throw Object.assign(new Error("http_400"), { status: 400, data: { ok: false, error: "bad_request", message: result.message } });
+    return { ok: true, bytes: result.bytes, filename: result.filename };
   }
   if (url.pathname === "/api/refs" && method === "GET") {
     return { ok: true, refs: structuredClone(refs), refsVersion: REFS_VERSION };
