@@ -417,7 +417,7 @@ function buildView() {
     segments: (s.segments || []).filter((x) => !open || x.downtimeId !== open.downtimeId || x.index !== open.index).map((x) => ({ ...x })),
   };
   if (v.shift.startMs !== s.shift.startMs) { v.crew = null; v.closed = false; }
-  for (const e of queue) applyEvent(v, e);
+  for (const e of readyEvents(queue, records, true)) applyEvent(v, e);
   // Первое нажатие ещё не дошло до сервера — учёт начался с него
   for (const e of queue) {
     for (const t of [e.at, e.type === "manual" ? e.from : undefined]) {
@@ -508,16 +508,15 @@ function applyEvent(v, e) {
     case "fix":
       for (const s of v.segments) {
         if (s.downtimeId === e.downtimeId && s.index === e.index) {
-          if (e.reason !== undefined) s.reason = e.reason;
-          if (e.billet !== undefined) s.billet = e.billet;
-          if (e.note !== undefined) s.note = e.note;
-          if (e.action !== undefined) s.action = e.action;
+          for (const field of ["reason", "billet", "note", "action"]) {
+            if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(s[field]))) s[field] = e[field];
+          }
         }
       }
       if (v.open && v.open.downtimeId === e.downtimeId && v.open.index === e.index) {
-        if (e.reason !== undefined) v.open.reason = e.reason;
-        if (e.note !== undefined) v.open.note = e.note;
-        if (e.action !== undefined) v.open.action = e.action;
+        for (const field of ["reason", "billet", "note", "action"]) {
+          if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(v.open[field]))) v.open[field] = e[field];
+        }
       }
       break;
     case "shift_open":
@@ -645,7 +644,7 @@ function board(view) {
   const sum = shiftSummary(view);
   const downMin = sum.downMinutes;
   const workMin = shiftWorkMin(view, downMin);
-  const stops = shiftDowntimes(view).length;
+  const stops = sum.stops;
   const stopped = !!view.open;
   return h("div", { class: "board" },
     h("div", { class: "board-top" },
@@ -1675,8 +1674,8 @@ function shiftBlock(view) {
   const c = view.crew;
   let downtimeHelp = "Посмотреть или исправить простои за смену";
   try {
-    const n = shiftDowntimes(view).length;
     const sum = shiftSummary(view);
+    const n = sum.stops;
     const downMin = sum.downMinutes;
     downtimeHelp = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(downMin)} · посмотреть или исправить` : "Простоев не было";
   } catch { /* Сводка не должна мешать управлению станом. */ }
@@ -2689,7 +2688,7 @@ function doCloseShift(withGaps = false) {
   const sum = shiftSummary(view);
   const downMin = sum.downMinutes;
   const workMin = shiftWorkMin(view, downMin);
-  ui.closedInfo = { workMin, downMin, stops: shiftDowntimes(view).length, open: !!view.open,
+  ui.closedInfo = { workMin, downMin, stops: sum.stops, open: !!view.open,
     note: events[0].fields.note, action: events[0].fields.action || "", gaps: handoverGaps(view), at: nowMs() };
   resetStopDrafts();
   ui.screen = "closed";

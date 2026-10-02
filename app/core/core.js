@@ -169,9 +169,9 @@ export function shiftStatus(events, nowMs, schedule) {
 }
 
 /** Полная длительность сохраняется до обрезки границами отчёта. */
-export function withDowntimeDuration(segments) {
+export function withDowntimeDuration(segments, nowMs = Infinity) {
   const durations = new Map();
-  for (const s of segments) durations.set(s.downtimeId, (durations.get(s.downtimeId) || 0) + s.endMs - s.startMs);
+  for (const s of segments) durations.set(s.downtimeId, (durations.get(s.downtimeId) || 0) + Math.max(0, Math.min(s.endMs, nowMs) - s.startMs));
   return segments.map((s) => ({ ...s, durationMs: Math.max(s.durationMs || 0, durations.get(s.downtimeId)) }));
 }
 
@@ -188,8 +188,8 @@ export function eventConflict(events, event, nowMs) {
 
 export const emptyField = (value) => value == null || (typeof value === "string" && !value.trim());
 
-export function periodParts(segments, fromMs, toMs, refs) {
-  return withDowntimeDuration(segments).flatMap((s) => {
+export function periodParts(segments, fromMs, toMs, refs, nowMs = Infinity) {
+  return withDowntimeDuration(segments, nowMs).flatMap((s) => {
     const startMs = Math.max(s.startMs, fromMs), endMs = Math.min(s.endMs, toMs);
     if (endMs <= startMs) return [];
     return splitByShifts({ ...s, startMs, endMs, ...classify(s, refs, refs.settings) }, refs.settings.schedule)
@@ -371,7 +371,7 @@ export function apportionMinutes(msList, totalMin = Math.round(msList.reduce((a,
 const stopCount = (parts) => new Set(parts.filter((p) => p.downtimeId != null).map((p) => p.downtimeId)).size
   + parts.filter((p) => p.downtimeId == null && !p.continued).length;
 const partMs = (p) => p.endMs - p.startMs;
-function sumParts(parts, totalMs, hasData) {
+export function summarizeParts(parts, totalMs, hasData) {
   const modes = ["planned", "unplanned", "short"];
   const downMs = parts.reduce((sum, p) => sum + partMs(p), 0);
   const downMinutes = Math.round(downMs / MIN);
@@ -384,7 +384,7 @@ function sumParts(parts, totalMs, hasData) {
 
 /** Единый итог смены для API и всех экранов, включая неотправленные события. */
 export function summarizeShift(segments, shift, refs, nowMs, dataFromMs) {
-  const parts = periodParts(segments, shift.startMs, Math.min(shift.endMs, nowMs), refs);
+  const parts = periodParts(segments, shift.startMs, Math.min(shift.endMs, nowMs), refs, nowMs);
   return summarizeDay(parts, [shift], { [shift.shiftNo]: dataFromMs != null },
     { nowMs, dataFromMs: dataFromMs ?? nowMs }).shifts[0];
 }
@@ -402,9 +402,9 @@ export function summarizeDay(parts, shiftsOfDay, signals, { nowMs = Infinity, da
   const shifts = shiftsOfDay.map((sh) => {
     const own = visible.filter((p) => p.shiftNo === sh.shiftNo);
     const hasData = sig[sh.shiftNo] === true || own.length > 0;
-    return { shiftNo: sh.shiftNo, ...sumParts(own, elapsed(sh), hasData) };
+    return { shiftNo: sh.shiftNo, ...summarizeParts(own, elapsed(sh), hasData) };
   });
-  const day = sumParts(visible, shiftsOfDay.reduce((sum, sh) => sum + elapsed(sh), 0), shifts.some((s) => s.hasData));
+  const day = summarizeParts(visible, shiftsOfDay.reduce((sum, sh) => sum + elapsed(sh), 0), shifts.some((s) => s.hasData));
   const knownMs = shiftsOfDay.reduce((sum, sh, i) => sum + (shifts[i].hasData ? elapsed(sh) : 0), 0);
   if (day.hasData) day.workMinutes = Math.max(0, Math.round(knownMs / MIN) - day.downMinutes);
   const groups = new Map();

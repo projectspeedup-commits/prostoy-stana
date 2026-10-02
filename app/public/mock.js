@@ -51,7 +51,7 @@ function computeState() {
   const built = core.buildDowntimes(events, now);
 
   const { shift, crew, closed } = core.shiftStatus(events, now, schedule);
-  const segments = core.periodParts(built.segments, shift.startMs, Math.min(now, shift.endMs), refs);
+  const segments = core.periodParts(built.segments, shift.startMs, Math.min(now, shift.endMs), refs, now);
   // Для времени пуска нужны исходные отрезки, без обрезки по границе смены.
   const openSegs = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
   // Начало всего простоя (не последнего отрезка) — как у сервера

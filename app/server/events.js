@@ -91,7 +91,7 @@ export function createEventStore(db) {
     const { shift, crew, closed } = shiftStatus(events, nowMs, refs.settings.schedule);
     const ping = db.prepare("SELECT 1 FROM pings WHERE server_at >= ? AND server_at < ? LIMIT 1")
       .get(new Date(shift.startMs).toISOString(), new Date(shift.endMs).toISOString());
-    const segments = periodParts(built.segments, shift.startMs, Math.min(shift.endMs, nowMs), refs);
+    const segments = periodParts(built.segments, shift.startMs, Math.min(shift.endMs, nowMs), refs, nowMs);
     const openSegments = built.open ? built.segments.filter((s) => s.downtimeId === built.open.downtimeId) : [];
     const openStartMs = built.open ? Math.min(...openSegments.map((s) => s.startMs)) : null;
     const dayRange = periodRange("day", nowMs, refs.settings.schedule);

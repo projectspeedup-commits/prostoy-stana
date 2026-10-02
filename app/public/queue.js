@@ -28,12 +28,14 @@ export async function deliverBatch(api, queue) {
 }
 
 export function pruneRecords(records, nowMs) {
+  const unresolved = new Set(records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.groupId || downtimeKey(r.event)));
   const needed = new Set(records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.after));
   const confirmed = records.filter((r) => ["saved", "replaced", "adopted", "dismissed"].includes(r.status)
     && Date.parse(["dismissed", "replaced"].includes(r.status) ? r.confirmedAt || r.event.at : r.event.at) >= nowMs - 3 * 86400000)
     .sort((a, b) => Date.parse(a.confirmedAt || a.event.at) - Date.parse(b.confirmedAt || b.event.at)).slice(-300);
   const keep = new Set(confirmed);
-  return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r) || needed.has(r.event.id));
+  return records.filter((r) => r.status === "rejected" || r.status === "pending" || keep.has(r) || needed.has(r.event.id)
+    || unresolved.has(r.groupId || downtimeKey(r.event)));
 }
 
 // Цепочка исправлений переживает ограничение истории и перезагрузку с отдельной очередью.
@@ -83,8 +85,9 @@ export const downtimeKey = (e) => e.downtimeId || e.id;
 export const isAccepted = (r) => r && (["saved", "adopted"].includes(r.status) || r.rootAccepted);
 
 // Независимые события продолжают отправляться, даже когда один простой ждёт исправления.
-export function readyEvents(queue, records) {
+export function readyEvents(queue, records, optimistic = false) {
   const byId = new Map(records.map((r) => [r.event.id, r]));
+  const passed = (r) => isAccepted(r) || (optimistic && r?.status === "pending");
   const latest = (r) => {
     const seen = new Set();
     while (r && !seen.has(r.event.id)) {
@@ -98,14 +101,14 @@ export function readyEvents(queue, records) {
   return queue.filter((e) => {
     if (byId.get(e.id)?.status !== "pending") return false;
     if (e.onlyEmpty) return true;
-    if (e.after && !isAccepted(latest(byId.get(e.after)))) return false;
+    if (e.after && !passed(latest(byId.get(e.after)))) return false;
     if (["stop", "manual", "shift_open", "shift_close"].includes(e.type)) return true;
     const stop = records.findLast((r) => ["stop", "manual"].includes(r.event.type) && downtimeKey(r.event) === downtimeKey(e));
-    if (stop && !isAccepted(latest(stop))) return false;
+    if (stop && !passed(latest(stop))) return false;
     // Очередь старых версий ещё не содержит after. Сохраняем порядок пуска и его ответов.
     const pos = records.findIndex((r) => r.event.id === e.id);
     const start = records.slice(0, pos).findLast((r) => r.event.type === "start" && downtimeKey(r.event) === downtimeKey(e));
-    return !["reason", "fix"].includes(e.type) || !start || isAccepted(latest(start));
+    return !["reason", "fix"].includes(e.type) || !start || passed(latest(start));
   });
 }
 

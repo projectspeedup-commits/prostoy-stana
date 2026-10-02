@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { round2Server } from '../helpers/round2-server.js';
 import { bootTablet, text, findAll } from '../helpers/tablet.js';
-import { eventBatch, reusableRestart, rejectionGroups } from '../../app/public/queue.js';
+import { eventBatch, reusableRestart, rejectionGroups, pruneRecords } from '../../app/public/queue.js';
 
 const base = Date.parse('2026-10-05T05:00:00Z'); // 08:00 МСК
 const at = (minutes) => new Date(base + minutes * 60000).toISOString();
@@ -183,4 +183,36 @@ test('Раунд 2.6: ручной простой требует брак; пр�
   a.h.go('closeConfirm');
   assert.match(text(a.main()), /Без брака: 1/);
   assert.ok(findAll(a.main(), (e) => e.tagName === 'BUTTON').some((b) => text(b).includes('дополнить: брак')));
+});
+
+test('Раунд 2.7: будущий пуск не удлиняет категорию и счётчик простоя', async (t) => {
+  const { tablet: a, save, api } = await fixture(t, 8);
+  await save(event('future', 'stop', 5), event('future-start', 'start', 10, { downtimeId: 'future' }));
+  await a.h.loadState();
+  const summary = a.h.shiftSummary(a.h.buildView());
+  const stats = (await api('/api/stats?period=shift')).stats;
+  assert.equal(summary.downMinutes, 3); assert.equal(summary.shortMinutes, 3);
+  assert.equal(a.h.serverState.summary.shift.shortMinutes, 3);
+  assert.equal(stats.shortMin, 3); assert.equal(stats.downMin, 3);
+  assert.equal(stats.stops, summary.stops);
+});
+
+test('Раунд 2.1–2: ждущие ответы не подменяют принятые поля даже локально', async (t) => {
+  const { tablet: a, save, clock } = await fixture(t);
+  await save(event('closed', 'stop', 120), event('peer-start', 'start', 140, { downtimeId: 'closed' }),
+    event('peer-billet', 'fix', 140, { downtimeId: 'closed', index: 0, billet: 1 }));
+  await a.h.loadState(); a.net.offline = true;
+  a.h.sendBatch([{ type: 'start', fields: { downtimeId: 'closed', at: at(150) } },
+    { type: 'fix', fields: { downtimeId: 'closed', index: 0, billet: 7, at: at(150) } }]);
+  await a.pump();
+  const start = a.h.records.find((r) => r.event.type === 'start');
+  start.status = 'rejected'; start.error = 'not_open';
+  a.h.queue = a.h.queue.filter((e) => e.id !== start.event.id);
+  assert.equal(a.h.buildView().segments.find((s) => s.downtimeId === 'closed').billet, 1);
+  a.h.send('fix', { downtimeId: 'closed', index: 0, billet: 9, action: 'Наши работы', onlyEmpty: true });
+  await a.pump();
+  const projected = a.h.buildView().segments.find((s) => s.downtimeId === 'closed');
+  assert.equal(projected.billet, 1); assert.equal(projected.action, 'Наши работы');
+  const old = { status: 'saved', event: event('old-reason', 'reason', -4 * 1440, { downtimeId: 'closed', note: 'Наш текст' }) };
+  assert.equal(pruneRecords([old, start], clock.t).length, 2, 'Связанный текст хранится, пока конфликт не разрешён');
 });
