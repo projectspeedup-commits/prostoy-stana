@@ -144,6 +144,15 @@ test('P2: 10 неверных ключей, 429 до конца 10 минут, �
   assert.equal((await s.req('/api/state', bad)).status, 401);
 });
 
+test('P2: действующий ключ проходит при блокировке адреса неверными ключами', async (t) => {
+  const s = await fixture(t);
+  const bad = (ip) => ({ headers: { 'X-Device-Key': 'wrong', 'X-Real-IP': ip } });
+  for (let i = 0; i < 10; i++) assert.equal((await s.req('/api/state', bad('192.0.2.1'))).status, 401);
+  assert.equal((await s.req('/api/state', { headers: { 'X-Device-Key': 'k1', 'X-Real-IP': '192.0.2.1' } })).status, 200);
+  assert.equal((await s.req('/api/state', bad('192.0.2.1'))).status, 429);
+  assert.equal((await s.req('/api/state', bad('192.0.2.2'))).status, 401);
+});
+
 test('P2: ошибка потока статического файла не завершает сервер', async (t) => {
   const s = await fixture(t);
   const real = fs.createReadStream;

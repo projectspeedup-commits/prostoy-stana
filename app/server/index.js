@@ -216,10 +216,14 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const address = clientAddress(req);
     const ms = clock().getTime();
     for (const [ip, window] of failures) if (ms >= window.until) failures.delete(ip);
-    const failed = failures.get(address);
-    if (failed?.count >= 10) return send(res, 429, { ok: false, error: "busy" });
+    // Блокировка по адресу бьёт только запросы без ключа или с неверным: на заводе все планшеты
+    // и телефоны выходят через один общий адрес (NAT), и один браузер со старым ключом не должен
+    // запирать остальных. Действующий ключ проходит всегда (его держит лимит allowed ниже);
+    // ключи длинные и случайные, так что подбор через «ключ подошёл во время блокировки» нереален.
     const device = identify(req);
     if (!device) {
+      const failed = failures.get(address);
+      if (failed?.count >= 10) return send(res, 429, { ok: false, error: "busy" });
       // При заполнении карты новые адреса получают 429, действующие окна не вытесняются.
       if (!failed && failures.size >= 4096) return send(res, 429, { ok: false, error: "busy" });
       failures.set(address, { count: (failed?.count || 0) + 1, until: failed?.until ?? ms + 10 * 60_000 });
