@@ -85,7 +85,7 @@ test("ИИ: без ключа — 409 ai_disabled, статус configured=false
 
 test("ИИ: настройки из окружения, умолчания", () => {
   const c = aiConfigFromEnv({ DEEPSEEK_API_KEY: " k " });
-  assert.deepEqual(c, { apiKey: "k", model: "deepseek-flash", baseUrl: "https://api.deepseek.com", dailyUsd: 1, priceIn: 0.3, priceOut: 1.2 });
+  assert.deepEqual(c, { apiKey: "k", model: "deepseek-flash", baseUrl: "https://api.deepseek.com", dailyUsd: 1, priceIn: 0.3, priceOut: 1.2, thinking: "off" });
   assert.equal(aiConfigFromEnv({ STAN_AI_DAILY_USD: "2.5", STAN_AI_MODEL: "m" }).dailyUsd, 2.5);
 });
 
@@ -100,8 +100,10 @@ test("ИИ: цикл инструментов — модель зовёт get_pe
   assert.equal(first.url, "https://ai.example.test/chat/completions");
   assert.equal(first.init.headers.Authorization, "Bearer sk-secret-key-123");
   assert.equal(first.body.model, "deepseek-flash");
-  assert.equal(first.body.max_tokens, 1200);
-  assert.equal(first.body.reasoning_effort, "low");
+  assert.equal(first.body.max_tokens, 2000);
+  // рассуждения по умолчанию выключены: на «low» модель съедала весь потолок и отвечала пусто
+  assert.deepEqual(first.body.thinking, { type: "disabled" });
+  assert.equal(first.body.reasoning_effort, undefined);
   assert.equal(first.body.messages[0].role, "system");
   assert.ok(first.body.messages[0].content.startsWith(SYSTEM_INSTRUCTION));
   assert.match(first.body.messages[0].content, /Аварийный простой/);
@@ -277,4 +279,21 @@ test("ИИ: системная инструкция содержит отказ 
   assert.ok(SYSTEM_INSTRUCTION.includes(REFUSAL));
   assert.equal(REFUSAL, "Я отвечаю только на вопросы о работе стана по данным приложения.");
   void quiet;
+});
+
+test("ИИ: ответ, обрезанный по длине, — понятная ошибка, а не пустота", async () => {
+  const { createAi } = await import("../../app/server/ai.js");
+  const fetchImpl = async () => new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { role: "assistant", content: "" } }], usage: { prompt_tokens: 10, completion_tokens: 2000 } }), { status: 200 });
+  const ai = createAi({ apiKey: "k", dataDir: ":memory:", tools: { definitions: [], execute: () => ({}), reference: () => "" }, fetchImpl });
+  const r = await ai.ask({ question: "Сравни все месяцы подробно" });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "provider_error");
+  assert.match(r.message, /Сузьте вопрос/);
+});
+
+test("ИИ: STAN_AI_THINKING=low включает рассуждения", async () => {
+  const { aiConfigFromEnv } = await import("../../app/server/ai.js");
+  assert.equal(aiConfigFromEnv({}).thinking, "off");
+  assert.equal(aiConfigFromEnv({ STAN_AI_THINKING: "low" }).thinking, "low");
+  assert.equal(aiConfigFromEnv({ STAN_AI_THINKING: "мусор" }).thinking, "off");
 });

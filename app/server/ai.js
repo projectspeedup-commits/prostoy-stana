@@ -8,6 +8,7 @@ export const MAX_HISTORY = 6;
 export const MAX_HISTORY_ITEM = 4000;
 export const MAX_STEPS = 6;
 export const REQUEST_TIMEOUT_MS = 30_000;
+export const MAX_ANSWER_TOKENS = 2000;
 export const REFUSAL = "Я отвечаю только на вопросы о работе стана по данным приложения.";
 const JOURNAL = "ai-calls.jsonl";
 const MSK_OFFSET_MS = 3 * 3_600_000;
@@ -50,12 +51,15 @@ export function aiConfigFromEnv(env = process.env) {
     dailyUsd: num(env.STAN_AI_DAILY_USD, 1),
     priceIn: num(env.STAN_AI_PRICE_IN, 0.3),
     priceOut: num(env.STAN_AI_PRICE_OUT, 1.2),
+    // Рассуждения модели: по умолчанию выключены — на «low» DeepSeek тратил весь потолок ответа на рассуждения
+    // и возвращал пустой текст; без них ответ вдвое быстрее. low / high — включить.
+    thinking: ["low", "high"].includes(clean(env.STAN_AI_THINKING)) ? clean(env.STAN_AI_THINKING) : "off",
   };
 }
 
 const fail = (error, message) => ({ ok: false, error, message });
 
-export function createAi({ apiKey, model = "deepseek-flash", baseUrl = "https://api.deepseek.com", dailyUsd = 1, priceIn = 0.3, priceOut = 1.2, dataDir, tools, clock = () => new Date(), fetchImpl = fetch } = {}) {
+export function createAi({ apiKey, model = "deepseek-flash", baseUrl = "https://api.deepseek.com", dailyUsd = 1, priceIn = 0.3, priceOut = 1.2, thinking = "off", dataDir, tools, clock = () => new Date(), fetchImpl = fetch } = {}) {
   const configured = Boolean(apiKey);
   const journalFile = dataDir && dataDir !== ":memory:" ? path.join(dataDir, JOURNAL) : null;
   const endpoint = String(baseUrl).replace(/\/+$/, "") + "/chat/completions";
@@ -170,7 +174,8 @@ export function createAi({ apiKey, model = "deepseek-flash", baseUrl = "https://
     while (steps < MAX_STEPS) {
       steps += 1;
       const r = await callModel({
-        model, messages, tools: tools.definitions, max_tokens: 1200, temperature: 0.2, reasoning_effort: "low",
+        model, messages, tools: tools.definitions, max_tokens: MAX_ANSWER_TOKENS, temperature: 0.2,
+        ...(thinking === "off" ? { thinking: { type: "disabled" } } : { reasoning_effort: thinking }),
       });
       if (r.fail) return finish("provider_" + r.fail, fail("provider_error", PROVIDER_MESSAGE[r.fail] || PROVIDER_MESSAGE.network));
       const u = r.data.usage || {};
@@ -179,6 +184,9 @@ export function createAi({ apiKey, model = "deepseek-flash", baseUrl = "https://
       const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       if (!calls.length) {
         const answer = typeof message.content === "string" ? message.content.trim() : "";
+        if (!answer && r.data.choices[0].finish_reason === "length") {
+          return finish("length", fail("provider_error", "Ответ получился слишком длинным. Сузьте вопрос, например до одной недели или одной причины."));
+        }
         if (!answer) return finish("empty", fail("provider_error", PROVIDER_MESSAGE.format));
         return finish("ok", { ok: true, answer });
       }

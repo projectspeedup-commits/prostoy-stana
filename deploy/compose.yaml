@@ -24,6 +24,7 @@ services:
       STAN_AI_MODEL: ${STAN_AI_MODEL:-}
       STAN_AI_BASE_URL: ${STAN_AI_BASE_URL:-}
       STAN_AI_DAILY_USD: ${STAN_AI_DAILY_USD:-}
+      STAN_AI_THINKING: ${STAN_AI_THINKING:-}
     mem_limit: 512m
 
   stan-test:

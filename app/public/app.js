@@ -1326,6 +1326,9 @@ async function askAi(question) {
     if (aiUi.status && !aiUi.status.unavailable && Number.isFinite(d.costUsd)) aiUi.status.spentTodayUsd = Math.round(((aiUi.status.spentTodayUsd || 0) + d.costUsd) * 1e6) / 1e6;
   } catch (err) {
     if (err && err.status === 401) badKey();
+    // Вопрос без ответа убираем из ленты и истории и возвращаем в поле — его можно отправить ещё раз
+    aiUi.log.pop();
+    aiUi.text = question;
     aiUi.error = (err && err.data && err.data.message) || "Нет связи с сервером. Повторите, когда связь появится.";
   }
   aiUi.busy = false;
