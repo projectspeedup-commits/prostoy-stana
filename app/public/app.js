@@ -566,15 +566,11 @@ function shiftSummary(view) {
 // Брак простоя за смену — сумма по всем частям (смена причины по ходу простоя даёт несколько частей).
 // Привязка как в отчёте Excel (core/report.js): брак части относится к смене, в которой часть завершилась;
 // открытая часть брака не имеет. Брак не указан ни в одной части — null («не указан»), указан 0 — 0
+// Правило привязки и суммирования — общее (core.segmentBillet / core.sumBillet), его же держат отчёт и «Показатели»
 function shiftBillet(segs, shift) {
-  let sum = null;
-  for (const s of segs) {
-    if (s.open || s.endMs === null || s.endMs === undefined) continue;
-    if (!(s.endMs > shift.startMs && s.endMs <= shift.endMs)) continue;
-    if (!Number.isFinite(s.billet) || s.billet < 0) continue;
-    sum = (sum ?? 0) + s.billet;
-  }
-  return sum === null ? null : Math.round(sum * 1000) / 1000;
+  return core.sumBillet(segs
+    .filter((s) => s.endMs > shift.startMs && s.endMs <= shift.endMs)
+    .map((s) => core.segmentBillet(s)));
 }
 
 // Простои текущей смены, сгруппированные по downtimeId (один простой — одна строка)
@@ -1974,6 +1970,7 @@ const mins = (x) => (x === null || x === undefined ? "—" : fmtHM(x));
 function barValue(r, total) {
   const parts = [fmtDurMin(r.minutes)];
   if (r.stops || !r.carried) parts.push(`${r.stops} ост.`);
+  if (r.billetTn > 0) parts.push(`брак ${fmtTons(r.billetTn)}`);
   if (total) parts.push(`${Math.round((r.minutes / total) * 100)}%`);
   if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
   return parts.join(" · ");
@@ -2042,6 +2039,7 @@ function metrics(view) {
   const warn = [];
   if (q.noReason) warn.push(`без причины: ${q.noReason}`);
   if (q.noAction) warn.push(`не указано, что сделали: ${q.noAction}`);
+  if (q.noBillet) warn.push(`не указан брак: ${q.noBillet}`);
   if (q.otherShare > 0.1) warn.push(`«иная причина» — ${pct(q.otherShare)} простоя, стоит дополнить список причин`);
   const crewName = (id) => (id ? crewTitle(id) : "Смена не указана");
   return h("div", { class: "ps-flow ps-stats" }, ...top,
@@ -2049,7 +2047,11 @@ function metrics(view) {
       kpi(pct(st.availability), "Доступность", st.availability !== null && st.availability < 0.85 ? "bad" : "good"),
       kpi(mins(st.workMin), "Работа", "good"),
       kpi(mins(st.downMin), "Простой", "bad"),
-      kpi(String(st.stops), "Остановок")),
+      kpi(String(st.stops), "Остановок"),
+      // Брак — только заготовка, испорченная при простоях (в тоннах); не указан ни разу — прочерк
+      h("div", { class: "ps-kpi", "data-kind": "billet" },
+        h("span", { class: "ps-kpi__label", text: "Брак, тн" }),
+        h("span", { class: "ps-kpi__value", text: st.billetTn == null ? "—" : fmtTons(st.billetTn) }))),
     h("div", { class: "ps-kpis ps-kpis--auto" },
       kpi(mins(st.plannedMin), "Плановые"),
       kpi(mins(st.unplannedMin + st.shortMin), "Внеплановые", "bad"),
