@@ -107,10 +107,10 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
   submitRepair, finishReasonWizard, finishRestart, saveForgottenStop, doCloseShift, acceptShift, restartMatches, needCrew,
   shiftSummary, shiftDowntimes, shiftWorkMin, handoverGaps, manualError, forgottenTimeError, restartNeedsBillet, validBillet,
   receiptStatus, receiptFor, renderRejects, render, renderTopbar, go, nowMs, persistClient, shiftCloseEvents, eventTitle, humanError,
-  renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, board, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
+  renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
   groupFor, transferButton, conflictTarget, loadStats, renderShift, renderStats, renderClosed, resetStopDrafts,
   renderFio, mergeStored, armShiftTimer, renderDetail, renderCloseConfirm, renderCrew, shiftBlock, openDetail, renderHandoverCard, startManualWizard, cardData,
-  forgottenTimeFields, shiftKpis, shiftZoneMinutes,
+  forgottenTimeFields, shiftKpis, shiftZoneMinutes, renderAdmin, renderAi, aiCard, askAi, saveAdmin, adminDraft, loadAdmin, adminProblems, metrics, loadAiStatus, renderRecorded, renderManualCheck, renderForgotStop, renderKey, renderNoRefs, renderLoading, renderRestartTime, renderRestartConfirm, renderConfirmChange, renderStaleRestart, renderRepairField, aiUi,
 };`;
   // перехват тостов: showToast пишет в элемент #toast; соберём в массив
   code = code.replace("let toastTimer = null;", "let toastTimer = null; const __toasts = [];")

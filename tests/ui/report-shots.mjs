@@ -222,7 +222,7 @@ try {
   await chrome.waitFor("!!document.querySelector('input[type=password]')", { what: "экран ключа" });
   await E("document.querySelector('input[type=password]').focus()");
   await chrome.send("Input.insertText", { text: "3333" });
-  await chrome.clickElement("button.btn.primary");
+  await chrome.clickElement("button.rep-go");
   await waitButton("кнопка отчёта после входа");
   await E("navigator.serviceWorker.ready.then(() => true)");
   await chrome.reload();

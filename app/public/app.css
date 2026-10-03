@@ -1,11 +1,3 @@
-/* Страница рабочего: две темы (тёмная и светлая), крупные элементы под перчатки.
-   Версия 2: пошаговые экраны, один вопрос — один экран.
-
-   Все цвета — токены (CSS-переменные), заданные только в трёх блоках ниже:
-   тёмная тема (по умолчанию), светлая по настройке устройства и светлая по выбору
-   рабочего (<html data-theme="light">). Вне этих блоков цветов нет — только var(--…).
-   Тема сама ставится скриптом theme.js; кнопка #theme в шапке переключает её. */
-
 /* ===== Цвета: токены дизайн-системы (tokens.css) =====
    Значения задаются только в tokens.css (темы «День» и «Ночь»). Ниже — прежние имена
    переменных как ссылки на токены, чтобы стили экранов работали без переписывания.
@@ -53,7 +45,6 @@
 }
 :root[data-theme="dark"] { --press-btn: brightness(1.15); --press-tile: brightness(1.2); --chart-3: #a371f7; --chart-5: #f778ba; }
 
-
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -82,7 +73,7 @@ body {
   font-weight: 700;
   background: var(--pill-bg);
 }
-.pill.ok { background: var(--green-solid); color: var(--on-solid); }
+
 .pill.bad { background: var(--red-solid); color: var(--on-solid); }
 .pill.warn { background: var(--warn); color: var(--on-warn); }
 .pill.demo { background: var(--demo-solid); color: var(--on-solid); }
@@ -95,8 +86,7 @@ main {
 h1 { font-size: 1.5em; margin: 4px 0 16px; }
 h1.q { font-size: 1.6em; font-weight: 800; margin: 12px 0 16px; }
 h2 { font-size: 1.15em; margin: 20px 0 12px; }
-.muted { color: var(--text-muted); }
-.hint { color: var(--text-muted); font-size: 0.85em; margin: 8px 2px 0; }
+
 .step { color: var(--text-muted); font-size: 0.85em; margin: 12px 0 0; }
 
 button, input, textarea {
@@ -112,174 +102,6 @@ input {
   padding: 12px 16px;
   margin-top: 12px;
   font-size: 1.1em;
-}
-.note-input {
-  width: 100%;
-  min-height: 120px;
-  padding: 14px 16px;
-  margin-top: 12px;
-  font-size: 22px;
-  line-height: 1.4;
-  resize: vertical;
-}
-.btn {
-  display: block;
-  width: 100%;
-  min-height: 64px;
-  padding: 12px 16px;
-  margin-top: 12px;
-  font-size: 1.1em;
-  font-weight: 700;
-  text-align: center;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.btn:active { filter: var(--press-btn); }
-.btn.primary { background: var(--green-solid); border-color: var(--green-solid-edge); color: var(--btn-text); }
-.btn.danger { background: var(--red-solid); border-color: var(--red-solid-edge); color: var(--btn-text); }
-.btn.warn-btn { background: var(--warn-bg); border-color: var(--warn-edge); }
-.btn:disabled { opacity: 0.45; }
-
-/* Кнопка «Назад»: первая строка вложенного экрана, серая рамка, не путается с действием */
-.btn.back {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-muted);
-  text-align: left;
-  font-weight: 400;
-  margin-top: 0;
-}
-.btn-flat {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.btn-inline {
-  width: auto;
-  min-height: 48px;
-  margin-top: 0;
-  padding: 8px 16px;
-  font-size: 0.85em;
-  white-space: nowrap;
-}
-
-/* Шапка главного экрана: кто на посту + «Сменить» справа */
-.runhead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.9em;
-}
-
-/* Главные кнопки поста */
-.btn-huge {
-  min-height: 45dvh;
-  font-size: 2em;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-}
-.btn-go {
-  min-height: 22dvh;
-  font-size: 1.6em;
-  font-weight: 800;
-}
-
-/* Цветные полосы состояния */
-.bar {
-  border-radius: 14px;
-  padding: 16px;
-  margin-top: 12px;
-  font-weight: 700;
-}
-.bar.green { background: var(--green-bg); border: 2px solid var(--green); }
-.bar.red { background: var(--red-bg); border: 2px solid var(--red); }
-.timer {
-  display: block;
-  font-size: 2.6em;
-  font-weight: 800;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  margin-top: 4px;
-}
-
-/* Плитки выбора (бригады, люди, группы причин, причины, время) */
-.tiles {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 12px;
-}
-.tile {
-  min-height: 84px;
-  padding: 14px;
-  font-size: 1.05em;
-  font-weight: 700;
-  text-align: center;
-  cursor: pointer;
-  background: var(--surface-2);
-  border: 2px solid var(--border-strong);
-  border-radius: 14px;
-  touch-action: manipulation;
-}
-.tile:active { filter: var(--press-tile); }
-.tile.unknown { background: var(--warn-bg); border-color: var(--warn-edge); }
-.tile .t-code {
-  display: block;
-  font-size: 0.75em;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-.tile.sel { border-color: var(--green); background: var(--green-bg); }
-
-/* Две обычные кнопки в ряд */
-.row2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.row2 .btn { margin-top: 12px; }
-
-/* Карточка (причина на экране «Стан стоит», «Простой записан», «Проверьте») */
-.card {
-  margin-top: 12px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: var(--metal-card);
-  border: 1px solid var(--metal-card-edge);
-  box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow);
-}
-.card.ok { border-color: var(--green); }
-.card.none { border-color: var(--warn-edge); background: var(--warn-bg); }
-.card-title { font-weight: 800; font-size: 1.15em; }
-.card-line { font-weight: 700; margin-top: 6px; }
-.card-note { color: var(--text-muted); margin-top: 6px; }
-
-/* Плашка «Стан всё ещё стоит?» */
-.banner-warn {
-  margin-top: 12px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: var(--warn);
-  color: var(--on-warn);
-  font-weight: 800;
-  text-align: center;
-}
-
-/* Сводка итога смены */
-
-/* Список простоев смены */
-
-/* Крупное значение времени в мастере «Забыл отметить простой» */
-.stepval {
-  text-align: center;
-  font-size: 1.6em;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  margin-top: 12px;
 }
 
 /* «Записано» внизу на 3 секунды */
@@ -323,79 +145,32 @@ input {
     gap: 16px;
     align-items: start;
   }
-  .btn-go { min-height: 30dvh; }
 }
 
 /* Атрибут hidden сильнее любых классов */
 [hidden] { display: none !important; }
 
-/* В карточке простоя: время и длительность в первой строке, причина и метки — ниже на всю ширину */
-
-/* Табло стана на первом экране */
-.board { background: var(--surface); border: 2px solid var(--border); border-radius: 16px; padding: 14px 16px; margin: 4px 0 16px; }
-.board-top { display: flex; align-items: baseline; gap: 12px; }
-.board-clock { font-size: 2.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
-.board-date { color: var(--text-muted); }
-.board-state { font-weight: 800; font-size: 1.1em; margin-top: 6px; }
-.board-state.running { color: var(--text-good); }
-.board-state.stopped { color: var(--text-stopped); }
-.board-period { margin: 2px 0 10px; }
-.board-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.board-stat { background: var(--stat-bg); border-radius: 12px; padding: 10px; text-align: center; color: var(--text-muted); font-size: 0.85em; }
-.board-stat .v { display: block; white-space: nowrap; font-size: 1.15em; font-weight: 800; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.board-stat.good .v { color: var(--text-good); }
-.board-stat.bad .v { color: var(--text-stopped); }
-
-/* Московское время справа в полосе состояния */
-.bar { position: relative; }
-.bar .msk { float: right; font-variant-numeric: tabular-nums; font-weight: 800; opacity: 0.9; }
-
 /* Смена и действия главного экрана оформлены рядом с пультом ниже. */
 button.pill { cursor: pointer; font: inherit; font-weight: 700; }
-.action-help { display: block; color: var(--text-soft); font-weight: 400; }
-.receipt { font-weight: 700; }
+
 .save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: var(--text-soft); font-size: 0.8em; }
-.save-status.attention { color: var(--text-attn); }
+
 .cancel { margin-top: 28px; }
 .topbar { flex-wrap: wrap; }
 button.pill { min-height: 52px; font-size: 0.8em; white-space: normal; }
-.btn, .tile, .card-note, .action-help, .reject { overflow-wrap: anywhere; }
-.card-note, .action-help { white-space: pre-wrap; }
-.stop-grid > *, .board-stats > * { min-width: 0; }
+.reject { overflow-wrap: anywhere; }
+
+.stop-grid > * { min-width: 0; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 input, textarea { caret-color: var(--focus); }
 ::selection { background: var(--selection-bg); color: var(--selection-text); }
 input::placeholder, textarea::placeholder { color: var(--placeholder); opacity: 1; }
-.btn:disabled, .tile:disabled { cursor: default; }
+
 label { display: block; margin-top: 20px; }
 @media (max-width: 480px) {
-  .tiles, .row2 { grid-template-columns: 1fr; }
-  .btn-huge { min-height: 32dvh; font-size: 1.7em; }
-  .btn-go { min-height: 26dvh; }
-  .board-top, .m-bar-head, .chart-legend { flex-wrap: wrap; }
-  .board-clock { font-size: 2em; }
-  .board-stats, .metrics .m-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bar .msk { float: none; display: block; margin-top: 4px; font-size: 0.85em; }
-  .m-bar-val { white-space: normal; text-align: right; }
+  .chart-legend { flex-wrap: wrap; }
+  
 }
-
-/* Метрики работы стана */
-.metrics { margin-top: 24px; padding-top: 16px; border-top: 2px solid var(--line-soft); }
-.m-head { font-size: 1.2em; font-weight: 800; margin-bottom: 10px; }
-.m-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-.m-tab { min-height: 52px; border-radius: 12px; border: 2px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-weight: 700; cursor: pointer; }
-.m-tab.on { border-color: var(--blue); background: var(--tab-on-bg); }
-.m-kpi { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
-.m-block { margin: 16px 0; }
-.m-title { font-weight: 800; margin-bottom: 8px; }
-.m-bar { margin: 8px 0; }
-.m-bar-head { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85em; }
-.m-bar-name { font-weight: 700; }
-.m-bar-val { color: var(--text-muted); white-space: nowrap; }
-.m-track { height: 12px; background: var(--meter-track); border-radius: 6px; overflow: hidden; margin-top: 4px; display: flex; }
-.m-fill { height: 100%; background: var(--red); }
-.m-fill.work { background: var(--green); }
-.m-fill.down { background: var(--red); }
 
 /* Графики */
 .chart { width: 100%; height: auto; display: block; background: var(--surface); border-radius: 12px; }
@@ -416,22 +191,6 @@ label { display: block; margin-top: 20px; }
 .lg::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .lg.work::before { background: var(--green); } .lg.down::before { background: var(--red); } .lg.nodata::before { border: 1px dashed var(--chart-axis); }
 
-/* Три блока причин и единые цвета зон в метриках. */
-.reason-zone-work { --reason-zone-color: var(--rz-work); }
-.reason-zone-plan { --reason-zone-color: var(--rz-plan); }
-.reason-zone-unplanned { --reason-zone-color: var(--rz-unplanned); }
-.reason-zone-failure { --reason-zone-color: var(--rz-failure); }
-.reason-zone-mark { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px;
-  border: 1px solid var(--mark-border); border-radius: 3px; margin-right: 8px;
-  vertical-align: -1px; background: var(--reason-zone-color); }
-.zone-metric-row { display: flex; flex-wrap: wrap; justify-content: space-between;
-  align-items: baseline; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.zone-metric-name { font-weight: 700; }
-.zone-metric-value { color: var(--text-sub); font-size: 0.85em; font-variant-numeric: tabular-nums; }
-@media (max-width: 480px) {
-  .zone-metric-value { flex-basis: 100%; padding-left: 24px; }
-}
-
 /* Главный экран: холодный металл и промышленный пульт. */
 .ico { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: currentColor;
   stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -450,7 +209,7 @@ label { display: block; margin-top: 20px; }
   margin: 0; padding: 0; font-size: 12px; line-height: 1.4; }
 .save-status::before { content: ''; flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
   background: var(--mill-lamp-good); box-shadow: inset 0 1px 2px var(--metal-highlight), 0 0 6px var(--mill-green-glow); }
-.save-status.attention::before { background: var(--mill-lamp-warn); box-shadow: 0 0 6px var(--mill-red-glow); }
+
 .brand { margin-left: auto; flex: 0 0 auto; display: grid; gap: 3px; text-align: right; }
 .brand strong { font-size: 25px; font-weight: 850; letter-spacing: 0.025em; }
 .brand span { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-muted); }
@@ -465,102 +224,16 @@ label { display: block; margin-top: 20px; }
 .theme-toggle .bulb-rays { stroke: var(--mill-lamp-warn); }
 :root[data-theme="dark"] .theme-toggle .bulb-glass { fill: none; }
 :root[data-theme="dark"] .theme-toggle .bulb-rays { display: none; }
-.mill-console { container-type: inline-size; }
-.mill-status, .btn.shift-action { background: var(--metal-card); border: 1px solid var(--metal-card-edge);
-  box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); border-radius: 16px; }
-.mill-status { display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  min-height: 96px; padding: 17px 22px; margin-bottom: 18px; border-color: var(--mill-status-green);
-  box-shadow: inset 0 1px 0 var(--metal-card-glint), 0 0 0 2px var(--mill-status-green-glow), 0 4px 18px var(--mill-status-green-glow); }
-.mill-status.is-stop { border-color: var(--mill-status-red);
-  box-shadow: inset 0 1px 0 var(--metal-card-glint), 0 0 0 2px var(--mill-status-red-glow), 0 4px 18px var(--mill-status-red-glow); }
-.mill-state { display: flex; align-items: center; gap: 15px; min-width: 0; }
-.mill-state > .ico { width: 36px; height: 36px; color: var(--text-good); }
-.is-stop .mill-state > .ico { color: var(--text-stopped); }
-.mill-state-title { font-size: clamp(20px, 2.6cqi, 30px); font-weight: 800; line-height: 1.25; }
-.mill-info, .mill-timer { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.mill-subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; font-weight: 400; }
-.mill-clock { display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
-  border-left: 1px solid var(--metal-card-edge); padding-left: 22px;
-  font-size: clamp(18px, 2.6cqi, 28px); font-weight: 750; font-variant-numeric: tabular-nums; }
-.mill-clock > .ico { color: var(--text-muted); }
-.mill-panel { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 0; padding: 28px 20px 16px; container-type: inline-size; border-radius: 18px;
-  border: 1px solid var(--metal-edge); color: var(--metal-ink);
-  background: repeating-linear-gradient(0deg, transparent 0 2px, var(--metal-brush) 2px 3px),
-    linear-gradient(170deg, var(--metal-panel-top), var(--metal-panel-bottom));
-  box-shadow: inset 0 2px 2px var(--metal-highlight), inset 0 -3px 4px var(--metal-shadow), 0 6px 12px var(--metal-shadow); }
-/* По два винта на каждой стороне, у верхней и нижней кромки панели. */
-.mill-panel::before, .mill-panel::after { content: ''; position: absolute; top: 10px; bottom: 10px; width: 7px;
-  background-image: var(--metal-screw), var(--metal-screw); background-size: 7px 7px;
-  background-position: center top, center bottom; background-repeat: no-repeat; }
-.mill-panel::before { left: 10px; }
-.mill-panel::after { right: 10px; }
-.mill-btn { position: relative; display: flex; align-items: center; justify-content: center; gap: clamp(12px, 2cqi, 22px);
-  min-width: 0; min-height: 142px; padding: 10px 12px; border: 0; border-radius: 0;
-  font: inherit; font-weight: 800; color: var(--metal-ink); background: transparent; cursor: pointer; touch-action: manipulation; }
-.mill-btn + .mill-btn { border-left: 1px solid var(--metal-edge); }
-.mill-go { --mill-top: var(--mill-green-top); --mill-mid: var(--mill-green-mid); --mill-bottom: var(--mill-green-bottom); --mill-glow: var(--mill-green-glow); }
-.mill-stop { --mill-top: var(--mill-red-top); --mill-mid: var(--mill-red-mid); --mill-bottom: var(--mill-red-bottom); --mill-glow: var(--mill-red-glow); }
-.mill-lamp { display: block; flex: 0 0 auto; position: relative; width: clamp(132px, 18cqi, 156px); aspect-ratio: 1; border-radius: 50%;
-  background: var(--mill-ring);
-  box-shadow: 0 6px 7px var(--metal-shadow), inset 0 2px 2px var(--metal-highlight), inset 0 -3px 3px var(--metal-shadow), 0 0 0 2px var(--metal-plate), 0 0 0 3px var(--metal-edge);
-  transition: transform 120ms ease-out, box-shadow 120ms ease-out; }
-.mill-lamp::before { content: ''; position: absolute; inset: 13%; border-radius: 50%;
-  background: radial-gradient(ellipse 38% 22% at 32% 22%, var(--mill-glint), var(--mill-top) 35%, transparent 100%),
-    radial-gradient(ellipse at 38% 28%, var(--mill-top), var(--mill-mid) 43%, var(--mill-bottom) 85%);
-  box-shadow: 0 0 0 2px var(--mill-gap), 0 3px 4px var(--metal-shadow), inset 0 2px 3px var(--metal-highlight), inset 0 -10px 12px var(--metal-shadow);
-  filter: brightness(.76) saturate(.85); transition: filter 120ms ease-out; }
-.mill-lamp::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; opacity: 0;
-  border: 3px solid transparent; border-bottom-color: var(--mill-mid);
-  filter: drop-shadow(0 3px 4px var(--mill-glow)); pointer-events: none; }
-.mill-btn.is-on .mill-lamp { transform: translateY(2px); }
-.mill-btn.is-on .mill-lamp::before { filter: none; }
-.mill-btn.is-on .mill-lamp::after { opacity: 1; }
-@media (hover: hover) { .mill-btn:hover .mill-lamp::before { filter: brightness(.88) saturate(.9); }
-  .mill-btn.is-on:hover .mill-lamp::before { filter: brightness(1.1); }
-  .topbar .pill:hover, .btn.shift-action:hover { border-color: var(--focus); } }
-.mill-btn:active .mill-lamp { transform: translateY(5px); }
-.mill-btn:active .mill-lamp::before { box-shadow: inset 0 5px 10px var(--metal-shadow); }
-.mill-label { display: grid; gap: 2px; min-width: 0; width: clamp(140px, 20cqi, 208px); max-width: 100%; padding: 10px 14px; border-radius: 6px;
-  border: 1px solid var(--metal-edge);
-  background: var(--metal-plate); box-shadow: inset 0 2px 4px var(--metal-shadow), 0 1px 0 var(--metal-edge);
-  font-size: clamp(15px, 2.7cqi, 29px); letter-spacing: .035em; line-height: 1.2; text-align: left; white-space: nowrap; }
-.mill-btn.is-on .mill-label { text-shadow: 0 0 8px var(--mill-glow); }
-/* Надпись — только у горящей кнопки; у второй табличка скрыта, место под неё остаётся, кнопку называет aria-label */
-.mill-btn:not(.is-on) .mill-label { visibility: hidden; }
-.mill-hint { display: flex; align-items: center; justify-content: center; gap: 8px; grid-column: 1 / -1;
-  max-width: 100%; width: fit-content; margin: 0 auto; padding: 7px 14px; border-radius: 7px;
-  background: var(--metal-plate); color: var(--metal-muted); font-size: 13px; line-height: 1.4; }
-.mill-hint .ico { width: 17px; height: 17px; }
-.btn.shift-action { display: grid; grid-template-columns: 50px minmax(0, 1fr) 24px; gap: 16px; align-items: center;
-  margin: 0; padding: 14px 22px; min-height: 84px; text-align: left; font-size: 21px; line-height: 1.25; overflow-wrap: normal; }
-.shift-action .action-help { font-size: 14px; margin-top: 5px; line-height: 1.4; overflow-wrap: normal; }
-.shift-action > .ico { color: var(--text-muted); width: 20px; }
+
+@media (hover: hover) { 
+  .topbar .pill:hover { border-color: var(--focus); } }
+
 .stop-grid { display: block; }
 .stop-grid > * { min-width: 0; }
 @media (min-width: 1500px) {
   .stop-grid { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 18px; align-items: start; }
-  .stop-grid > :last-child .card:first-child { margin-top: 0; }
 }
-@container (max-width: 650px) {
-  .mill-status { padding: 14px; gap: 12px; }
-  .mill-state { gap: 10px; }
-  .mill-state > .ico { width: 26px; height: 26px; }
-  .mill-clock { padding-left: 14px; gap: 8px; }
-  .mill-clock > .ico { display: none; }
-  .mill-btn { flex-direction: column; padding: 10px; gap: 18px; }
-  .mill-lamp { width: 132px; max-width: 100%; }
-  .mill-label { width: 100%; max-width: 208px; padding: 9px;
-    font-size: clamp(14px, 4.7cqi, 22px); text-align: center; }
-}
-@container (max-width: 480px) {
-  .mill-status { align-items: stretch; flex-direction: column; gap: 10px; }
-  .mill-clock { border-left: 0; border-top: 1px solid var(--metal-card-edge); padding: 8px 0 0; font-size: 17px; }
-  .mill-clock > .ico { display: block; width: 18px; height: 18px; }
-  .mill-clock > div { display: flex; align-items: baseline; gap: 12px; }
-  .mill-clock .mill-subtitle { margin: 0; }
-  .mill-btn { flex-direction: column; gap: 18px; padding: 6px 8px; }
-}
+
 @media (max-width: 1099px) {
   .topbar { padding-block: 14px; gap: 9px; }
   .topbar .pill { padding: 9px 12px; font-size: 13px; }
@@ -584,27 +257,17 @@ label { display: block; margin-top: 20px; }
   .theme-toggle { width: 40px; height: 40px; padding: 3px; }
   .theme-toggle .bulb { width: 32px; height: 32px; }
   main { padding: 10px 12px 24px; }
-  .mill-panel { padding: 24px 12px 14px; gap: 18px 0; }
-  .mill-hint { font-size: 12px; padding: 7px 8px; align-items: flex-start; }
-  .btn.shift-action { grid-template-columns: 42px minmax(0, 1fr) 16px; gap: 11px; padding: 14px; font-size: 18px; }
-  .shift-action .action-help { font-size: 12px; }
+  
 }
-@media (prefers-reduced-motion: reduce) {
-  .mill-lamp, .mill-lamp::before { transition: none; }
-}
+
 /* На невысоком мониторе все три действия остаются в первом экране. */
 @media (min-width: 1100px) and (max-height: 950px) {
   .topbar { padding-block: calc(14px + env(safe-area-inset-top)) 14px; }
-  .mill-panel { padding: 20px 20px 12px; gap: 14px 0; }
-  .mill-btn { min-height: 120px; }
-  .btn.shift-action { min-height: 74px; padding: 11px 20px; }
 }
 
 /* Кнопка «Администратор» в шапке и связь с сервером точкой: текст статуса — только когда что-то не так */
 .topbar .pill.admin.is-on, .topbar .pill.ai-ask.is-on { border-color: var(--focus); }
-.save-status:not(.attention) .save-status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.topbar .save-status:not(.attention) { flex: 0 0 12px; justify-content: center; }
+
 @media (max-width: 600px) {
   .topbar .pill.admin { padding-inline: 12px; }
   .topbar .pill.admin .pill-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -621,171 +284,18 @@ label { display: block; margin-top: 20px; }
 /* Узкий телефон (320 px): пять кнопок и точка связи в одну строку без горизонтальной прокрутки */
 @media (max-width: 360px) { .topbar { gap: 4px; } }
 
-/* Раздел «Администратор» */
-main:has(.adm-card) { max-width: 1100px; }
-.adm-card { margin-top: 18px; padding: 18px 22px 20px; border-radius: 16px; background: var(--metal-card);
-  border: 1px solid var(--metal-card-edge); box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); }
-.adm-card > h2 { margin: 0 0 6px; font-size: 1.1em; }
-.adm-note { margin: 10px 0 0; font-size: 0.8em; }
-.adm-shift { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(120px, 180px) minmax(120px, 180px);
-  align-items: end; gap: 12px 16px; padding: 12px 0; border-bottom: 1px solid var(--metal-card-edge); }
-.adm-shift-name { display: flex; align-items: center; gap: 10px; align-self: center; }
-.adm-shift-name .muted { font-size: 0.8em; }
-.adm-field { display: grid; gap: 6px; margin: 0; min-width: 0; }
-.adm-field > span { font-size: 0.75em; color: var(--text-muted); }
-.adm-field input, .adm-field select { width: 100%; min-height: 52px; margin: 0; padding: 8px 12px; font-size: 0.9em; }
-.adm-field select { font: inherit; font-size: 0.9em; color: inherit; border-radius: 14px;
-  border: 2px solid var(--border-strong); background: var(--surface-2); }
-.adm-group { padding-top: 10px; }
-.adm-group + .adm-group { margin-top: 8px; border-top: 1px solid var(--metal-card-edge); }
-.adm-group-title { margin: 6px 0 4px; font-size: 0.9em; }
-.adm-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 210px auto; align-items: end; gap: 10px 12px;
-  padding: 10px 0; }
-.adm-card > .adm-row { grid-template-columns: minmax(0, 1fr) 210px auto; }
-.adm-del { min-height: 52px; margin: 0; padding: 8px 14px; font-size: 0.8em; }
-.btn.adm-add { width: auto; min-height: 48px; margin-top: 8px; padding: 8px 18px; font-size: 0.85em; }
-.adm-errors { margin-top: 16px; }
-.adm-errors .error-text { margin: 4px 0; }
-.adm-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
-.adm-actions .btn { flex: 1 1 220px; margin: 0; }
-@media (max-width: 760px) {
-  .adm-card { padding: 14px; }
-  .adm-shift { grid-template-columns: 1fr 1fr; }
-  .adm-shift-name { grid-column: 1 / -1; }
-  .adm-row, .adm-card > .adm-row { grid-template-columns: 1fr 1fr; padding: 12px 0; border-bottom: 1px dashed var(--metal-card-edge); }
-  .adm-row .adm-grow { grid-column: 1 / -1; }
-  .adm-card > .adm-row { grid-template-columns: 1fr; }
-  .adm-del { grid-column: 1 / -1; }
-  .adm-field input, .adm-field select { min-height: 48px; padding-inline: 10px; font-size: 0.8em; }
-}
-
-/* Рассылка на почту (в «Администраторе») */
-.adm-banner { margin: 10px 0 0; padding: 12px 14px; border-radius: 12px; background: var(--warn); color: var(--on-warn); font-weight: 700; font-size: 0.85em; }
-.adm-mail-card { margin-top: 14px; padding: 14px; border-radius: 14px; border: 1px solid var(--metal-card-edge); }
-.adm-mail-card.is-off { opacity: 0.7; }
-.adm-mail-head { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; padding-bottom: 6px; }
-.adm-switch { display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 14px 6px 8px; border-radius: 26px;
-  border: 1px solid var(--metal-card-edge); background: transparent; color: inherit; font: inherit; font-size: 0.85em; font-weight: 700; cursor: pointer; touch-action: manipulation; }
-.adm-switch-knob { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--text-muted); box-sizing: border-box; }
-.adm-switch.is-on { border-color: var(--green-solid-edge); }
-.adm-switch.is-on .adm-switch-knob { background: var(--green-solid); border-color: var(--green-solid-edge); }
-.adm-sends { margin-top: 6px; }
-.adm-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; padding: 10px 0; border-bottom: 1px dashed var(--metal-card-edge); }
-.adm-send-main { flex: 1 1 300px; display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; }
-.adm-days { display: flex; flex-wrap: wrap; gap: 6px; }
-.adm-day { min-width: 48px; min-height: 52px; padding: 6px 8px; border-radius: 12px; border: 1px solid var(--metal-card-edge); background: transparent;
-  color: var(--text-muted); font: inherit; font-size: 0.85em; font-weight: 700; cursor: pointer; touch-action: manipulation; }
-.adm-day.is-on { background: var(--green-solid); border-color: var(--green-solid-edge); color: var(--on-solid); }
-.adm-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.btn.adm-chip { width: auto; min-height: 48px; margin: 0; padding: 8px 14px; font-size: 0.8em; }
-.adm-mail-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
-.adm-mail-foot .btn { margin: 0; }
-.adm-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 700; }
-.adm-test-ok { margin: 10px 0 0; color: var(--green-solid); font-weight: 700; }
-@media (max-width: 760px) {
-  .adm-mail-card { padding: 10px; }
-  .adm-mail-head { grid-template-columns: 1fr; }
-  .adm-send-main { flex-basis: 100%; }
-  .adm-send-main { grid-template-columns: 110px minmax(0, 1fr); }
-  .adm-days { gap: 4px; }
-  .adm-day { min-width: 0; flex: 1 1 0; padding-inline: 2px; }
-  .adm-mail-foot { flex-direction: column; align-items: stretch; }
-  .adm-mail-foot .btn { width: 100%; }
-}
-
-/* Пульт: прямоугольные клавиши во всю половину панели (владелец, 01.10.2026), табличка под клавишей */
-.mill-btn { flex-direction: column; gap: 16px; padding: 8px clamp(10px, 3cqi, 30px); }
-.mill-lamp { width: 100%; max-width: 400px; aspect-ratio: 4 / 3; border-radius: 18px; }
-.mill-lamp::before { inset: 8%; border-radius: 10px;
-  background: radial-gradient(ellipse 46% 24% at 30% 16%, var(--mill-glint), var(--mill-top) 40%, transparent 100%),
-    linear-gradient(180deg, var(--mill-top), var(--mill-mid) 42%, var(--mill-bottom)); }
-.mill-lamp::after { inset: -5px; border-radius: 22px; border: 3px solid var(--mill-mid);
-  filter: drop-shadow(0 0 6px var(--mill-glow)); }
-.mill-label { width: 100%; max-width: 400px; text-align: center; }
-@media (max-width: 480px) {
-  .mill-btn { padding: 6px 8px; gap: 12px; }
-  .mill-lamp { border-radius: 14px; }
-  .mill-lamp::after { border-radius: 18px; }
-}
-/* Объём клавиши: снизу видна боковая стенка (тень цвета клавиши), сверху фаска и блик.
-   Горящая клавиша утоплена наполовину, при нажатии — до упора. Двигается только клавиша, рамка стоит */
-.mill-btn.is-on .mill-lamp, .mill-btn:active .mill-lamp { transform: none; }
-.mill-lamp::before { inset: 8% 8% 15% 8%;
-  box-shadow: inset 0 2px 1px var(--metal-highlight), inset 0 -9px 12px var(--metal-shadow),
-    inset 5px 0 6px -4px var(--metal-highlight), inset -5px 0 6px -4px var(--metal-shadow),
-    0 11px 0 var(--mill-bottom), 0 12px 0 var(--mill-gap), 0 17px 14px var(--metal-shadow);
-  transition: transform 110ms ease-out, box-shadow 110ms ease-out, filter 120ms ease-out; }
-.mill-btn.is-on .mill-lamp::before { transform: translateY(5px);
-  box-shadow: inset 0 2px 1px var(--metal-highlight), inset 0 -9px 12px var(--metal-shadow),
-    inset 5px 0 6px -4px var(--metal-highlight), inset -5px 0 6px -4px var(--metal-shadow),
-    0 6px 0 var(--mill-bottom), 0 7px 0 var(--mill-gap), 0 10px 18px var(--mill-glow); }
-.mill-btn:active .mill-lamp::before { transform: translateY(9px);
-  box-shadow: inset 0 4px 8px var(--metal-shadow), 0 2px 0 var(--mill-bottom), 0 3px 0 var(--mill-gap); }
-@media (prefers-reduced-motion: reduce) { .mill-lamp::before { transition: none; } }
-/* Светлая тема: пульт — светлый шлифованный металл, а не тёмный блок (владелец, 01.10.2026).
-   Те же переменные переопределены только внутри пульта: шапка и тёмная тема не меняются */
-:root[data-theme="light"] .mill-panel {
-  --metal-panel-top: #f4f7fa; --metal-panel-bottom: #cdd6de; --metal-brush: rgba(70, 86, 102, 0.05);
-  --metal-edge: #9ba8b4; --metal-highlight: rgba(255, 255, 255, 0.95); --metal-shadow: rgba(35, 50, 66, 0.26);
-  --metal-plate: #e2e8ee; --metal-ink: #18232e; --metal-muted: #46525e; --mill-gap: #5f6c78; }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .mill-panel {
-    --metal-panel-top: #f4f7fa; --metal-panel-bottom: #cdd6de; --metal-brush: rgba(70, 86, 102, 0.05);
-    --metal-edge: #9ba8b4; --metal-highlight: rgba(255, 255, 255, 0.95); --metal-shadow: rgba(35, 50, 66, 0.26);
-    --metal-plate: #e2e8ee; --metal-ink: #18232e; --metal-muted: #46525e; --mill-gap: #5f6c78; }
-}
-/* Без серебряной рамки: клавиша во всю площадь кнопки (владелец, 01.10.2026).
-   Снизу 12 px под боковую стенку; подсветка горящей — кольцо по краю самой клавиши */
-.mill-lamp { background: none; box-shadow: none; border-radius: 16px; }
-.mill-lamp::before { inset: 0 0 12px 0; border-radius: 16px; }
-.mill-lamp::after { inset: -6px -6px 6px -6px; border-radius: 21px; transition: transform 110ms ease-out; }
-.mill-btn.is-on .mill-lamp::after { transform: translateY(5px); }
-@media (max-width: 480px) {
-  .mill-lamp, .mill-lamp::before { border-radius: 12px; }
-  .mill-lamp::after { border-radius: 17px; }
-}
-/* «ОСТАНОВЛЕН» длиннее «РАБОТАЕТ»: на узком телефоне табличке нужны меньшие отступы */
-@media (max-width: 480px) { .mill-label { padding-inline: 4px; letter-spacing: 0; } }
-/* Во всю ширину монитора клавиши растут вместе с пультом (до 560 px) */
-@media (min-width: 1400px) { .mill-lamp, .mill-label { max-width: 560px; } }
-/* Клавиши — максимально большие (владелец, 01.10.2026): вся ширина своей половины пульта */
-.mill-lamp, .mill-label { max-width: none; }
-.mill-lamp { width: 100%; }
 /* Показатели: цвета зон, как на шкале суток (владелец, 01.10.2026) */
-.m-fill.z-work { background: var(--z-work); }
-.m-fill.z-plan { background: var(--z-plan); }
-.m-fill.z-unplanned { background: var(--z-unplanned); }
-.m-fill.z-failure { background: var(--z-failure); }
-.m-fill.neutral { background: var(--chart-axis); }
+
 .chart .z-work { fill: var(--z-work); stroke: var(--z-work); }
 .chart .z-plan { fill: var(--z-plan); stroke: var(--z-plan); }
 .chart .z-unplanned { fill: var(--z-unplanned); stroke: var(--z-unplanned); }
 .chart .z-failure { fill: var(--z-failure); stroke: var(--z-failure); }
 .chart .ring.z-work, .chart .ring.z-plan, .chart .ring.z-unplanned, .chart .ring.z-failure { fill: none; }
-/* Строки «Исправить запись» и «Что изменить?»: тот же класс, что у кнопок смены, но без значка —
-   подпись сверху, значение под ней (без этого подпись падала в узкую колонку значка) */
-.btn.shift-action:not(:has(> .action-ico)) { display: flex; flex-direction: column; align-items: flex-start;
-  justify-content: center; gap: 4px; min-height: 72px; text-align: left; }
-.btn.shift-action:not(:has(> .action-ico)) > .action-help { margin-top: 0; }
-
-/* ИИ-консультант: отдельный экран «Спросить ассистента» */
-main:has(.ai-card) { max-width: 900px; margin-inline: auto; }
-.ai-input { min-height: 96px; }
-.ai-log { display: grid; gap: 10px; margin-top: 12px; }
-.ai-msg { padding: 10px 14px; border-radius: 14px; border: 1px solid var(--metal-card-edge); min-width: 0; }
-.ai-user { margin-left: 12%; }
-.ai-assistant { margin-right: 6%; }
-.ai-who { font-size: 0.7em; color: var(--text-muted); }
-.ai-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9em; }
-.ai-examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.ai-input { display: block; width: 100%; box-sizing: border-box; margin-top: 12px; padding: 10px 12px; font: inherit; font-size: 0.9em; color: inherit; border-radius: 14px; resize: vertical; }
-.ai-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
-.ai-actions .btn { flex: 1 1 160px; margin: 0; }
 
 /* Широкая шапка с «Спросить ассистента»: бренд не сжимается — уступает текст о связи */
 @media (min-width: 1200px) {
   .topbar .brand { flex-shrink: 0; }
   /* текст о связи — в одну строку: перенос делал шапку выше и сжимал кнопки пульта */
-  .topbar .save-status .save-status-text, .topbar .save-status:not(.attention) .save-status-text {
+  .topbar .save-status .save-status-text {
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

@@ -2,53 +2,33 @@
    Цвета — только токены из app.css (три блока тем), своих цветов здесь нет.
    Файл подключается после app.css и timeline.css: при равной специфичности его правила побеждают. */
 
-/* Панель раскрывается под полосой состояния: сама полоса — точка отсчёта для её положения,
-   поэтому на узком экране панель занимает всю ширину полосы без отдельных правил */
-.mill-status { position: relative; }
-/* Пока панель открыта, пульт поднимается над шкалой суток и кнопками смены, но остаётся ниже шапки (5) и всплывашки (10) */
-.mill-console:has(.rep.is-open) { position: relative; z-index: 4; }
-
 /* Обёртка — flex, а не строка текста: иначе под кнопкой остаётся зазор от базовой линии и полоса растёт */
 .rep { display: flex; align-items: center; flex: 0 0 auto; margin-left: auto; }
-.rep-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 44px;
-  margin: 0; padding: 6px 16px; border-radius: 12px; border: 1px solid var(--metal-card-edge);
-  background: var(--metal-inset); color: var(--text); box-shadow: inset 0 1px 2px var(--metal-card-glint);
+.rep-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px;
+  margin: 0; padding: 6px 16px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--text); 
   font-size: 15px; font-weight: 700; line-height: 1.2; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
 .rep-btn .ico { width: 22px; height: 22px; }
 .rep-btn:hover, .rep.is-open .rep-btn { border-color: var(--focus); }
 .rep-btn:active { filter: var(--press-btn); }
 
-/* Узкая полоса — только значок (подпись остаётся в aria-label и title) */
-@container (max-width: 899px) {
-  .rep-label { display: none; }
-  .rep-btn { width: 44px; padding: 0; }
-}
-/* Телефон: полоса — две строки; кнопка справа от состояния, часы ниже во всю ширину */
-@container (max-width: 480px) {
-  .mill-status { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 12px; }
-  .mill-status > .mill-clock { grid-column: 1 / -1; }
-  .rep { margin-left: 0; }
-}
-/* Совсем узкая полоса (320 px): значок пульса уступает место кнопке, чтобы надпись состояния не рвалась на две строки */
-@container (max-width: 330px) {
-  .mill-state > .ico { display: none; }
-}
+/* Телефон: в панели состояния кнопка Excel — только значок (подпись в aria-label и title) */
 
 .rep-panel { position: absolute; z-index: 30; top: calc(100% + 10px); right: -1px; width: min(480px, calc(100% + 2px));
   max-height: min(620px, calc(100dvh - 150px)); overflow: auto; overscroll-behavior: contain;
-  padding: 16px 18px 18px; border-radius: 16px; border: 1px solid var(--metal-card-edge); background: var(--metal-card);
-  box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--shadow-toast);
+  padding: 16px 18px 18px; border-radius: 16px; border: 1px solid var(--line-strong); background: var(--surface);
+  box-shadow: var(--shadow-toast);
   color: var(--text); font-size: 15px; font-weight: 400; line-height: 1.35; text-align: left; white-space: normal; }
 .rep-panel:focus { outline: none; }
 .rep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
 .rep-title { margin: 0; font-size: 19px; font-weight: 800; line-height: 1.25; }
-.rep-close { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; margin: -4px -6px -4px 0; padding: 0;
+.rep-close { display: grid; place-items: center; flex: 0 0 auto; width: 48px; height: 48px; margin: -4px -6px -4px 0; padding: 0;
   border-radius: 12px; border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; touch-action: manipulation; }
-.rep-close:hover { border-color: var(--metal-card-edge); }
+.rep-close:hover { border-color: var(--line-strong); }
 .rep-close .ico { width: 20px; height: 20px; }
 
 .rep-quick { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-.rep-chip { min-height: 44px; margin: 0; padding: 8px 14px; border-radius: 12px; border: 2px solid var(--border);
+.rep-chip { min-height: 48px; margin: 0; padding: 8px 14px; border-radius: 12px; border: 2px solid var(--border);
   background: var(--surface); color: var(--text-2); font-size: 15px; font-weight: 700; line-height: 1.2; cursor: pointer; touch-action: manipulation; }
 .rep-chip.on { border-color: var(--blue); background: var(--tab-on-bg); }
 .rep-chip:active { filter: var(--press-tile); }
@@ -62,53 +42,6 @@
 .rep-panel .rep-go { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; margin: 0; }
 .rep-go .ico { width: 22px; height: 22px; }
 
-/* Монитор: главный экран подогнан под высоту окна, полоса состояния не должна вырасти — кнопка ниже её содержимого:
-   на невысоком мониторе (подзаголовки скрыты) в полосе остаётся одна строка текста, около 25 px */
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
-  .rep-btn { min-height: 0; height: 32px; padding: 0 12px; font-size: 14px; }
-  .rep-btn .ico { width: 20px; height: 20px; }
-}
-@container (max-width: 899px) {
-  @media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
-    .rep-btn { width: 36px; padding: 0; }
-  }
-}
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) and (max-height: 760px) {
-  .rep-btn { height: 24px; border-radius: 9px; }
-  .rep-btn .ico { width: 16px; height: 16px; }
-}
 @media (prefers-reduced-motion: no-preference) {
   .rep-btn, .rep-chip { transition: border-color 120ms ease-out; }
-}
-
-/* Монитор от 1024 px с мышью: полоса состояния крупнее — читается с расстояния. Телефоны и планшеты (в т. ч. альбомные, касание) не затронуты.
-   Стоит после правок высоты в timeline.css, поэтому перекрывает и их; длинная надпись переносится, часы не сжимаются */
-@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
-  .mill-status { padding-block: 22px; gap: 24px; }
-  .mill-state { gap: 20px; }
-  .mill-state-title { font-size: clamp(28px, 4.2cqi, 44px); line-height: 1.15; overflow-wrap: anywhere; }
-  .mill-status .mill-subtitle { margin-top: 6px; font-size: clamp(16px, 1.9cqi, 20px); }
-  .mill-clock { gap: 16px; font-size: clamp(28px, 4.2cqi, 44px); line-height: 1.15; }
-  .rep-btn { height: 44px; padding: 0 16px; font-size: 16px; }
-  .rep-btn .ico { width: 22px; height: 22px; }
-}
-@container (min-width: 481px) {
-  @media (min-width: 1024px) and (hover: hover) and (pointer: fine) { .mill-clock { padding-left: 28px; } }
-}
-/* Значки крупные только в широкой полосе; в узкой (правая колонка на 1100–1300 px) остаются прежними, чтобы надпись не рвалась */
-@container (min-width: 701px) {
-  @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
-    .mill-state > .ico, .mill-clock > .ico { display: block; flex: 0 0 auto; width: 48px; height: 48px; }
-  }
-}
-/* Невысокий монитор: подзаголовки и значки, как и раньше, скрыты, а полоса остаётся плотной, чтобы клавиши пульта не мельчали */
-@media (min-width: 1024px) and (hover: hover) and (pointer: fine) and (max-height: 760px) {
-  .mill-status { padding-block: 12px; }
-  .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
-}
-/* Окно невысокое, но не крошечное: полоса чуть плотнее, чтобы клавиши пульта не потеряли высоту */
-@media (min-width: 1024px) and (hover: hover) and (pointer: fine) and (max-height: 950px) {
-  .mill-status { padding-block: 8px; }
-  .mill-state-title, .mill-clock { font-size: clamp(28px, min(4.2cqi, 4vh), 44px); line-height: 1.1; }
-  .mill-status .mill-subtitle { margin-top: 0; font-size: 16px; line-height: 1.2; }
 }

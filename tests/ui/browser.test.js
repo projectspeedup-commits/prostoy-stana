@@ -98,9 +98,11 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seedRecords.identifier });
   assert.match(await evaluate(`document.querySelector('.ps-shift').textContent`), /3 простоя · 1 мин/);
   await evaluate(`document.querySelector('#nav-stats').click()`);
-  await wait(`document.querySelector('.m-kpi')`);
-  assert.equal(await evaluate(`document.querySelector('.board .board-stat.bad .v').textContent`), '1 м');
-  assert.match(await evaluate(`document.querySelector('.m-kpi').textContent`), /1 мпростой/);
+  await wait(`document.querySelector('.ps-kpis--row')`);
+  assert.equal(await evaluate(`document.querySelector('.ps-kpis--row .ps-kpi[data-tone="bad"] .ps-kpi__value').textContent`), '1 м');
+  assert.match(await evaluate(`document.querySelector('.ps-kpis--row').textContent`), /Простой1 м/);
+  assert.equal(await evaluate(`document.querySelectorAll('.ps-period button').length`), 4);
+  assert.equal(await evaluate(`document.querySelector('.ps-period button[aria-pressed="true"]').textContent`), 'Смена');
   await evaluate(`document.querySelector('#demo').click()`);
   await evaluate(`document.querySelector('#nav-shift').click()`);
   assert.equal(await evaluate(`document.querySelector('.ps-kpi[data-kind="down"] .ps-kpi__value').textContent`), '1 м');
@@ -115,7 +117,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.equal(await evaluate(`document.activeElement === document.querySelector('.ai-input')`), true);
   assert.equal(await evaluate(`document.querySelector('#ai-ask').classList.contains('is-on')`), true);
   assert.match(await evaluate(`document.querySelector('#main h1').textContent`), /Спросить ассистента/);
-  assert.equal(await evaluate(`document.querySelector('#admin').querySelector('.pill-text') !== null && !document.querySelector('#main .adm-card:not(.ai-card)')`), true);
+  assert.equal(await evaluate(`document.querySelector('#admin').querySelector('.pill-text') !== null && !document.querySelector('#main .ps-admin')`), true);
   await evaluate(`document.querySelector('#demo').click()`);
   await wait(`!document.querySelector('.ai-card')`);
   for (const [theme, pressed, label] of [['light', 'false', 'тёмную'], ['dark', 'true', 'светлую']]) {
@@ -172,14 +174,16 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.match(await evaluate(`document.querySelector('.ps-checklist').textContent`), /3 простоя без причины/);
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /3 простоя без «что сделали»/);
   await evaluate(`document.querySelector('#admin').click()`);
-  await wait(`document.querySelector('.adm-card')`);
+  await wait(`document.querySelector('.ps-admin .ps-card')`);
   const admin = await (await fetch(origin + '/api/admin/settings', { headers: { 'X-Device-Key': 'k2' } })).json();
   admin.settings.contacts = [];
   const changed = await fetch(origin + '/api/admin/settings', { method: 'PUT', headers: { 'X-Device-Key': 'k2' }, body: JSON.stringify({ settings: admin.settings, refsVersion: admin.refsVersion }) });
   assert.equal(changed.status, 200);
-  await evaluate(`(() => { const input = document.querySelector('.adm-grow input[maxlength="120"]'); input.value += 'а'; input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await click('Мастера смен');
+  await evaluate(`(() => { const input = document.querySelector('.ps-admin input[maxlength="120"]'); input.value += 'а'; input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
   await click('Сохранить');
-  await wait(`document.querySelector('#main').textContent.includes('Настройки уже изменили на другом устройстве. Обновите экран и повторите.')`);
+  await wait(`document.querySelector('.ps-savebar__text')?.textContent.includes('Настройки изменили на другом устройстве, обновите форму')`);
+  assert.equal(await evaluate(`[...document.querySelectorAll('.ps-savebar button')].some(b => !b.hidden && b.textContent === 'Обновить форму')`), true);
   // Ожидаемый 409 фиксируется браузером как ошибка HTTP, это не JS/CSP-ошибка.
   const unexpected = errors.filter((e) => !e.includes('409'));
   assert.equal(unexpected.length, 0, unexpected.join('\n'));
@@ -323,7 +327,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await send('Emulation.setDeviceMetricsOverride',{width:360,height:740,deviceScaleFactor:1,mobile:false}); await sleep(250);
   const chartFonts=await evaluate(`[...document.querySelectorAll('.chart text')].map(x=>parseFloat(getComputedStyle(x).fontSize)*x.ownerSVGElement.getBoundingClientRect().width/x.ownerSVGElement.viewBox.baseVal.width)`);
   assert.ok(chartFonts.length && Math.min(...chartFonts)>=10,JSON.stringify(chartFonts));
-  assert.equal(await evaluate(`document.querySelectorAll('.m-fill.neutral').length`),0);
+  assert.equal(await evaluate(`document.querySelectorAll('.ps-bar__fill[data-zone="neutral"]').length`),0);
   // Две настоящие вкладки одного профиля. Вторая намеренно пропускает storage,
   // затем записывает устаревший экран: чтение+слияние перед записью сохраняет удаление.
   const second = await send('Target.createTarget', { url: 'about:blank' });

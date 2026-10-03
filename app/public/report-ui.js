@@ -215,7 +215,7 @@ export function createReportMenu({ h, nowMs, getSchedule, getKey, getApi, demo, 
 
     const error = h("p", { class: "rep-error error-text", role: "alert", hidden: true });
     const goLabel = h("span", { text: "Скачать" });
-    const go = h("button", { class: "btn primary rep-go", type: "button", onclick: download }, svgIcon("download"), goLabel);
+    const go = h("button", { class: "ps-btn ps-btn--primary rep-go", type: "button", onclick: download }, svgIcon("download"), goLabel);
     const panel = h("div", { class: "rep-panel", id: "rep-panel", role: "dialog", "aria-label": "Отчёт в Excel", tabindex: "-1", hidden: true },
       h("div", { class: "rep-head" },
         h("h2", { class: "rep-title", text: "Отчёт в Excel" }),
