@@ -522,7 +522,7 @@
 .handover-preview summary { cursor: pointer; }
 .topbar { background: var(--metal-page); background-attachment: fixed; }
 .topbar::before { display: none; }
-.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 250px; justify-content: flex-start;
+.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 auto; justify-content: flex-start;
   min-height: 44px; padding: 6px; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; text-align: left; }
 .save-status .save-status-text, .save-status:not(.attention) .save-status-text {
   position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: normal; }
