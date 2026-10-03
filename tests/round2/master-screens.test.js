@@ -228,7 +228,7 @@ test('сдача смены: чек-лист считает система, у �
   assert.match(text(a.main()), /Смена закрыта/);
 });
 
-test('сдача смены: итоги плитками из ядра, минуты сходятся с простоями смены; поле записки — только при стоящем стане', async (t) => {
+test('сдача смены: итоги плитками из ядра, минуты сходятся с простоями смены; поле записки есть при любом состоянии стана', async (t) => {
   const { a, port } = await fixture(t);
   await seedStops(port); await a.h.loadState();
   const view = a.h.buildView();
@@ -241,8 +241,8 @@ test('сдача смены: итоги плитками из ядра, мину
   assert.deepEqual(tiles.map((k) => text(findAll(k, (e) => e.className === 'ps-kpi__label')[0])), ['Работа', 'Плановый', 'Внеплановый', 'Аварийный', 'Брак за смену']);
   assert.equal(text(findAll(tiles[3], (e) => e.className === 'ps-kpi__value')[0]), '30 м');
   assert.equal(tiles[1].attrs['data-zero'], '', 'нулевая плитка приглушена');
-  assert.equal(findAll(a.main(), (e) => e.attrs.id === 'close-action').length, 0, 'стан работает: записки для следующей смены нет');
-  // Стан стоит: поле «Что сделали по ремонту…» есть, текст уходит в shift_close.action
+  assert.equal(findAll(a.main(), (e) => e.attrs.id === 'close-action').length, 1, 'стан работает: поле записки следующей смене тоже есть');
+  // Стан стоит: то же поле «Что сделали по ремонту…», текст уходит в shift_close.action
   a.h.send('stop', { downtimeId: 'long' }); await a.pump(); a.h.render();
   const ta = findAll(a.main(), (e) => e.attrs.id === 'close-action')[0];
   assert.ok(ta); assert.equal(ta.attrs['aria-label'], 'Что сделали по ремонту за смену и что осталось');

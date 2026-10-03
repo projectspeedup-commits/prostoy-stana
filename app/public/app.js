@@ -413,6 +413,8 @@ function buildView() {
     crew: s.crew ? { ...s.crew } : null,
     closed: !!s.closed,
     shift: refs ? core.shiftOf(nowMs(), refs.settings.schedule) : s.shift,
+    // Записки прошлых сдач при работающем стане; при простое они лежат в open.handovers
+    handovers: !open && Array.isArray(s.handovers) ? s.handovers.slice() : [],
     dataFromMs: s.dataFromMs ?? null,
     runningSinceMs: s.runningSinceMs ?? null,
     segments: (s.segments || []).filter((x) => !open || x.downtimeId !== open.downtimeId || x.index !== open.index).map((x) => ({ ...x })),
@@ -531,6 +533,10 @@ function applyEvent(v, e) {
         v.open.handovers = [...(v.open.handovers || []),
           { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }];
       }
+      if (!v.open && typeof e.action === "string" && e.action.trim() && !(v.handovers || []).some((x) => x.at === e.at && x.crewId === (e.crewId ?? null))) {
+        v.handovers = [...(v.handovers || []),
+          { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action, note: e.note ?? null }];
+      }
       if (t < v.shift.startMs || t >= v.shift.endMs || (v.crew && core.toMs(v.crew.at) > t)) break;
       v.crew = null;
       v.closed = true;
@@ -555,6 +561,20 @@ function shiftSummary(view) {
     }
   }
   return core.summarizeShift(segs, shift, refs, nowMs(), view.dataFromMs);
+}
+
+// Брак простоя за смену — сумма по всем частям (смена причины по ходу простоя даёт несколько частей).
+// Привязка как в отчёте Excel (core/report.js): брак части относится к смене, в которой часть завершилась;
+// открытая часть брака не имеет. Брак не указан ни в одной части — null («не указан»), указан 0 — 0
+function shiftBillet(segs, shift) {
+  let sum = null;
+  for (const s of segs) {
+    if (s.open || s.endMs === null || s.endMs === undefined) continue;
+    if (!(s.endMs > shift.startMs && s.endMs <= shift.endMs)) continue;
+    if (!Number.isFinite(s.billet) || s.billet < 0) continue;
+    sum = (sum ?? 0) + s.billet;
+  }
+  return sum === null ? null : Math.round(sum * 1000) / 1000;
 }
 
 // Простои текущей смены, сгруппированные по downtimeId (один простой — одна строка)
@@ -592,7 +612,7 @@ function shiftDowntimes(view) {
       reason: last.reason ?? null,
       note: last.note ?? null,
       action: last.action ?? null,
-      billet: g.segs.map((s) => s.billet).find((b) => b !== null && b !== undefined) ?? null,
+      billet: shiftBillet(g.segs, shift),
       manual: g.segs.some((s) => s.manual),
       indexLast: last.index || 0,
       segs: g.segs,
@@ -639,12 +659,16 @@ function shiftWorkMin(view, downMin) {
   return Math.max(0, Math.round((to - from) / 60000) - downMin);
 }
 
-// Коротко для табло: «2 ч 11 м»
-function fmtHM(min) {
+// Правило длительностей: в тексте «N ч N мин», в плитках «N ч N м»; нулевые части опускаются («12 ч», «46 мин»)
+function fmtParts(min, unit) {
   min = Math.max(0, Math.round(min));
   const h = Math.floor(min / 60);
-  return h ? `${h} ч ${min % 60} м` : `${min} м`;
+  const m = min % 60;
+  if (!h) return `${m} ${unit}`;
+  return m ? `${h} ч ${m} ${unit}` : `${h} ч`;
 }
+// Для плиток и табло: «2 ч 11 м»
+function fmtHM(min) { return fmtParts(min, "м"); }
 // Подсказки в полях — по теме выбранной причины (из справочника)
 const DEFAULT_NOTE_HINT = "Например: на третьей клети заклинило подшипник";
 const DEFAULT_ACTION_HINT = "Например: заменили ножи, подтянули муфту";
@@ -655,17 +679,15 @@ function isOther(code) { return !!(reasonRef(code) && reasonRef(code).other); }
 // Описание своими словами обязательно: у «иной» причины и у трёх блоков без подпунктов
 function needsNote(code) { const r = reasonRef(code); return !!(r && (r.other || r.noteRequired)); }
 
-function fmtDurMin(min) {
-  min = Math.max(0, Math.round(min));
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return h ? `${h} ч ${m} мин` : `${m} мин`;
-}
+// В тексте: «2 ч 11 мин»
+function fmtDurMin(min) { return fmtParts(min, "мин"); }
 // Долгий простой: от суток — «1 сут 10 ч 21 мин», меньше — как fmtDurMin
 function fmtDurLong(min) {
   min = Math.max(0, Math.round(min));
   const days = Math.floor(min / 1440);
-  return days ? `${days} сут ${Math.floor((min % 1440) / 60)} ч ${min % 60} мин` : fmtDurMin(min);
+  if (!days) return fmtDurMin(min);
+  const rest = min % 1440;
+  return rest ? `${days} сут ${fmtDurMin(rest)}` : `${days} сут`;
 }
 // Сколько работает стан, с секундами: «6 ч 34 мин 12 с», «34 мин 12 с», «12 с»
 function fmtDurSec(sec) {
@@ -1328,7 +1350,7 @@ async function sendMailTest(r) {
   render();
 }
 const hmMin = (v) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
-const fmtLen = (min) => (min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
+const fmtLen = (min) => fmtDurMin(min);
 function adminProblems(s) {
   const out = [];
   const [a, b] = s.schedule.shifts.map((x) => hmMin(x.start));
@@ -1834,7 +1856,7 @@ function renderCrew(main, view) {
               onclick: () => { ui.pickPerson = p.id; render(); } }))) : h("p", { class: "ps-field__hint", text: "В списке этой смены пока никого нет." }),
           h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"))),
       h("div", { class: "ps-stack" },
-        view.open ? renderHandoverCard(view.open) : null,
+        renderHandoverCard(view.open || { handovers: view.handovers }),
         psCard("Стан сейчас", null, stateNow(view)),
         accept)));
   }
@@ -1950,7 +1972,7 @@ const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 10
 const mins = (x) => (x === null || x === undefined ? "—" : fmtHM(x));
 // Подпись строки: время · остановки · доля · принят стоящим (у смен, принявших простой уже стоящим)
 function barValue(r, total) {
-  const parts = [fmtHM(r.minutes)];
+  const parts = [fmtDurMin(r.minutes)];
   if (r.stops || !r.carried) parts.push(`${r.stops} ост.`);
   if (total) parts.push(`${Math.round((r.minutes / total) * 100)}%`);
   if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
@@ -2041,7 +2063,7 @@ function metrics(view) {
           (r) => zoneOf(r.reason, refs)),
         barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
         st.longest ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("clock", "ps-ico"),
-          h("span", { class: "ps-notice__body", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` })) : null),
+          h("span", { class: "ps-notice__body", text: `Самый долгий простой: ${fmtDurMin(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` })) : null),
       h("div", { class: "ps-stack" },
         zoneMetrics(st),
         zoneDonut(st),
@@ -2095,9 +2117,9 @@ function renderStats(main, view) {
   fill(main, metrics(view));
 }
 
-// Ключ простоя в пределах смены: черновик «что сделали по ремонту» относится к своему простою и своей смене
+// Ключ простоя (или работающего стана) в пределах смены: черновик «что сделали по ремонту» относится к своему простою и своей смене
 function stopShiftKey(view) {
-  return `${view.open.downtimeId}|${view.shift.day}|${view.shift.shiftNo}`;
+  return `${view.open ? view.open.downtimeId : "run"}|${view.shift.day}|${view.shift.shiftNo}`;
 }
 
 // Что передали прошлые смены по ремонту: текст сдачи смены или пусто
@@ -2193,7 +2215,7 @@ function shiftKpis(view) {
   const tile = (zone, label, min) => h("div", { class: "ps-kpi", "data-zone": zone, "data-zero": min >= 1 ? null : "" },
     h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), label),
     h("span", { class: "ps-kpi__value", text: fmtHM(min) }));
-  const billet = Math.round(shiftDowntimes(view).reduce((n, d) => n + (Number(d.billet) || 0), 0) * 10) / 10;
+  const billet = Math.round(shiftDowntimes(view).reduce((n, d) => n + (Number(d.billet) || 0), 0) * 1000) / 1000;
   return [
     h("div", { class: "ps-kpis" },
       tile("work", "Работа", shiftWorkMin(view, downMin)), tile("plan", "Плановый", zones.plan),
@@ -3083,7 +3105,7 @@ function downtimeRow(d, shift, selected) {
         text: reasonLabel(d.reason) || "Причина не указана" })),
       h("span", { class: "ps-row__what", "data-missing": missing.length ? "" : null, text: what }),
       note ? h("span", { class: "ps-row__note", text: note }) : null),
-    h("span", { class: "ps-row__dur", text: d.open ? "идёт" : fmtHM(d.minutes) }));
+    h("span", { class: "ps-row__dur", text: d.open ? "идёт" : fmtDurMin(d.minutes) }));
 }
 
 function cardData(view) {
@@ -3277,7 +3299,7 @@ function renderDowntimes(main, view, editing) {
 // Черновик «что сделали по ремонту» относится к своему простою и своей смене
 function closeActionDraft(view) {
   const d = ui.closeAction;
-  return view.open && d && d.key === stopShiftKey(view) && typeof d.text === "string" ? d.text : "";
+  return d && d.key === stopShiftKey(view) && typeof d.text === "string" ? d.text : "";
 }
 function renderCloseConfirm(main, view) {
   const gaps = handoverGaps(view);
@@ -3293,10 +3315,17 @@ function renderCloseConfirm(main, view) {
   const count = (list, what) => `${list.length} ${plural(list.length, "простой", "простоя", "простоев")} ${what}`;
   const extra = [...noBillet, ...noOther];
   const since = runningSince(view);
+  // Открытый простой без причины тоже считается: причину можно выбрать, не дожидаясь пуска
+  const openNoReason = !!view.open && !reasonRef(view.open.reason);
+  const noReasonCount = noReason.length + (openNoReason ? 1 : 0);
+  const fixReason = noReason.length ? fix(noReason) : { label: "Выбрать", onclick: () => {
+    ui.wz = { mode: "current", downtimeId: view.open.downtimeId, step: 1, group: null, reason: null, note: "" };
+    go("reason");
+  } };
   const checks = h("ul", { class: "ps-checklist" },
     view.open ? checkItem(false, `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}: простой перейдёт следующей смене, пуск отмечать не нужно`)
       : checkItem(true, Number.isFinite(since) ? `Все остановки закрыты — стан работает с ${fmtSince(since, view.shift)}` : "Все остановки закрыты"),
-    checkItem(!noReason.length, noReason.length ? count(noReason, "без причины") : "У каждого простоя есть причина", noReason.length ? fix(noReason) : null),
+    checkItem(!noReasonCount, noReasonCount ? count({ length: noReasonCount }, "без причины") : "У каждого простоя есть причина", noReasonCount ? fixReason : null),
     checkItem(!noAction.length, noAction.length ? count(noAction, "без «что сделали»") : "Везде указано, что сделали", noAction.length ? fix(noAction) : null),
     checkItem(!extra.length, extra.length
       ? `Дополнить: ${[noBillet.length ? `брак (${noBillet.length})` : "", noOther.length ? `описание иной причины (${noOther.length})` : ""].filter(Boolean).join(", ")}`
@@ -3304,8 +3333,9 @@ function renderCloseConfirm(main, view) {
     checkItem(!trouble && !queue.length, trouble ? `Сервер не принял записей: ${trouble}. Они останутся на планшете для исправления`
       : queue.length ? `Ждут отправки: ${queue.length}` : "Все записи приняты сервером",
     trouble ? { label: "Показать", onclick: () => { ui.rejectsOpen = true; renderRejects(); renderTopbar(); } } : null));
+  // Записка следующей смене — при любом состоянии стана
   let repairWork = null;
-  if (view.open) {
+  {
     const ta = h("textarea", {
       class: "ps-input",
       id: "close-action",
@@ -3317,7 +3347,7 @@ function renderCloseConfirm(main, view) {
     ta.value = closeActionDraft(view);
     ta.addEventListener("input", () => { ui.closeAction = { key: stopShiftKey(view), text: ta.value }; });
     repairWork = psCard("Что сделали по ремонту за смену и что осталось?", "увидит следующая смена", ta,
-      h("span", { class: "ps-field__hint", text: "Стан стоит, простой перейдёт следующей смене. Можно надиктовать — кнопка микрофона на клавиатуре." }));
+      h("span", { class: "ps-field__hint", text: (view.open ? "Стан стоит, простой перейдёт следующей смене. " : "Необязательно. ") + "Можно надиктовать — кнопка микрофона на клавиатуре." }));
   }
   const status = receipt.length ? receiptStatus(receipt) : null;
   const { endMs } = view.shift;
@@ -3347,8 +3377,8 @@ function shiftCloseEvents(view, withGaps) {
     gaps.map((s) => `${fmtClock(s.startMs)}: ${s.missing.join(", ")}`).join("; "));
   const rejected = rejectionGroups(records).length;
   if (rejected) lines.push(`Не приняты сервером записи: ${rejected}. Требуется исправление на планшете.`);
-  // Что сделали по ремонту: необязательно; пустое не отправляем
-  const action = view.open ? closeActionDraft(view).trim().slice(0, NOTE_MAX) : "";
+  // Что сделали по ремонту: необязательно, при любом состоянии стана; пустое не отправляем
+  const action = closeActionDraft(view).trim().slice(0, NOTE_MAX);
   return [{ type: "shift_close", fields: { note: lines.join(" ").slice(0, NOTE_MAX), ...(action ? { action } : {}) } }];
 }
 function doCloseShift(withGaps = false) {

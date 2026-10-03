@@ -81,6 +81,8 @@ function computeState() {
         handovers: core.handoversSince(events, openStartMs),
       }
       : null,
+    // Записки сдачи смены, пока стан работает, как у сервера
+    handovers: built.open ? [] : core.recentHandovers(events, now),
     shift,
     crew,
     segments,

@@ -1,4 +1,4 @@
-import { buildDowntimes, DEFAULT_SCHEDULE, eventConflict, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, lastRunningMs, summarizeShift, toMs } from "../core/core.js";
+import { buildDowntimes, DEFAULT_SCHEDULE, eventConflict, eventInputError, eventBoundsError, eventTimeError, periodParts, shiftStatus, handoversSince, recentHandovers, lastRunningMs, summarizeShift, toMs } from "../core/core.js";
 
 import { periodRange } from "../core/stats.js";
 
@@ -111,6 +111,8 @@ export function createEventStore(db) {
         // Что передали прошлые смены по ремонту: все сдачи смены с начала этого простоя
         handovers: handoversSince(events, openStartMs),
       } : null,
+      // Записки сдачи смены, пока стан работает (при простое они лежат в open.handovers)
+      handovers: built.open ? [] : recentHandovers(events, nowMs),
       shift,
       crew,
       segments,

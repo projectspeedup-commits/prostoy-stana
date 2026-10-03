@@ -342,6 +342,19 @@ export function handoversSince(events, sinceMs) {
     .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }));
 }
 
+/**
+ * Записки сдачи смены при работающем стане: последние три сдачи с текстом «что сделали по ремонту
+ * и что осталось» за последние 36 часов, по возрастанию времени. Формат события тот же (shift_close с action).
+ */
+export function recentHandovers(events, nowMs) {
+  const from = nowMs - 36 * 3600000;
+  return events
+    .filter((e) => e.type === "shift_close" && typeof e.action === "string" && e.action.trim() && toMs(e.at) >= from && toMs(e.at) <= nowMs)
+    .sort((a, b) => toMs(a.at) - toMs(b.at))
+    .slice(-3)
+    .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action, note: e.note ?? null }));
+}
+
 /** Режим и группа отрезка. */
 export function classify(segment, refs, settings) {
   const reason = segment.reason;
