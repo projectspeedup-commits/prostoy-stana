@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createApp, aiConfigFromEnv } from "../../app/server/index.js";
-import { formatDuration, withDurationTexts } from "../../app/server/ai-tools.js";
+import { TOOL_DEFINITIONS, formatDuration, withDurationTexts } from "../../app/server/ai-tools.js";
 import { createAi, SYSTEM_INSTRUCTION, REFUSAL } from "../../app/server/ai.js";
 import { computeStats, periodRange } from "../../app/core/stats.js";
 
@@ -324,4 +324,33 @@ test("ИИ: рядом с полями минут добавляются тек�
 test("ИИ: инструкция содержит правило формата длительностей", () => {
   assert.match(SYSTEM_INSTRUCTION, /N д N ч N мин/);
   assert.match(SYSTEM_INSTRUCTION, /\*_text/);
+});
+
+test("ИИ: get_period_stats отдаёт брак — всего, по бригадам и причинам; не указан — null", async (t) => {
+  const p = scripted([toolReply("get_period_stats", { from_day: "2026-10-01", to_day: "2026-10-01" }), textReply("ок")]);
+  const s = await start(t, { aiConfig: CFG, aiFetch: p.impl });
+  await s.ask({ question: "сколько заготовки испорчено?" });
+  const none = JSON.parse(p.requests[1].body.messages.find((m) => m.role === "tool").content);
+  assert.equal(none.billet.total_tn, null, "ни разу не указан — null, а не 0");
+  const p2 = scripted([toolReply("get_period_stats", { from_day: "2026-10-01", to_day: "2026-10-01" }), textReply("ок")]);
+  const s2 = await start(t, { aiConfig: CFG, aiFetch: p2.impl });
+  await s2.call("/api/events", OWNER, { events: [{ id: "fx", type: "fix", at: "2026-10-01T09:00:00Z", downtimeId: "d1", index: 0, billet: 2.5 }] });
+  await s2.ask({ question: "сколько заготовки испорчено?" });
+  const got = JSON.parse(p2.requests[1].body.messages.find((m) => m.role === "tool").content);
+  assert.equal(got.billet.total_tn, 2.5);
+  assert.equal(got.billet.stops_with_billet, 1);
+  assert.deepEqual(got.billet.by_reason, [{ reason: "Аварийный простой — выход из строя оборудования", billet_tn: 2.5 }]);
+  assert.equal(got.billet.by_crew.length, 1);
+  assert.equal(got.billet.by_crew[0].billet_tn, 2.5);
+  assert.match(JSON.stringify(TOOL_DEFINITIONS), /брак/);
+});
+
+test("ИИ: инструкция — период «сутки/смена/неделя/месяц» без даты берётся сам и называется в ответе", () => {
+  assert.match(SYSTEM_INSTRUCTION, /не переспрашивай/);
+  assert.match(SYSTEM_INSTRUCTION, /«сутки» — текущие производственные сутки/);
+  assert.match(SYSTEM_INSTRUCTION, /«смена» — текущую смену/);
+  assert.match(SYSTEM_INSTRUCTION, /«неделя» — последние 7 суток/);
+  assert.match(SYSTEM_INSTRUCTION, /«месяц» — текущий календарный месяц/);
+  assert.match(SYSTEM_INSTRUCTION, /назови, за какой период/);
+  assert.match(SYSTEM_INSTRUCTION, /действительно неоднозначен/);
 });

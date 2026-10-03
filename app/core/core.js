@@ -109,6 +109,39 @@ export function splitByShifts(segment, schedule) {
   return parts;
 }
 
+/**
+ * Брак (испорченная заготовка, тн) отрезка простоя: число >= 0 или null («не указан»).
+ * У открытого отрезка брака нет — его вводят при пуске.
+ */
+export function segmentBillet(segment) {
+  if (!segment || segment.open === true || segment.endMs === null || segment.endMs === undefined) return null;
+  const v = segment.billet;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/**
+ * Единое правило привязки брака — его используют отчёт Excel (report.js), «Показатели» (stats.js)
+ * и экран смены (shiftBillet в app.js). Брак отрезка относится к смене, в которой отрезок ЗАВЕРШИЛСЯ;
+ * в период попадают отрезки, завершившиеся в (fromMs, toMs]; открытый отрезок брака не имеет.
+ * Возвращает [{segment, billet (число или null), day, shiftNo}] по закрытым отрезкам периода.
+ */
+export function billetSegments(segments, fromMs, toMs, schedule) {
+  const rows = [];
+  for (const segment of segments) {
+    if (segment.open === true || segment.endMs === null || segment.endMs === undefined) continue;
+    if (!(segment.endMs > fromMs && segment.endMs <= toMs)) continue;
+    const shift = shiftOf(segment.endMs - 1, schedule);
+    rows.push({ segment, billet: segmentBillet(segment), day: shift.day, shiftNo: shift.shiftNo });
+  }
+  return rows;
+}
+
+/** Сумма брака, тн, до тысячных (убирает хвосты плавающей запятой); null — ни одного указанного значения. */
+export function sumBillet(values) {
+  const list = values.filter((v) => typeof v === "number" && Number.isFinite(v));
+  return list.length ? Math.round(list.reduce((a, b) => a + b, 0) * 1000) / 1000 : null;
+}
+
 // Проверка времени запоздалой остановки и пуска — одна для сервера и демо.
 export function eventTimeError(events, event, nowMs) {
   if (!["stop", "start", "manual", "reason", "split", "fix"].includes(event.type)) return "";

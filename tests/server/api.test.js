@@ -313,7 +313,7 @@ test("events: ремонт через смены — shift_close с action ви�
     const stats = (await fetch(`${base}/api/stats?period=day`, { headers: HEAD }).then((r) => r.json())).stats;
     assert.equal(stats.stops, 1);
     assert.equal(stats.downMin, 360);
-    assert.deepEqual(stats.byCrew.find((row) => row.crewId === "2"), { crewId: "2", minutes: 350, stops: 0, carried: 1, byZone: [{ zone: "plan", minutes: 0 }, { zone: "unplanned", minutes: 0 }, { zone: "failure", minutes: 350 }] });
+    assert.deepEqual(stats.byCrew.find((row) => row.crewId === "2"), { crewId: "2", minutes: 350, stops: 0, carried: 1, billetTn: 0, byZone: [{ zone: "plan", minutes: 0 }, { zone: "unplanned", minutes: 0 }, { zone: "failure", minutes: 350 }] });
     assert.equal(stats.byCrew.reduce((sum, row) => sum + row.minutes, 0), stats.downMin);
   } finally {
     await app.close();
@@ -404,6 +404,33 @@ test("state: повторный приём после сдачи открыва�
     ({ state } = await (await fetch(`${base}/api/state`, { headers: HEAD })).json());
     assert.equal(state.closed, false);
     assert.equal(state.crew.personName, "Второй");
+  } finally {
+    await app.close();
+  }
+});
+
+test("stats: /api/stats отдаёт брак — всего, число простоев, по бригадам и причинам; не указан — null", async () => {
+  const { app, base } = await start();
+  try {
+    const empty = (await fetch(`${base}/api/stats?period=day`, { headers: HEAD }).then((r) => r.json())).stats;
+    assert.equal(empty.billetTn, null);
+    assert.equal(empty.billetStops, 0);
+    const saved = await postEvents(base, [
+      { id: "o", type: "shift_open", at: "2026-01-01T05:10:00Z", crewId: "1" },
+      { id: "s1", type: "stop", at: "2026-01-01T06:00:00Z", downtimeId: "d1", reason: "avaria" },
+      { id: "e1", type: "start", at: "2026-01-01T06:30:00Z", downtimeId: "d1" },
+      { id: "f1", type: "fix", at: "2026-01-01T06:30:01Z", downtimeId: "d1", index: 0, billet: 1.5 },
+      { id: "s2", type: "stop", at: "2026-01-01T08:00:00Z", downtimeId: "d2", reason: "burezhka" },
+      { id: "e2", type: "start", at: "2026-01-01T08:20:00Z", downtimeId: "d2" },
+    ]);
+    assert.deepEqual(saved.body.rejected, []);
+    const stats = (await fetch(`${base}/api/stats?period=day`, { headers: HEAD }).then((r) => r.json())).stats;
+    assert.equal(stats.billetTn, 1.5);
+    assert.equal(stats.billetStops, 1);
+    assert.equal(stats.quality.noBillet, 1, "d2: бурёжка без указанного брака");
+    assert.equal(stats.byCrew.find((row) => row.crewId === "1").billetTn, 1.5);
+    assert.equal(stats.byReason.find((row) => row.reason === "avaria").billetTn, 1.5);
+    assert.equal(typeof stats.stops, "number", "старые поля на месте");
   } finally {
     await app.close();
   }

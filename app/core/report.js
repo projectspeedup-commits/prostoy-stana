@@ -7,7 +7,7 @@
 // сменам методом наибольшего остатка, поэтому столбцы дают ровно итоги сводки, а в строке учтённое время
 // равно работе плюс простоям. Часть простоя в журнале округляется сама, как на экране: сумма журнала
 // может отличаться от «Простоя» на минуту-две — сводка говорит об этом в пояснении.
-import { buildDowntimes, shiftOf, splitByShifts, toMs } from "./core.js";
+import { billetSegments, buildDowntimes, shiftOf, splitByShifts, toMs } from "./core.js";
 import { computeStats } from "./stats.js";
 import { zoneOf } from "./zones.js";
 import { buildXlsx } from "./xlsx.js";
@@ -182,6 +182,9 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
     stops.set(seg.downtimeId, stop);
   }
 
+  // Брак отрезков периода — по общему правилу (core.billetSegments), как в «Показателях»
+  const billetOf = new Map(billetSegments(built.segments, fromMs, toEff, schedule).map((r) => [r.segment, r.billet]));
+
   // Части: отрезок простоя в границах одной смены и периода
   const parts = [];
   for (const seg of built.segments) {
@@ -198,7 +201,7 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
       if (ongoing) marks.push("ещё идёт");
       if (seg.manual) marks.push("записан вручную");
       if (!hasText(seg.reason)) marks.push("причина не указана");
-      const billet = seg.open !== true && Number.isFinite(seg.billet) && seg.billet > 0 && piece.endMs === seg.endMs ? seg.billet : 0;
+      const billet = piece.endMs === seg.endMs ? (billetOf.get(seg) ?? 0) : 0;
       parts.push({
         downtimeId: seg.downtimeId, index: seg.index ?? 0, startMs: piece.startMs, endMs: piece.endMs,
         ms: piece.endMs - piece.startMs, day: shift.day, shiftNo: shift.shiftNo, shiftStartMs: shift.startMs,

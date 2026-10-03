@@ -50,7 +50,7 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_period_stats",
-      description: "Сводка по простоям стана за период: минуты работы и простоя, число остановок, плановые и внеплановые, топ причин, группы, зоны, бригады, по суткам. Даты — производственные сутки (начало суток — начало Смены 1), включительно.",
+      description: "Сводка по простоям стана за период: минуты работы и простоя, число остановок, плановые и внеплановые, топ причин, группы, зоны, бригады, по суткам, брак (испорченная заготовка, тн: всего, по сменам, по причинам). Даты — производственные сутки (начало суток — начало Смены 1), включительно.",
       parameters: {
         type: "object",
         properties: {
@@ -135,7 +135,15 @@ export function createAiTools({ readEvents, readRefs, eventStore, clock }) {
       groups: s.byGroup.map((g) => ({ group: g.group, minutes: g.minutes, stops: g.stops })),
       crews: s.byCrew.map((c) => ({ crew: crewTitle(c.crewId, refs), minutes: c.minutes, stops_started: c.stops, stops_carried: c.carried })),
       by_day: s.byDay.map((d) => ({ day: d.day, work_minutes: d.workMin, downtime_minutes: d.downMin, stops: d.stops, no_data: Boolean(d.noData) })),
-      quality: { stops_without_reason: s.quality.noReason, stops_without_action: s.quality.noAction },
+      quality: { stops_without_reason: s.quality.noReason, stops_without_action: s.quality.noAction, stops_without_billet: s.quality.noBillet },
+      // Брак — испорченная заготовка, тн; null — за период ни разу не указан (это не 0)
+      billet: {
+        total_tn: s.billetTn,
+        stops_with_billet: s.billetStops,
+        stops_without_billet_specified: s.quality.noBillet,
+        by_crew: s.byCrew.filter((c) => c.billetTn > 0).map((c) => ({ crew: crewTitle(c.crewId, refs), billet_tn: c.billetTn })),
+        by_reason: s.byReason.filter((r) => r.billetTn > 0).map((r) => ({ reason: r.title, billet_tn: r.billetTn })),
+      },
     };
   }
 

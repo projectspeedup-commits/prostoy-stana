@@ -153,7 +153,7 @@ if (process.env.STATS_TZ_CHILD === "1") {
     assert.equal(results[0], results[1]);
   });
 
-  const withoutZones = ({ byZone, ...r }) => r;
+  const withoutZones = ({ byZone, billetTn, ...r }) => r;
   const crewRow = (result, crewId) => withoutZones(result.byCrew.find((row) => row.crewId === crewId));
   const sumCrew = (result) => result.byCrew.reduce((sum, row) => sum + row.minutes, 0);
 
