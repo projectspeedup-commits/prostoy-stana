@@ -1,5 +1,5 @@
 // Офлайн-кеш страницы рабочего. /api/* не кешируется никогда.
-const CACHE = "stan-v75";
+const CACHE = "stan-v76";
 const ASSETS = [
   "./",
   "./index.html",
@@ -31,9 +31,13 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
+  // Новая версия вступает в силу сразу, даже если какой-то файл из списка не скачался:
+  // иначе упавшая установка оставляла бы устройство на старой версии навсегда
+  self.skipWaiting();
   e.waitUntil(
     // Мимо кэша браузера: после выкладки GitHub Pages до 10 минут отдаёт старые копии из него
-    caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting())
+    caches.open(CACHE).then((c) => Promise.all(ASSETS.map((u) =>
+      c.add(new Request(u, { cache: "reload" })).catch(() => { /* файл подтянется при первом запросе */ }))))
   );
 });
 
@@ -60,13 +64,13 @@ self.addEventListener("fetch", (e) => {
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
         if ([500, 502, 503, 504].includes(r.status)) {
-          const cached = await caches.match(e.request) || (e.request.mode === "navigate" ? await caches.match("./index.html") : null);
+          const cached = await caches.match(e.request, { ignoreSearch: true }) || (e.request.mode === "navigate" ? await caches.match("./index.html") : null);
           if (cached) return cached;
         }
         return r;
       })
       .catch(() =>
-        caches.match(e.request).then((cached) => {
+        caches.match(e.request, { ignoreSearch: true }).then((cached) => {
           if (cached) return cached;
           if (e.request.mode === "navigate") return caches.match("./index.html");
           return Response.error();

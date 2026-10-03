@@ -1,6 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
-import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard, fullNameError } from "./queue.js";
+import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard, fullNameError, migrateLegacyDraft } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -49,6 +49,13 @@ function takeKeyFromHash() {
   history.replaceState(null, "", location.pathname + location.search);
 }
 
+// Метка ключа для кэша прав: сам ключ в кэше не хранится, но чужой кэш (другой ключ) не принимаем
+function keyTag(k) {
+  let a = 5381;
+  for (const ch of String(k || "")) a = ((a * 33) ^ ch.codePointAt(0)) >>> 0;
+  return a.toString(36);
+}
+
 // --- Обращения к серверу (в демо — имитация из mock.js) ---
 let api = realApi;
 async function realApi(path, options = {}) {
@@ -88,6 +95,16 @@ for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
 let clockOffset = restored.clockOffset || 0;
 let stateEpoch = 0;
 let loadingState = false;
+// Первая загрузка справочников и состояния: пока запрос в пути, экран говорит «Загружаем…», а не «нет связи».
+// «Нет связи» — после ошибки или если ответа нет дольше LOAD_SLOW_MS
+const LOAD_SLOW_MS = 15_000;
+const firstLoad = { refs: { busy: false, bad: false }, state: { busy: false, bad: false } };
+function watchLoad(part) {
+  const f = firstLoad[part];
+  f.busy = true; f.bad = false;
+  const timer = setTimeout(() => { if (f.busy) { f.bad = true; render(); } }, LOAD_SLOW_MS);
+  return () => { f.busy = false; clearTimeout(timer); };
+}
 let online = false;
 let flushing = false;
 let shiftTimer = null;
@@ -116,8 +133,10 @@ const ui = {
   keyError: null,
 };
 const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "edit", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio", "stopContext"];
+// Черновик старой версии (af/bl, экраны actionFix/billet) переносим в черновик редактора до первой записи в хранилище
+const restoredDraft = migrateLegacyDraft(restored.draft);
 for (const field of DRAFT_FIELDS) {
-  if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
+  if (restoredDraft && Object.hasOwn(restoredDraft, field)) ui[field] = restoredDraft[field];
 }
 settleRejected();
 function mergeStored() {
@@ -327,6 +346,8 @@ async function flush() {
 async function loadState() {
   if (!key || flushing || loadingState) return;
   loadingState = true;
+  const done = watchLoad("state");
+  if (!serverState) render();
   const epoch = stateEpoch;
   try {
     const d = await api("/api/state");
@@ -338,14 +359,19 @@ async function loadState() {
     }
   } catch (err) {
     if (err && err.status === 401) return badKey();
+    firstLoad.state.bad = true;
     setOnline(false);
   } finally {
     loadingState = false;
+    done();
   }
   softRender();
 }
 
 async function loadRefs() {
+  if (firstLoad.refs.busy) return false; // запрос уже в пути: второй не запускаем
+  const done = watchLoad("refs");
+  if (!refs) render();
   try {
     const d = await api("/api/refs");
     if (d && d.ok && d.refs) {
@@ -353,15 +379,20 @@ async function loadRefs() {
       refsVersion = d.refsVersion || null;
       canAdmin = d.canAdmin !== false;
       if (!canAdmin && (ui.screen === "admin" || ui.screen === "ai")) ui.screen = "auto";
-      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
+      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin, keyTag: keyTag(key) }));
       setOnline(true);
+      done();
       render();
       return true;
     }
+    firstLoad.refs.bad = true;
   } catch (err) {
-    if (err && err.status === 401) { badKey(); return false; }
+    if (err && err.status === 401) { done(); badKey(); return false; }
+    firstLoad.refs.bad = true;
     setOnline(false);
   }
+  done();
+  if (!refs) render();
   return false;
 }
 
@@ -371,13 +402,24 @@ function loadCachedRefs() {
     if (c && c.refs && c.refs.reasons) {
       refs = c.refs;
       refsVersion = c.refsVersion || null;
-      canAdmin = c.canAdmin !== false;
+      // Права из кэша верны только для того ключа, под которым их получили; иначе ждём ответ сервера
+      canAdmin = c.keyTag === keyTag(key) && c.canAdmin !== false;
     }
   } catch { /* кеш пуст */ }
 }
 
+// Права и ассистент принадлежат ключу: при смене ключа в том же браузере кэш ролей сбрасываем
+function resetKeyScopedState() {
+  canAdmin = false;
+  ui.admin = null;
+  aiUi.status = null; aiUi.statusReq = false; aiUi.log = []; aiUi.text = ""; aiUi.error = ""; aiUi.busy = false;
+  if (ui.screen === "admin" || ui.screen === "ai") ui.screen = "auto";
+  writeStore(REFS_KEY, "");
+}
+
 function badKey() {
   ui.keyError = "Ключ не подошёл. Введите другой.";
+  resetKeyScopedState();
   key = null;
   writeStore(STORE_KEY, "");
   render();
@@ -872,6 +914,7 @@ function renderTopbar() {
       : ui.screen === "closeConfirm" ? "Закрытие смены ещё не отправлено"
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
+      : (firstLoad.refs.busy && !firstLoad.refs.bad) || (firstLoad.state.busy && !firstLoad.state.bad) ? "Загружаем…"
       : "Нет связи с сервером";
     status.replaceChildren(h("span", { class: "save-status-text", text: statusText }),
       h("span", { class: "save-status-count", text: String(rejected || queue.length || 0), "aria-hidden": "true" }));
@@ -1135,6 +1178,8 @@ function go(screen) {
   ui.screen = screen;
   if (isDraftScreen(screen)) ui.resume = null;
   render();
+  // Новый экран открывается с самого верха, а не с позиции кнопки, по которой нажали
+  window.scrollTo(0, 0);
 }
 
 function resetStopDrafts() {
@@ -1416,7 +1461,7 @@ async function saveAdmin() {
 const AI_EXAMPLES = ["Сколько стоял стан за эту неделю и почему?", "Какие причины простоев чаще всего в этом месяце?", "Сравни вчерашние сутки с позавчерашними", "Стан сейчас работает?"];
 const aiUi = { status: null, statusReq: false, log: [], text: "", busy: false, error: "" };
 function loadAiStatus() {
-  if (aiUi.statusReq || aiUi.status) return;
+  if (!key || !canAdmin || aiUi.statusReq || aiUi.status) return;
   aiUi.statusReq = true;
   api("/api/admin/ai/status")
     .then((d) => { aiUi.status = d; })
@@ -1707,6 +1752,7 @@ function renderKey(main) {
   const connect = () => {
     const v = input.value.trim();
     if (!v) return;
+    if (v !== key) resetKeyScopedState();
     key = v;
     ui.keyError = null;
     writeStore(STORE_KEY, v);
@@ -1720,16 +1766,23 @@ function renderKey(main) {
 }
 
 function renderNoRefs(main) {
+  const f = firstLoad.refs;
+  // Запрос ещё ждёт ответа: просто «Загружаем…», без сообщения об отсутствии связи и без «Повторить»
+  if (f.busy && !f.bad) return fill(main, h("div", { class: "ps-flow ps-flow--narrow", role: "status" },
+    question("Загружаем…"), h("p", { class: "ps-lead", text: "Получаем список работников и причин простоя." })));
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
     question("Нет данных"),
     h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
       h("span", { class: "ps-notice__body", text: "На планшете ещё нет списка работников и причин простоя. Подключитесь к сети и повторите загрузку." })),
-    psButton("primary", "Повторить", () => { loadRefs().then((ok) => { if (ok) loadState(); else render(); }); })));
+    psButton("primary", "Повторить", () => { loadRefs().then((ok) => { if (ok) loadState(); else render(); }); }, { disabled: f.busy })));
 }
 
 function renderLoading(main) {
+  const f = firstLoad.state;
+  if (!f.bad) return fill(main, h("div", { class: "ps-flow ps-flow--narrow", role: "status" },
+    question("Загружаем…"), h("p", { class: "ps-lead", text: "Получаем состояние стана." })));
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
-    question(loadingState ? "Получаем состояние стана…" : "Нужно первое подключение"),
+    question("Нужно первое подключение"),
     h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
       h("span", { class: "ps-notice__body", text: "На планшете ещё нет состояния стана. Подключитесь к сети и нажмите «Повторить». После этого можно будет работать без сети." })),
     psButton("primary", "Повторить", () => boot(), { disabled: loadingState })));
@@ -3085,6 +3138,8 @@ function handoverGaps(view) {
 function openDetail(downtimeId, index = null) {
   ui.card = { downtimeId, index };
   go("detail");
+  // Редактор простоя показываем целиком, с его верха
+  $("main").querySelector(".ps-editor")?.scrollIntoView({ block: "start" });
 }
 
 // Простои смены: слева список, справа редактор записи (от 1024 px); на узких экранах
@@ -3123,6 +3178,12 @@ function editorDraft(s) {
   let e = ui.edit;
   if (!e || e.downtimeId !== s.downtimeId || e.index !== s.index) {
     e = ui.edit = { downtimeId: s.downtimeId, index: s.index, base: { ...now }, ...now, billetOther: false };
+  } else if (!e.base) {
+    // Черновик перенесён из старой версии: исходные значения берём из записи, правки мастера остаются
+    const mine = e.migrated || [];
+    for (const f of ["note", "action", "billet"]) if (!mine.includes(f)) e[f] = now[f];
+    e.base = { ...now };
+    delete e.migrated;
   } else {
     for (const f of ["note", "action", "billet"]) if (e[f] === e.base[f]) e[f] = e.base[f] = now[f];
   }
@@ -3614,7 +3675,7 @@ window.addEventListener("pagehide", persistClient);
 // --- Запуск ---
 async function boot() {
   if (!key) { render(); return; }
-  render();
+  if (refs) render(); // без справочника экран перерисует сама загрузка: «Загружаем…», а не «Нет данных»
   // Справочник берём с сервера при каждом открытии, если есть связь: кэш на устройстве —
   // только на случай без сети. Иначе после выкладки страница могла работать со старыми причинами
   const ok = await loadRefs();
@@ -3656,7 +3717,24 @@ if (DEMO) {
 if (ui.mw) ui.mw.saving = false;
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => { /* офлайн-установка недоступна */ });
+  // Новый service worker забирает страницу сам (skipWaiting + clients.claim): перезагружаемся один раз,
+  // чтобы не остаться со старым app.js; черновики лежат в localStorage и перезагрузку переживают
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    try {
+      // защита от цикла: после перезагрузки новая не раньше чем через минуту
+      if (Date.now() - Number(sessionStorage.getItem("stan.swReload") || 0) < 60000) return;
+      sessionStorage.setItem("stan.swReload", String(Date.now()));
+    } catch { /* без sessionStorage защищает флаг reloaded */ }
+    persistClient();
+    location.reload();
+  });
+  navigator.serviceWorker.register("./sw.js")
+    .then((reg) => reg.update())
+    .catch(() => { /* офлайн-установка недоступна */ });
 }
 
 requestWake();
