@@ -112,6 +112,10 @@ export async function api(path, options = {}) {
   }
   const url = new URL(path, "http://mock.local");
   const method = (options.method || "GET").toUpperCase();
+  if (url.pathname === "/api/admin/ai/status" && method === "GET") return { ok: true, configured: true, model: "demo", spentTodayUsd: 0, dailyUsd: 1 };
+  if (url.pathname === "/api/admin/ai/ask" && method === "POST") {
+    return { ok: true, answer: "Демо: здесь будет ответ ИИ по данным стана.", costUsd: 0 };
+  }
   if (url.pathname === "/api/admin/mail" && method === "GET") return mailView();
   if (url.pathname === "/api/admin/mail" && method === "PUT") {
     const fail = (status, error, message) => {

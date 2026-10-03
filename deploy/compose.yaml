@@ -20,6 +20,10 @@ services:
       MAIL_TO: ${MAIL_TO:-}
       MAIL_FROM: ${MAIL_FROM:-}
       PUBLIC_URL: ${PUBLIC_URL:-https://stan.tmpz-engineering.ru/}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      STAN_AI_MODEL: ${STAN_AI_MODEL:-}
+      STAN_AI_BASE_URL: ${STAN_AI_BASE_URL:-}
+      STAN_AI_DAILY_USD: ${STAN_AI_DAILY_USD:-}
     mem_limit: 512m
 
   stan-test:

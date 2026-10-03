@@ -17,6 +17,10 @@ import { createMailer, mailConfigFromEnv } from "./mailer.js";
 import { createMailService, envRecipients } from "./mail-service.js";
 import { createMailSettingsStore, versionOf } from "./mail-store.js";
 import { validateMailSettings } from "../core/mail-settings.js";
+import { createAi, aiConfigFromEnv } from "./ai.js";
+import { createAiTools } from "./ai-tools.js";
+
+export { aiConfigFromEnv };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
@@ -67,7 +71,7 @@ function median(values) {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
 
-export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT, mailConfig, mailTransportFactory } = {}) {
+export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT, mailConfig, mailTransportFactory, aiConfig, aiFetch } = {}) {
   const clock = () => new Date(now());
   // Раздел «Администратор» — только перечисленным устройствам; без списка — всем (тесты, старый запуск)
   const canAdmin = (device) => !Array.isArray(adminDevices) || adminDevices.includes(device.name);
@@ -126,6 +130,11 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     clock,
     dataDir,
   });
+
+  // ИИ-консультант: без ключа выключен; инструменты только читают базу тем же ядром, что экраны
+  const aiTools = createAiTools({ readEvents: () => readAllEvents.all().map((row) => JSON.parse(row.body)), readRefs, eventStore, clock });
+  const ai = createAi({ ...(aiConfig || {}), dataDir, tools: aiTools, clock, ...(aiFetch ? { fetchImpl: aiFetch } : {}) });
+  let aiBusy = false;
 
   const insertPing = db.prepare(
     "INSERT INTO pings (device, client_at, server_at, prev_ms, prev_ok) VALUES (?, ?, ?, ?, ?)"
@@ -232,6 +241,8 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isMailTest = pathname === "/api/mail/test" && req.method === "POST";
     const isMailGet = pathname === "/api/admin/mail" && req.method === "GET";
     const isMailPut = pathname === "/api/admin/mail" && req.method === "PUT";
+    const isAiStatus = pathname === "/api/admin/ai/status" && req.method === "GET";
+    const isAiAsk = pathname === "/api/admin/ai/ask" && req.method === "POST";
 
     const address = clientAddress(req);
     const ms = clock().getTime();
@@ -253,6 +264,23 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     if (pathname === "/api/report.xlsx" && req.method === "GET") return reportHandler(res, searchParams);
     if ((isMailTest || isMailGet || isMailPut) && !canAdmin(device)) {
       return send(res, 403, { ok: false, error: "forbidden", message: "Рассылка на почту открывается только ключом владельца." });
+    }
+    if ((isAiStatus || isAiAsk) && !canAdmin(device)) {
+      return send(res, 403, { ok: false, error: "forbidden", message: "ИИ-консультант открывается только ключом владельца." });
+    }
+    if (isAiStatus) return send(res, 200, { ok: true, ...ai.status() });
+    if (isAiAsk) {
+      let body;
+      try { body = JSON.parse(await readBody(req)); }
+      catch (e) { return send(res, e && e.code === "too_large" ? 413 : 400, { ok: false, error: "bad_request", message: "Некорректное тело запроса." }); }
+      if (!body || typeof body !== "object" || Array.isArray(body)) return send(res, 400, { ok: false, error: "bad_request", message: "Некорректное тело запроса." });
+      if (aiBusy) return send(res, 429, { ok: false, error: "busy", message: "ИИ уже отвечает на другой вопрос. Повторите через минуту." });
+      aiBusy = true;
+      let result;
+      try { result = await ai.ask({ question: body.question, history: body.history }); }
+      finally { aiBusy = false; }
+      const code = result.ok ? 200 : { ai_disabled: 409, daily_limit: 429, bad_request: 400 }[result.error] ?? 502;
+      return send(res, code, result);
     }
     const mailView = () => {
       const mailSettings = mailStore.read();
@@ -456,6 +484,7 @@ function main() {
       adminDevices: adminDevicesFrom(process.env.STAN_ADMIN_DEVICES, parseDeviceKeys(process.env.STAN_DEVICE_KEYS)),
       rateLimit: Number(process.env.STAN_RATE_LIMIT) || RATE_LIMIT_SHARED,
       mailConfig: mailConfigFromEnv(process.env),
+      aiConfig: aiConfigFromEnv(process.env),
     });
   } catch (e) {
     console.error(`Ошибка запуска: ${e.message}`);
