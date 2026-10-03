@@ -66,8 +66,8 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `Date.now = () => ${now};` });
   await send('Page.navigate', { url: origin + '/#key=k1' });
-  await wait(`document.querySelector('.current-shift')`);
-  assert.match(await evaluate(`document.querySelector('.current-shift').textContent`), /Смена 2/);
+  await wait(`document.querySelector('.ps-choice[aria-current="true"]')`);
+  assert.match(await evaluate(`document.querySelector('.ps-choice[aria-current="true"]').textContent`), /Смена 2.*сейчас/);
   await click('Смена 1');
   await wait(`document.querySelector('#main').textContent.includes('Принять Смену 1?')`);
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /Сейчас идёт Смена 2 \(20:00–08:00\)/);
@@ -75,7 +75,10 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /Смена 1 · по расписанию 08:00–20:00/);
   await click('К выбору смены');
   await click('Смена 2');
-  await evaluate(`document.querySelector('#main .tiles button').click()`);
+  // Мастер отмечается карточкой, смена принимается кнопкой «Принять смену»
+  await evaluate(`document.querySelector('#main .ps-choice[role="radio"]').click()`);
+  assert.equal(await evaluate(`document.querySelector('#main .ps-choice[aria-checked="true"]') !== null`), true);
+  await evaluate(`[...document.querySelectorAll('#main button')].find(b => b.textContent.includes('Принять смену')).click()`);
   await sleep(150);
   await send('Runtime.evaluate', { expression: `document.querySelector('.ps-action--stop')?.click()` });
   assert.equal(app.db.prepare("SELECT count(*) n FROM events WHERE type = 'stop'").get().n, 0, 'Второй тап после приёма не останавливает стан');
@@ -93,14 +96,14 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.length`), 300);
   assert.equal(await evaluate(`Object.hasOwn(JSON.parse(localStorage.getItem('stan.session.v1')), 'queue')`), false);
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seedRecords.identifier });
-  assert.match(await evaluate(`[...document.querySelectorAll('.shift-action')].find(x=>x.textContent.includes('Простои за смену')).textContent`), /1 мин/);
-  await click('Показатели стана');
+  assert.match(await evaluate(`document.querySelector('.ps-shift').textContent`), /3 простоя · 1 мин/);
+  await evaluate(`document.querySelector('#nav-stats').click()`);
   await wait(`document.querySelector('.m-kpi')`);
   assert.equal(await evaluate(`document.querySelector('.board .board-stat.bad .v').textContent`), '1 м');
   assert.match(await evaluate(`document.querySelector('.m-kpi').textContent`), /1 мпростой/);
   await evaluate(`document.querySelector('#demo').click()`);
-  await click('Простои за смену');
-  assert.equal(await evaluate(`document.querySelector('.stats .stat.bad .v').textContent`), '1 мин');
+  await evaluate(`document.querySelector('#nav-shift').click()`);
+  assert.equal(await evaluate(`document.querySelector('.ps-kpi[data-kind="down"] .ps-kpi__value').textContent`), '1 м');
   await evaluate(`document.querySelector('#demo').click()`);
   assert.equal(await evaluate(`document.querySelector('#admin').getAttribute('aria-label')`), 'Администратор');
   assert.equal(await evaluate(`document.querySelector('#admin').title`), 'Администратор');
@@ -162,11 +165,12 @@ test('UI: выбор ночной смены, квитанции, темы, ша
       }
     }
   }
-  await click('Закрыть смену');
+  await click('Сдать смену');
   await wait(`document.querySelector('#main').textContent.includes('Да, стоит')`);
   await click('Да, стоит');
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /Закрытие смены ещё не отправлено/);
-  assert.match(await evaluate(`document.querySelector('#main').textContent`), /Без причины: 3. Без «что сделали»: 3/);
+  assert.match(await evaluate(`document.querySelector('.ps-checklist').textContent`), /3 простоя без причины/);
+  assert.match(await evaluate(`document.querySelector('#main').textContent`), /3 простоя без «что сделали»/);
   await evaluate(`document.querySelector('#admin').click()`);
   await wait(`document.querySelector('.adm-card')`);
   const admin = await (await fetch(origin + '/api/admin/settings', { headers: { 'X-Device-Key': 'k2' } })).json();
@@ -214,16 +218,19 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await send('Page.reload');
   await wait(`document.querySelector('.pult')`);
   assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
-  await click('Простои за смену');
-  await evaluate(`document.querySelector('.segs button').click()`);
-  await click('Брак');
-  assert.equal(await evaluate(`document.querySelector('#billet-value').type`), 'text');
-  await evaluate(`document.querySelector('#billet-value').value='1001'`);
+  await evaluate(`document.querySelector('#nav-shift').click()`);
+  await evaluate(`document.querySelector('.ps-row').click()`);
+  // Брак в редакторе записи: чипы и «Другое» с полем; неверное значение не уходит на сервер
+  const setBillet = (value) => evaluate(`(() => { const i = document.querySelector('#edit-billet'); i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  const billetOther = () => evaluate(`[...document.querySelectorAll('[aria-labelledby="edit-billet-label"] .ps-chip')].find(b => b.textContent === 'Другое').click()`);
+  await billetOther();
+  assert.equal(await evaluate(`document.querySelector('#edit-billet').type`), 'text');
+  await setBillet('1001');
   await click('Сохранить');
-  assert.ok(await evaluate(`!!document.querySelector('#billet-value')`));
-  await evaluate(`document.querySelector('#billet-value').value='2,5'`);
+  assert.ok(await evaluate(`!!document.querySelector('#edit-billet')`));
+  await setBillet('2,5');
   await click('Сохранить');
-  await wait(`document.querySelector('#main').textContent.includes('2,5 тн') && JSON.parse(localStorage.getItem('stan.queue')).length===0`);
+  await wait(`document.querySelector('#edit-billet')?.value === '2,5' && JSON.parse(localStorage.getItem('stan.queue')).length===0`);
   const billet = app.db.prepare("SELECT body FROM events WHERE type = 'fix' ORDER BY rowid DESC LIMIT 1").get();
   assert.equal(JSON.parse(billet.body).billet, 2.5);
   // Отказы хранятся на планшете, но не забирают высоту клавиш пульта.
@@ -279,11 +286,11 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.equal(await evaluate(`getComputedStyle(document.querySelector('#rejects')).display==='none'`),false);
   await evaluate(`[...document.querySelectorAll('#rejects button')].find(b=>b.textContent==='Закрыть список').click()`);
   assert.equal(await evaluate(`getComputedStyle(document.querySelector('#rejects')).display`),'none');
-  await click('Открыть полную запись'); await click('Брак');
-  for (const value of ['1001','']) {
-    await evaluate(`document.querySelector('#billet-value').value=${JSON.stringify(value)}`); await click('Сохранить');
+  await click('Открыть полную запись'); await billetOther();
+  for (const value of ['1001','abc']) {
+    await evaluate(`(() => { const i = document.querySelector('#edit-billet'); i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await click('Сохранить');
     assert.match(await evaluate(`document.querySelector('#toast').textContent`),/от 0 до 1000 тн/);
-    const toast=await evaluate(`(()=>{const t=document.querySelector('#toast'),r=t.getBoundingClientRect(),b=document.querySelector('#main .primary').getBoundingClientRect();return {warning:t.classList.contains('warning'),pointer:getComputedStyle(t).pointerEvents,width:r.width,viewport:document.documentElement.clientWidth,overlap:r.bottom>b.top && r.top<b.bottom};})()`);
+    const toast=await evaluate(`(()=>{const t=document.querySelector('#toast'),r=t.getBoundingClientRect(),b=document.querySelector('#main .ps-btn--primary').getBoundingClientRect();return {warning:t.classList.contains('warning'),pointer:getComputedStyle(t).pointerEvents,width:r.width,viewport:document.documentElement.clientWidth,overlap:r.bottom>b.top && r.top<b.bottom};})()`);
     assert.equal(toast.warning,true); assert.equal(toast.pointer,'none'); assert.equal(toast.width,toast.viewport); assert.equal(toast.overlap,false);
   }
   await evaluate(`document.querySelector('#demo').click()`);
@@ -312,7 +319,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.ok(await evaluate(`[...document.querySelectorAll('.ds-row__label')].filter(x=>x.textContent).every(x=>getComputedStyle(x).overflow==='visible' && x.getBoundingClientRect().height>=parseFloat(getComputedStyle(x).lineHeight))`));
   const lightShot=await send('Page.captureScreenshot',{format:'png'});
   fs.writeFileSync(path.join(root,'Раунд 2 светлая тема 1366.png'),Buffer.from(lightShot.data,'base64'));
-  await click('Показатели стана'); await click('7 суток'); await wait(`document.querySelector('.chart:not(.donut)')`);
+  await evaluate(`document.querySelector('#nav-stats').click()`); await click('7 суток'); await wait(`document.querySelector('.chart:not(.donut)')`);
   await send('Emulation.setDeviceMetricsOverride',{width:360,height:740,deviceScaleFactor:1,mobile:false}); await sleep(250);
   const chartFonts=await evaluate(`[...document.querySelectorAll('.chart text')].map(x=>parseFloat(getComputedStyle(x).fontSize)*x.ownerSVGElement.getBoundingClientRect().width/x.ownerSVGElement.viewBox.baseVal.width)`);
   assert.ok(chartFonts.length && Math.min(...chartFonts)>=10,JSON.stringify(chartFonts));

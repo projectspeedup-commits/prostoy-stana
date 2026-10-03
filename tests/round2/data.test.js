@@ -131,7 +131,7 @@ for (const [count, sec, down] of [[8, 36, 5], [6, 26, 3]]) test(`Раунд 2.5:
   assert.equal(a.h.serverState.summary.day, undefined);
   assert.equal(stats.downMin, down); assert.equal(stats.workMin, 22 - down); assert.equal(stats.stops, count);
   a.h.renderRun(a.main(), view); assert.match(text(a.main()), new RegExp(`${count} простоев · ${down} мин`));
-  a.h.renderShift(a.main(), view); assert.match(text(a.main()), new RegExp(`Простой ${down} мин`));
+  a.h.renderShift(a.main(), view); assert.match(text(a.main()), new RegExp(`Простой ${down} м(?!ин)`));
   a.h.doCloseShift(true); await a.pump();
   assert.equal(a.h.ui.closedInfo.downMin, down); assert.equal(a.h.ui.closedInfo.workMin, 22 - down);
 });
@@ -181,8 +181,11 @@ test('Раунд 2.6: ручной простой требует брак; пр�
   const gaps = a.h.handoverGaps(a.h.buildView());
   assert.equal(gaps.length, 1); assert.deepEqual(gaps[0].missing, ['брак']);
   a.h.go('closeConfirm');
-  assert.match(text(a.main()), /Без брака: 1/);
-  assert.ok(findAll(a.main(), (e) => e.tagName === 'BUTTON').some((b) => text(b).includes('дополнить: брак')));
+  // Чек-лист: пункт «брак» не готов, у него кнопка перехода к записи
+  const todo = findAll(a.main(), (e) => e.tagName === 'LI' && e.attrs['data-status'] === 'todo');
+  assert.equal(todo.length, 1); assert.match(text(todo[0]), /Дополнить: брак \(1\)/);
+  a.click(todo[0], 'Заполнить');
+  assert.equal(a.h.ui.screen, 'detail'); assert.equal(a.h.ui.card.downtimeId, gaps[0].downtimeId);
 });
 
 test('Раунд 2.7: будущий пуск не удлиняет категорию и счётчик простоя', async (t) => {

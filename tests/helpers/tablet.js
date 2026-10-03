@@ -109,7 +109,8 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
   receiptStatus, receiptFor, renderRejects, render, renderTopbar, go, nowMs, persistClient, shiftCloseEvents, eventTitle, humanError,
   renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, board, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
   groupFor, transferButton, conflictTarget, loadStats, renderShift, renderStats, renderClosed, resetStopDrafts,
-  renderFio, mergeStored, armShiftTimer,
+  renderFio, mergeStored, armShiftTimer, renderDetail, renderCloseConfirm, renderCrew, shiftBlock, openDetail, renderHandoverCard, startManualWizard, cardData,
+  forgottenTimeFields, shiftKpis, shiftZoneMinutes,
 };`;
   // перехват тостов: showToast пишет в элемент #toast; соберём в массив
   code = code.replace("let toastTimer = null;", "let toastTimer = null; const __toasts = [];")

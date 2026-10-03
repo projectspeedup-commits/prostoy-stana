@@ -449,32 +449,15 @@
   .mill-lamp { width: min(58%, 560px, max(96px, calc((100cqh - 70px) * 4 / 3))); max-width: none; flex: none; }
   .mill-label { width: auto; max-width: 42%; flex: 0 1 auto; padding: 8px 12px; text-align: left; font-size: clamp(12px, 1.9cqi, 28px); letter-spacing: .02em; }
 
-  /* Смена: карточка мастера во всю ширину, кнопки — в ряд */
-  /* Кнопки смены делят ширину поровну: три, а с «Продолжить заполнение» — четыре */
-  .shift-block { flex: none; margin-top: 0; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .shift-block:has(> .shift-action:nth-child(5)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .shift-block > .shift-card { grid-column: 1 / -1; padding: 12px 18px 10px; }
-  .shift-person { grid-template-columns: 56px minmax(0, 1fr); gap: 14px; }
-  .shift-avatar { width: 56px; height: 60px; }
-  .shift-avatar .ico { width: 36px; height: 36px; }
-  .shift-person h2 { font-size: 20px; }
-  .shift-person p { margin: 1px 0; }
-  .shift-block .shift-time { margin-top: 8px; padding-block: 7px; }
   .btn.shift-action { min-height: 0; padding: 10px 14px; gap: 12px; grid-template-columns: 40px minmax(0, 1fr) 18px; font-size: 17px; }
-  .action-ico { width: 40px; height: 40px; }
-  .action-ico .ico { width: 22px; height: 22px; }
   .shift-action .action-help { font-size: 12.5px; margin-top: 2px; }
 }
 /* Низкий монитор (ноутбук 1366×768 и т.п.): убираем второстепенные строки, чтобы клавиши не мельчали */
 @media not all {
   .mill-status { padding-block: 8px; margin-bottom: 8px; }
   .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
-  .shift-avatar, .shift-person p.muted, .shift-action .action-help { display: none; }
-  .shift-person { grid-template-columns: minmax(0, 1fr); }
-  .shift-person h2 { font-size: 18px; margin: 0; }
-  .shift-block .shift-time { margin-top: 6px; padding-block: 5px; }
+  .shift-action .action-help { display: none; }
   .btn.shift-action { padding-block: 8px; }
-  .action-ico { width: 32px; height: 32px; }
   .btn.shift-action { grid-template-columns: 32px minmax(0, 1fr) 16px; font-size: 16px; }
   .mill-panel { padding: 12px 14px 8px; }
 }
@@ -497,7 +480,6 @@
 .brand strong, .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mill-btn { min-width: 0; container-type: inline-size; }
 .mill-label { box-sizing: border-box; max-width: 100%; font-size: clamp(10px, 7cqi, 32px); overflow-wrap: anywhere; }
-.current-shift { outline: 2px solid var(--focus); outline-offset: -2px; }
 @media not all {
   .mill-lamp { max-height: 80cqi; }
 }
@@ -516,10 +498,8 @@
 .rejects-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rejects-heading .btn { width: auto; font-size: 15px; margin: 0; }
 .saved-answers p { margin: 4px 0; }
-.saved-answers, .transfer, .card-note, .card-line, .handover-note, h2, .action-help, .seg { overflow-wrap: anywhere; }
+.saved-answers, .transfer, .card-note, .card-line, h2, .action-help { overflow-wrap: anywhere; }
 .note-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.handover-preview[open] .note-preview { -webkit-line-clamp: 1; }
-.handover-preview summary { cursor: pointer; }
 .topbar { background: var(--metal-page); background-attachment: fixed; }
 .topbar::before { display: none; }
 .topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 auto; justify-content: flex-start;

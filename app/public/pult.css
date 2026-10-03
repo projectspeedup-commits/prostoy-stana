@@ -145,7 +145,7 @@ body { padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
   .appnav #admin .pill-text, .appnav #ai-ask .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 
-.btn, .tile, .seg, .stat, .card, .m-tab { border-radius: var(--radius-md); }
+.btn, .tile, .card, .m-tab { border-radius: var(--radius-md); }
 .btn.back { border-width: 1px; }
 @media (max-width: 599px) { .appnav { gap: 0; padding-inline: 0; } .appnav .pill { padding-inline: 0; letter-spacing: -0.01em; } }
 
@@ -263,3 +263,141 @@ textarea.ps-input { min-height: 104px; padding: var(--space-3) var(--space-4); r
 /* Фокус и движение */
 .ps-btn:focus-visible, .ps-chip:focus-visible, .ps-reason:focus-visible, .ps-contact:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .ps-btn, .ps-reason { transition: none; } .ps-btn:active, .ps-reason:active { transform: none; } }
+
+/* ---------- Экраны мастера смены: приём, простои, сдача ----------
+   ps-shift, ps-row, ps-choice, ps-stepper, ps-checklist, ps-kpi перенесены из bundle.css дизайн-системы. */
+.ps-card__head { display: flex; align-items: center; gap: var(--space-3); min-height: 28px; }
+.ps-card__title { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; }
+.ps-card__aside { margin-left: auto; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink-3); }
+
+/* ---------- Мастер смены ---------- */
+.ps-shift { display: grid; gap: var(--space-4); }
+.ps-shift__who { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.ps-avatar { display: grid; place-items: center; width: 52px; height: 52px; flex: none; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--ink); font-size: 18px; font-weight: 800; }
+.ps-shift__name { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; overflow-wrap: anywhere; }
+.ps-shift__meta { font-size: 14px; line-height: 20px; color: var(--ink-2); }
+.ps-progress { display: grid; gap: var(--space-2); }
+.ps-progress__track { height: 10px; border-radius: var(--radius-pill); background: var(--surface-3); overflow: hidden; }
+.ps-progress__fill { height: 100%; border-radius: inherit; background: var(--ink); }
+.ps-progress__row { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 14px; line-height: 20px; color: var(--ink-2); }
+.ps-progress__row b { color: var(--ink); }
+
+/* ---------- Итоги смены (показатели) ---------- */
+.ps-kpis-cap { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-2); }
+.ps-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.ps-kpi { display: grid; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; }
+.ps-kpi__label { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-2); }
+.ps-kpi__value { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 24px; line-height: 28px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.ps-kpi__value { letter-spacing: 0; }
+.ps-kpi__value small { font-size: 15px; font-weight: 600; color: var(--ink-3); }
+.ps-kpi[data-zero] .ps-kpi__value { color: var(--ink-3); }
+.ps-kpis--row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ps-tag { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; padding: 2px 8px; border-radius: var(--radius-xs); background: var(--plan-soft); color: var(--plan-ink); font-size: 13px; line-height: 18px; font-weight: 700; white-space: nowrap; }
+.ps-tag[data-zone="unplanned"] { background: var(--unplanned-soft); color: var(--unplanned-ink); }
+.ps-tag[data-zone="failure"] { background: var(--stop-soft); color: var(--stop-ink); }
+.ps-tag[data-zone="pending"] { background: var(--warn-soft); color: var(--warn-ink); }
+.ps-tag[data-zone="work"] { background: var(--run-soft); color: var(--run-ink); }
+
+/* ---------- Строка простоя ---------- */
+.ps-rows { display: grid; gap: var(--space-2); }
+.ps-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--ink); text-align: left; border: 0; width: 100%; cursor: pointer; }
+.ps-row:hover { background: var(--surface-3); }
+.ps-row__time { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; }
+.ps-row__main { display: grid; gap: 2px; min-width: 0; }
+.ps-row__main > * { min-width: 0; overflow: hidden; }
+.ps-row__what { font-size: 14px; line-height: 20px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-row__what[data-missing] { color: var(--warn-ink); font-weight: 600; }
+.ps-row__dur { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; }
+.ps-stepper { display: inline-grid; grid-template-columns: var(--target-min) minmax(88px, auto) var(--target-min); align-items: center; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); overflow: hidden; }
+.ps-stepper button { height: var(--target-min); border: 0; background: var(--surface-2); color: var(--ink); font-size: 22px; line-height: 1; font-weight: 700; cursor: pointer; }
+.ps-stepper button:hover { background: var(--surface-3); }
+.ps-stepper output { padding: 0 var(--space-2); text-align: center; font-size: 20px; line-height: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ps-form-row { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); }
+.ps-form-row > .ps-field { flex: 1 1 200px; }
+
+/* ---------- Выбор карточкой ---------- */
+.ps-choices { display: grid; gap: var(--space-2); }
+.ps-choice { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--target-glove); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 2px solid var(--line); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
+.ps-choice__radio { width: 24px; height: 24px; flex: none; border-radius: var(--radius-pill); border: 2px solid var(--line-strong); }
+.ps-choice[aria-checked="true"] { border-color: var(--ink); }
+.ps-choice[aria-checked="true"] .ps-choice__radio { border-color: var(--ink); background: var(--ink); box-shadow: inset 0 0 0 4px var(--surface); }
+.ps-choice__text { display: grid; min-width: 0; }
+.ps-choice__title { font-size: 17px; line-height: 22px; font-weight: 700; }
+.ps-choice__sub { font-size: 13px; line-height: 18px; color: var(--ink-3); }
+.ps-checklist { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.ps-check { display: flex; align-items: center; gap: var(--space-3); min-height: 56px; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 16px; line-height: 22px; }
+.ps-check__mark { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: var(--radius-pill); background: var(--run-strong); color: var(--on-run); }
+.ps-check__mark .ps-ico { width: 16px; height: 16px; stroke-width: 3; }
+.ps-check[data-status="todo"] { background: var(--warn-soft); color: var(--warn-ink); font-weight: 600; }
+.ps-check[data-status="todo"] .ps-check__mark { background: var(--warn); color: var(--ink); }
+.ps-check .ps-btn { margin-left: auto; min-height: 40px; padding: 0 var(--space-4); }
+
+/* Раскладка: одна колонка, от 1024 px — две; список простоев слева, редактор справа */
+.ps-flow--narrow { max-width: 640px; }
+main:has(.ps-cols) { max-width: var(--content-max); margin: 0 auto; }
+.ps-head { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); }
+.ps-head__text { display: grid; gap: 2px; margin-right: auto; min-width: 0; }
+.ps-cols { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); align-items: start; }
+.ps-stack { display: grid; gap: var(--space-4); align-content: start; min-width: 0; }
+@media (min-width: 1024px) { .ps-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.ps-actions--col .ps-btn { flex: 1 1 100%; }
+.ps-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ps-card h2.ps-card__title { font-size: 20px; line-height: 26px; }
+.ps-choice:hover { background: var(--surface-2); }
+.ps-choice[aria-current="true"] .ps-choice__sub { color: var(--ink-2); font-weight: 600; }
+.ps-choice__text { flex: 1; }
+.ps-choice__title { overflow-wrap: anywhere; }
+
+/* Карточка смены на пульте */
+.shift-block { display: grid; gap: var(--space-3); min-width: 0; }
+.ps-shift__text { display: grid; gap: 2px; min-width: 0; }
+.ps-shift .ps-notice .ps-btn { margin-left: auto; flex: none; }
+.ps-shift .ps-notice { flex-wrap: wrap; }
+.ps-notice__body { flex: 1; }
+.ps-progress__fill { transition: width .6s linear; }
+
+/* Простои смены */
+.ps-row { min-height: var(--target-glove); }
+.ps-row[aria-current="true"] { outline: 3px solid var(--ink); outline-offset: -3px; background: var(--surface); }
+.ps-row__note { font-size: 13px; line-height: 18px; color: var(--ink-3); }
+.ps-row__main > * { overflow: visible; }
+.ps-row__main > .ps-row__what { overflow: hidden; }
+.ps-row:focus-visible, .ps-choice:focus-visible, .ps-stepper button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.ps-stepper button { min-height: var(--target-min); touch-action: manipulation; }
+.ps-readout { display: block; min-height: var(--target-min); padding: 0 var(--space-4); border-radius: var(--radius-sm); background: var(--surface-2);
+  font-size: 20px; line-height: var(--target-min); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ps-form-row > .ps-field__hint { flex: 1 1 100%; }
+.ps-editor .ps-chips { gap: var(--space-2); }
+.ps-editor-empty { display: none; }
+.ps-close-link { margin-top: var(--space-2); }
+.ps-back-narrow { display: inline-flex; }
+@media (min-width: 1024px) {
+  .ps-editor-empty { display: grid; }
+  .ps-back-narrow { display: none; }
+  .ps-cols--list { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+}
+/* Узкий экран: запись открывается под шапкой, список скрыт, назад — к списку */
+@media (max-width: 1023.98px) {
+  .ps-cols--list[data-editing] .ps-dt-list { display: none; }
+  .ps-cols--list[data-editing] ~ .ps-close-link { display: none; }
+}
+
+/* Зоны и проверка */
+.ps-kpi__value small { font-size: 15px; }
+.ps-check { flex-wrap: wrap; }
+.ps-check__text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ps-check .ps-btn { min-height: var(--target-min); }
+.ps-stack > .ps-kpi { margin-top: 0; }
+.ps-card > .ps-kpis + .ps-kpi { margin-top: calc(-1 * var(--space-2)); }
+@media (prefers-reduced-motion: reduce) { .ps-progress__fill { transition: none; } }
+
+/* Телефон: строка простоя — время и длительность сверху, причина и «что сделали» под ними на всю ширину */
+@media (max-width: 599px) {
+  .ps-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-1); }
+  .ps-row__main { grid-column: 1 / -1; grid-row: 2; }
+  .ps-row__what { white-space: normal; }
+  .ps-row .ps-tag { white-space: normal; }
+  .ps-editor .ps-form-row > .ps-field { flex-basis: 120px; }
+}
+/* Узкий экран: когда открыта запись, шапка списка не нужна — у записи своё название */
+@media (max-width: 1023.98px) { .ps-head--list { display: none; } }

@@ -270,55 +270,8 @@ input {
 }
 
 /* Сводка итога смены */
-.stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 12px;
-}
-.stat {
-  background: var(--surface-2);
-  border: 2px solid var(--border-strong);
-  border-radius: 14px;
-  padding: 14px;
-  text-align: center;
-}
-.stat .v { display: block; font-size: 1.4em; font-weight: 800; margin-top: 4px; }
-.stat.good .v { color: var(--text-good); }
-.stat.bad .v { color: var(--text-bad); }
-.stat.planned .v { color: var(--blue); }
 
 /* Список простоев смены */
-.segs { margin-top: 12px; display: grid; gap: 12px; }
-.seg {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 12px;
-  align-items: start;
-  width: 100%;
-  min-height: 64px;
-  padding: 12px 14px;
-  text-align: left;
-  background: var(--surface-2);
-  border: 2px solid var(--border-strong);
-  border-radius: 14px;
-  cursor: pointer;
-}
-.seg .when { font-weight: 800; font-variant-numeric: tabular-nums; }
-.seg .dur { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.seg .why { font-weight: 700; }
-.badge-need {
-  display: inline-block;
-  background: var(--warn);
-  color: var(--on-warn);
-  border-radius: 8px;
-  padding: 2px 10px;
-  font-weight: 800;
-  font-size: 0.85em;
-}
-.seg .badge-need { margin-top: 6px; }
-.seg.open { border-color: var(--red); }
-.seg .manual-tag { display: block; font-size: 0.75em; color: var(--text-muted); font-weight: 400; }
 
 /* Крупное значение времени в мастере «Забыл отметить простой» */
 .stepval {
@@ -377,9 +330,6 @@ input {
 [hidden] { display: none !important; }
 
 /* В карточке простоя: время и длительность в первой строке, причина и метки — ниже на всю ширину */
-.seg .when { grid-column: 1; grid-row: 1; }
-.seg .dur { grid-column: 2; grid-row: 1; text-align: right; }
-.seg > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
 
 /* Табло стана на первом экране */
 .board { background: var(--surface); border: 2px solid var(--border); border-radius: 16px; padding: 14px 16px; margin: 4px 0 16px; }
@@ -403,16 +353,15 @@ input {
 /* Смена и действия главного экрана оформлены рядом с пультом ниже. */
 button.pill { cursor: pointer; font: inherit; font-weight: 700; }
 .action-help { display: block; color: var(--text-soft); font-weight: 400; }
-.handover-note { padding: 16px 0; border-block: 1px solid var(--border-note); color: var(--text); }
 .receipt { font-weight: 700; }
 .save-status { max-width: 760px; margin: 0 auto; padding: 8px 12px; color: var(--text-soft); font-size: 0.8em; }
 .save-status.attention { color: var(--text-attn); }
 .cancel { margin-top: 28px; }
 .topbar { flex-wrap: wrap; }
 button.pill { min-height: 52px; font-size: 0.8em; white-space: normal; }
-.btn, .tile, .card-note, .action-help, .reject, .handover-note { overflow-wrap: anywhere; }
+.btn, .tile, .card-note, .action-help, .reject { overflow-wrap: anywhere; }
 .card-note, .action-help { white-space: pre-wrap; }
-.stop-grid > *, .stats > *, .board-stats > * { min-width: 0; }
+.stop-grid > *, .board-stats > * { min-width: 0; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 input, textarea { caret-color: var(--focus); }
 ::selection { background: var(--selection-bg); color: var(--selection-text); }
@@ -517,7 +466,7 @@ label { display: block; margin-top: 20px; }
 :root[data-theme="dark"] .theme-toggle .bulb-glass { fill: none; }
 :root[data-theme="dark"] .theme-toggle .bulb-rays { display: none; }
 .mill-console { container-type: inline-size; }
-.mill-status, .shift-card, .btn.shift-action { background: var(--metal-card); border: 1px solid var(--metal-card-edge);
+.mill-status, .btn.shift-action { background: var(--metal-card); border: 1px solid var(--metal-card-edge);
   box-shadow: inset 0 1px 0 var(--metal-card-glint), var(--metal-card-shadow); border-radius: 16px; }
 .mill-status { display: flex; align-items: center; justify-content: space-between; gap: 20px;
   min-height: 96px; padding: 17px 22px; margin-bottom: 18px; border-color: var(--mill-status-green);
@@ -583,28 +532,8 @@ label { display: block; margin-top: 20px; }
   max-width: 100%; width: fit-content; margin: 0 auto; padding: 7px 14px; border-radius: 7px;
   background: var(--metal-plate); color: var(--metal-muted); font-size: 13px; line-height: 1.4; }
 .mill-hint .ico { width: 17px; height: 17px; }
-.shift-block { display: grid; gap: 12px; margin-top: 18px; padding: 0; border: 0; }
-.shift-card { padding: 18px 22px 14px; }
-.shift-person { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 18px; }
-.shift-avatar { display: grid; place-items: center; align-self: start; width: 72px; height: 78px; border: 1px solid var(--metal-card-edge);
-  border-radius: 12px; background: var(--metal-avatar); color: var(--text-soft); box-shadow: inset 0 1px 1px var(--metal-card-glint); }
-.shift-avatar .ico { width: 46px; height: 46px; stroke-width: 1.35; }
-.shift-person h2 { margin: 2px 0 3px; font-size: 24px; line-height: 1.25; font-weight: 800; }
-.shift-person p { margin: 3px 0; font-size: 15px; }
-.shift-person p.muted { font-size: 13px; }
-.shift-block .shift-time { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  margin: 14px 0 0; padding: 10px 14px; border: 1px solid var(--metal-card-edge); border-radius: 9px;
-  background: var(--metal-inset); box-shadow: inset 0 1px 2px var(--metal-card-glint);
-  font-size: 15px; font-variant-numeric: tabular-nums; }
-.shift-time .ico { width: 19px; height: 19px; color: var(--text-muted); }
-.shift-remaining { border-left: 1px solid var(--metal-card-edge); padding-left: 16px; margin-left: 8px; }
-.shift-time > .ico:last-child { margin-left: auto; }
 .btn.shift-action { display: grid; grid-template-columns: 50px minmax(0, 1fr) 24px; gap: 16px; align-items: center;
   margin: 0; padding: 14px 22px; min-height: 84px; text-align: left; font-size: 21px; line-height: 1.25; overflow-wrap: normal; }
-.action-ico { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 50%;
-  color: var(--metal-ink); background: linear-gradient(145deg, var(--metal-panel-top), var(--metal-panel-bottom));
-  border: 1px solid var(--metal-edge); box-shadow: inset 0 1px 1px var(--metal-highlight), 0 2px 4px var(--metal-shadow); }
-.action-ico .ico { width: 26px; height: 26px; }
 .shift-action .action-help { font-size: 14px; margin-top: 5px; line-height: 1.4; overflow-wrap: normal; }
 .shift-action > .ico { color: var(--text-muted); width: 20px; }
 .stop-grid { display: block; }
@@ -657,18 +586,7 @@ label { display: block; margin-top: 20px; }
   main { padding: 10px 12px 24px; }
   .mill-panel { padding: 24px 12px 14px; gap: 18px 0; }
   .mill-hint { font-size: 12px; padding: 7px 8px; align-items: flex-start; }
-  .shift-card { padding: 15px 14px 12px; }
-  .shift-person { grid-template-columns: 52px minmax(0, 1fr); gap: 12px; }
-  .shift-avatar { width: 52px; height: 60px; }
-  .shift-avatar .ico { width: 36px; height: 36px; }
-  .shift-person h2 { font-size: 20px; }
-  .shift-person p { font-size: 13px; }
-  .shift-person p.muted { font-size: 12px; }
-  .shift-block .shift-time { font-size: 12px; gap: 7px; padding: 10px; }
-  .shift-remaining { padding-left: 8px; margin-left: 0; }
-  .shift-time > .ico:last-child { display: none; }
   .btn.shift-action { grid-template-columns: 42px minmax(0, 1fr) 16px; gap: 11px; padding: 14px; font-size: 18px; }
-  .action-ico { width: 42px; height: 42px; }
   .shift-action .action-help { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -679,13 +597,6 @@ label { display: block; margin-top: 20px; }
   .topbar { padding-block: calc(14px + env(safe-area-inset-top)) 14px; }
   .mill-panel { padding: 20px 20px 12px; gap: 14px 0; }
   .mill-btn { min-height: 120px; }
-  .shift-card { padding: 14px 18px 12px; }
-  .shift-person { grid-template-columns: 64px minmax(0, 1fr); gap: 16px; }
-  .shift-avatar { width: 64px; height: 68px; }
-  .shift-person h2 { font-size: 22px; }
-  .shift-person p { font-size: 13px; }
-  .shift-block { gap: 10px; margin-top: 16px; }
-  .shift-block .shift-time { margin-top: 10px; padding-block: 8px; }
   .btn.shift-action { min-height: 74px; padding: 11px 20px; }
 }
 

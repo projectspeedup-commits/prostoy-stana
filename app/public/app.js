@@ -96,8 +96,8 @@ let handlingStorage = false;
 const taps = tapGuard();
 
 // Экран и данные мастеров. screen: auto | crew | reason | confirmChange |
-// manual | manualCheck | closeCheck | forgotStop | restartTime | restartConfirm | restartAction | actionFix |
-// recorded | shift | billet | closeConfirm | closed
+// manual | manualCheck | closeCheck | forgotStop | restartTime | restartConfirm | restartAction |
+// recorded | shift | detail | closeConfirm | closed
 const ui = {
   screen: "auto",
   crewId: null,      // выбранная бригада на приёме смены
@@ -107,15 +107,15 @@ const ui = {
   rw: null,          // мастер пуска: {downtimeId, index, startMs, reason, note, reasonChanged}
   fw: null,          // забытая остановка при закрытии смены: {step, atMs, group, reason, note}
   closeReceipt: null, // события исправленного состояния перед закрытием смены
-  af: null,          // дописывание выполненного: {downtimeId, index, action}
-  bl: null,          // шаг заготовки: {downtimeId, index, custom}
+  edit: null,        // правка записи в «Простоях смены»: {downtimeId, index, base, note, action, billet}
+  pickPerson: null,  // мастер, отмеченный на приёме смены
   rec: null,         // экран «Простой записан»: {downtimeId}
   closedInfo: null,  // итоги для экрана «Смена сдана»
   closeAction: null, // черновик «что сделали по ремонту» при сдаче смены: {key, text}
   focusNote: false,  // поставить курсор в поле «своими словами»
   keyError: null,
 };
-const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio", "stopContext"];
+const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "edit", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio", "stopContext"];
 for (const field of DRAFT_FIELDS) {
   if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
 }
@@ -767,6 +767,8 @@ function icon(name, cls = "ico") {
     wrench: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
     phone: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
     tick: "M20 6 9 17l-5-5",
+    plus: "M12 5v14M5 12h14",
+    clip: "M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1ZM8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 14l2 2 4-4",
     alert: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7.5v5.5M12 16.5h.01",
     wifioff: "M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5-2.7M19 12.9a10 10 0 0 0-2.3-1.7M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8a15 15 0 0 0-11.3-3.7M12 20h.01",
   };
@@ -781,14 +783,46 @@ function icon(name, cls = "ico") {
 }
 
 // Кнопка «Назад»: первая строка вложенного экрана, во всю ширину, серая рамка
-function backBtn(label, onclick) {
-  return h("button", { class: "btn back", onclick }, "← " + label);
+function backBtn(label, onclick, extra = "") {
+  return h("button", { class: "btn back" + (extra ? " " + extra : ""), onclick }, "← " + label);
 }
 function stepLine(n, total) {
   return h("p", { class: "step", text: `Шаг ${n} из ${total}` });
 }
 function question(text) {
   return h("h1", { class: "q", text });
+}
+// Экраны мастера смены (дизайн-система): шапка с надзаголовком и действием справа
+function screenHead(over, title, extra = null, cls = "") {
+  return h("div", { class: "ps-head" + (cls ? " " + cls : "") },
+    h("div", { class: "ps-head__text" }, over ? h("div", { class: "ps-overline", text: over }) : null, question(title)),
+    extra);
+}
+// Карточка с заголовком и подписью справа
+function psCard(title, aside, ...kids) {
+  return h("section", { class: "ps-card" },
+    h("div", { class: "ps-card__head" }, h("h2", { class: "ps-card__title", text: title }), aside ? h("span", { class: "ps-card__aside", text: aside }) : null),
+    ...kids);
+}
+// Выбор карточкой: role=radio, отмеченная — aria-checked
+function choiceCard({ title, sub = "", checked = false, current = false, onclick }) {
+  return h("button", { type: "button", class: "ps-choice", role: "radio", "aria-checked": String(!!checked), "aria-current": current ? "true" : null, onclick },
+    h("span", { class: "ps-choice__radio", "aria-hidden": "true" }),
+    h("span", { class: "ps-choice__text" },
+      h("span", { class: "ps-choice__title", text: title }),
+      sub ? h("span", { class: "ps-choice__sub", text: sub }) : null));
+}
+// Время кнопками ±1 мин рядом с полем ввода: формат значения и проверки остаются прежними
+function timeStepper(label, ms, step) {
+  return h("div", { class: "ps-stepper", role: "group", "aria-label": label },
+    h("button", { type: "button", "aria-label": "Раньше на минуту", onclick: () => step(-1) }, "−"),
+    h("output", { text: Number.isFinite(ms) ? fmtClock(ms) : "—:—" }),
+    h("button", { type: "button", "aria-label": "Позже на минуту", onclick: () => step(1) }, "+"));
+}
+const minuteNow = () => Math.floor(nowMs() / 60000) * 60000;
+function initials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return (((parts[0] || "")[0] || "") + ((parts[1] || "")[0] || "")).toUpperCase() || "—";
 }
 
 let toastTimer = null;
@@ -1099,12 +1133,11 @@ function newRestart(view) {
 }
 
 function isDraftScreen(screen) {
-  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "restartConfirm", "restartAction", "actionFix", "billet", "repair", "repairField"].includes(screen);
+  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "restartConfirm", "restartAction", "repair", "repairField"].includes(screen);
 }
 function cancelDraft() {
-  const from = ui.screen;
-  ui.wz = ui.mw = ui.rw = ui.fw = ui.af = ui.bl = ui.repair = ui.resume = null;
-  go(["actionFix", "billet"].includes(from) ? "detail" : "auto");
+  ui.wz = ui.mw = ui.rw = ui.fw = ui.repair = ui.resume = null;
+  go("auto");
 }
 
 // --- Экраны ---
@@ -1160,10 +1193,8 @@ function renderScreen() {
     case "restartTime": return renderRestartTime(main, view);
     case "restartConfirm": return renderRestartConfirm(main, view);
     case "restartAction": return renderRestartAction(main, view);
-    case "actionFix": return renderActionFix(main, view);
     case "recorded": return renderRecorded(main, view);
     case "shift": return renderShift(main, view);
-    case "billet": return renderBillet(main, view);
     case "closeConfirm": return renderCloseConfirm(main, view);
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
@@ -1654,25 +1685,27 @@ function renderFio(main, view) {
   const fio = ui.fio;
   const fields = [["last", "Фамилия"], ["first", "Имя"], ["middle", "Отчество"]];
   const cap = (v) => String(v || "").trim().replace(/\s+/g, " ").replace(/(^|[ -])([\p{Script=Cyrillic}a-z])/gu, (m, p, c) => p + c.toUpperCase());
-  const error = h("p", { class: "error-text", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
+  const error = h("p", { class: "ps-field__error", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
   error.hidden = true;
-  const submit = h("button", { class: "btn primary", onclick: () => {
+  const submit = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", onclick: () => {
     const problem = fullNameError(fields.map(([k]) => fio[k] || ""));
     if (problem) { error.textContent = problem; error.hidden = false; return; }
     acceptShift(fio.crewId, fio.personId, fields.map(([k]) => cap(fio[k])).join(" "));
-  } }, "Принять смену");
+  } }, icon("tick", "ps-ico"), "Принять смену");
   const update = () => { const problem = fullNameError(fields.map(([k]) => fio[k] || "")); error.textContent = problem; error.hidden = !problem; submit.disabled = !!problem; };
   const inputs = fields.map(([k, label]) => {
-    const input = h("input", { type: "text", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "120" });
+    const input = h("input", { type: "text", class: "ps-input", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "120" });
     input.value = fio[k] || "";
     input.addEventListener("input", () => { fio[k] = input.value; error.hidden = true; update(); persistClient(); });
-    return [h("label", { for: `fio-${k}`, text: label }), input];
+    return h("div", { class: "ps-field" }, h("label", { class: "ps-field__label", for: `fio-${k}`, text: label }), input);
   });
   update();
-  fill(main, backBtn("К списку мастеров", () => { ui.fio = null; render(); }),
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("К списку мастеров", () => { ui.fio = null; render(); }),
     question("Фамилия, имя и отчество мастера"),
-    h("p", { class: "muted", text: `${crewTitle(fio.crewId)} · ${periodLabel(view.shift)}. Полностью, как в документах: так мастер будет записан в приёме смены.` }),
-    ...inputs.flat(), error, submit);
+    h("section", { class: "ps-card" },
+      h("p", { class: "ps-field__hint", text: `${crewTitle(fio.crewId)} · ${periodLabel(view.shift)}. Полностью, как в документах: так мастер будет записан в приёме смены.` }),
+      ...inputs, error, submit)));
   if (!fio.last) main.querySelector("#fio-last")?.focus();
   else if (!fio.first) main.querySelector("#fio-first")?.focus();
 }
@@ -1683,6 +1716,16 @@ function crewHours(id) {
   return i < 0 ? "" : `${shifts[i].start}–${shifts[(i + 1) % shifts.length].start}`;
 }
 
+// Состояние стана на экране приёма смены: панель с таймером
+function stateNow(view) {
+  if (view.open) {
+    const since = view.open.since ?? view.open.startMs;
+    return statePanel({ running: false, since, subtitle: `Стоит с ${fmtSince(since, view.shift)}`, compact: true });
+  }
+  const since = Math.min(nowMs(), runningSince(view));
+  return statePanel({ running: true, since, subtitle: Number.isFinite(since) ? `Пущен в ${fmtClock(since)}` : null, compact: true });
+}
+
 function renderCrew(main, view) {
   if (ui.fio) return renderFio(main, view);
   const crews = refs.crews || [];
@@ -1691,24 +1734,27 @@ function renderCrew(main, view) {
   const kids = [];
   if (ui.confirmCrew) {
     const current = core.shiftOf(nowMs(), refs.settings.schedule);
-    return fill(main, question(`Сейчас идёт Смена ${current.shiftNo} (${fmtClock(current.startMs)}–${fmtClock(current.endMs)}). Принять Смену ${ui.confirmCrew}?`),
-      h("button", { class: "btn primary", onclick: () => { ui.crewId = ui.confirmCrew; ui.confirmCrew = null; render(); } }, "Принять выбранную смену"),
-      h("button", { class: "btn", onclick: () => { ui.confirmCrew = null; render(); } }, "Вернуться к выбору"));
+    return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+      question(`Сейчас идёт Смена ${current.shiftNo} (${fmtClock(current.startMs)}–${fmtClock(current.endMs)}). Принять Смену ${ui.confirmCrew}?`),
+      h("div", { class: "ps-actions" },
+        h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => { ui.crewId = ui.confirmCrew; ui.confirmCrew = null; render(); } }, "Принять выбранную смену"),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => { ui.confirmCrew = null; render(); } }, "Вернуться к выбору"))));
   }
   if (!chosen) {
     if (ui.crewBack) kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
-    kids.push(board(view), stepLine(1, 2), question("Выберите вашу смену"),
-      h("p", { class: "muted", text: `Сейчас: ${periodLabel(view.shift)}` }));
-    kids.push(h("div", { class: "tiles" },
-      crews.map((c) => h("button", { class: "tile" + (String(c.id) === String(view.shift.shiftNo) ? " current-shift" : ""),
-        "aria-current": String(c.id) === String(view.shift.shiftNo) ? "true" : null,
-        onclick: () => {
-          if (String(c.id) !== String(core.shiftOf(nowMs(), refs.settings.schedule).shiftNo)) ui.confirmCrew = c.id;
-          else ui.crewId = c.id;
-          render();
-        } }, c.title, String(c.id) === String(view.shift.shiftNo) ? " · сейчас" : ""))
-    ));
-    kids.push(metrics());
+    kids.push(stepLine(1, 2), screenHead(`Сейчас: ${periodLabel(view.shift)}`, "Выберите вашу смену"));
+    kids.push(h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" },
+        psCard("Какая смена", null,
+          h("div", { class: "ps-choices", role: "radiogroup", "aria-label": "Смена" }, crews.map((c) => {
+            const now = String(c.id) === String(view.shift.shiftNo);
+            return choiceCard({ title: c.title, sub: `по расписанию ${crewHours(c.id)}${now ? " · сейчас" : ""}`, current: now, checked: false, onclick: () => {
+              if (String(c.id) !== String(core.shiftOf(nowMs(), refs.settings.schedule).shiftNo)) ui.confirmCrew = c.id;
+              else ui.crewId = c.id;
+              render();
+            } });
+          })))),
+      h("div", { class: "ps-stack" }, psCard("Стан сейчас", null, stateNow(view)))));
   } else {
     if (!single) {
       kids.push(backBtn("К выбору смены", () => { ui.crewId = null; render(); }));
@@ -1721,14 +1767,26 @@ function renderCrew(main, view) {
       ui.fio = { crewId: chosen, personId: p.id, last: p.name.trim().split(/\s+/)[0] || "", first: "", middle: "" };
       render();
     };
-    const tile = (p) => h("button", { class: "tile", onclick: () => pick(p) }, p.name);
     const own = (refs.people || []).filter((p) => p.crewId === chosen);
-    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question("Мастер, который принимает смену"),
-      h("p", { class: "muted", text: `${crewTitle(chosen)} · по расписанию ${crewHours(chosen)}` }),
-      h("div", { class: "tiles" }, own.map(tile)),
-      h("button", { class: "btn", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"));
+    // Мастер один — он и отмечен; иначе кнопка «Принять смену» ждёт выбора
+    const picked = own.find((p) => p.id === ui.pickPerson) || (own.length === 1 ? own[0] : null);
+    const accept = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", disabled: !picked,
+      onclick: () => picked && pick(picked) }, icon("tick", "ps-ico"), "Принять смену");
+    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2),
+      screenHead(`${crewTitle(chosen)} · по расписанию ${crewHours(chosen)}`, "Кто принимает смену"));
+    kids.push(h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" },
+        psCard("Мастер, который принимает смену", null,
+          own.length ? h("div", { class: "ps-choices", role: "radiogroup", "aria-label": "Кто принимает смену" }, own.map((p) =>
+            choiceCard({ title: p.name, sub: fullName(p.name) ? "" : "ФИО допишете при приёме", checked: !!picked && picked.id === p.id,
+              onclick: () => { ui.pickPerson = p.id; render(); } }))) : h("p", { class: "ps-field__hint", text: "В списке этой смены пока никого нет." }),
+          h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"))),
+      h("div", { class: "ps-stack" },
+        view.open ? renderHandoverCard(view.open) : null,
+        psCard("Стан сейчас", null, stateNow(view)),
+        accept)));
   }
-  fill(main, ...kids);
+  fill(main, h("div", { class: "ps-flow" }, kids));
 }
 
 // Шкала суток: 48 получасовых ячеек текущих производственных суток (08:00–08:00).
@@ -1944,36 +2002,42 @@ function metrics() {
 }
 
 // Блок смены: кто принял, время смены, остаток, закрытие. Одинаков при работающем и стоящем стане
+// Карточка смены на пульте: мастер, сколько осталось, что нужно дописать, «Сдать смену»
 function shiftBlock(view) {
   const c = view.crew;
-  let downtimeHelp = "Посмотреть или исправить простои за смену";
+  let stopsLine = "";
   try {
     const sum = shiftSummary(view);
     const n = sum.stops;
-    const downMin = sum.downMinutes;
-    downtimeHelp = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(downMin)} · посмотреть или исправить` : "Простоев не было";
+    stopsLine = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(sum.downMinutes)}` : "Простоев не было";
   } catch { /* Сводка не должна мешать управлению станом. */ }
-  const action = (name, title, help, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { class: "action-ico" }, icon(name)),
-    h("span", { class: "action-copy" }, h("span", { text: title }), h("span", { class: "action-help", text: help })), icon("chevron"));
+  // Закрытые простои, где не указано «что сделали»: первый открывается кнопкой «Заполнить»
+  let missing = [];
+  try {
+    missing = [...new Map(handoverGaps(view).filter((s) => s.missing.includes("что сделали")).map((s) => [s.downtimeId, s])).values()];
+  } catch { /* то же */ }
+  const { startMs, endMs } = view.shift;
+  const pct = Math.max(0, Math.min(100, ((nowMs() - startMs) / (endMs - startMs)) * 100));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
-    h("div", { class: "shift-card" },
-    h("div", { class: "shift-person" },
-      h("div", { class: "shift-avatar" }, icon("helmet")),
-      h("div", { class: "shift-person-copy" },
-      c ? h("p", { class: "muted", text: "Мастер смены" }) : null,
-      h("h2", { text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
-      c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
-      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null)),
-    h("div", { class: "shift-time" },
-      icon("clock"),
-      h("span", { text: `${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)} · МСК` }),
-      h("span", { class: "shift-remaining" }, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000))), icon("chevron"))),
-    ui.resume ? action("info", "Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
-    action("check", "Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
-    action("bars", "Простои за смену", downtimeHelp, () => go("shift")),
-    action("chart", "Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
-  );
+    h("div", { class: "ps-card ps-shift" },
+      h("div", { class: "ps-shift__who" },
+        h("span", { class: "ps-avatar", "aria-hidden": "true", text: c ? initials(personLabel(c.personId, c.personName)) : "—" }),
+        h("div", { class: "ps-shift__text" },
+          h("div", { class: "ps-overline", text: "Мастер смены" }),
+          h("h2", { class: "ps-shift__name", text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
+          c ? h("div", { class: "ps-shift__meta", text: `Принял смену в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
+          stopsLine ? h("div", { class: "ps-shift__meta", text: stopsLine }) : null)),
+      h("div", { class: "ps-progress" },
+        h("div", { class: "ps-progress__row" },
+          h("span", { text: `${fmtClock(startMs)} – ${fmtClock(endMs)} · МСК` }),
+          h("span", null, "до конца ", h("b", { dataset: { until: String(endMs) } }, fmtDurMin((endMs - nowMs()) / 60000)))),
+        h("div", { class: "ps-progress__track" }, h("div", { class: "ps-progress__fill", dataset: { from: String(startMs), to: String(endMs) }, style: `width: ${pct.toFixed(1)}%` }))),
+      missing.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+        h("span", { class: "ps-notice__body", text: `${missing.length} ${plural(missing.length, "простой", "простоя", "простоев")} без «что сделали»` }),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => openDetail(missing[0].downtimeId, missing[0].index) }, "Заполнить")) : null,
+      ui.resume ? h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--block", onclick: () => go(ui.resume) }, "Продолжить заполнение: ответы предыдущего шага сохранены") : null,
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg ps-btn--block", onclick: () => { ui.closeReceipt = null; go("closeCheck"); } },
+        icon("clip", "ps-ico"), "Сдать смену")));
 }
 
 // Экран «Показатели стана»: табло и метрики за период, доступен в любой момент
@@ -1990,18 +2054,18 @@ function stopShiftKey(view) {
 function handoverText(item) {
   return typeof item?.action === "string" ? item.action.trim() : "";
 }
-// Карточка «Ремонт по сменам»: три последние передачи, новая сверху. Только для чтения
+// Карточка «Передали по ремонту»: три последние передачи, новая сверху. Только для чтения
 function renderHandoverCard(open) {
   const list = (open.handovers || []).slice(-3).reverse();
   if (!list.length) return null;
-  return h("div", { class: "card" },
-    h("div", { class: "card-title", text: "Ремонт по сменам" }),
+  return psCard("Передали по ремонту", list.length > 1 ? `последние ${list.length}` : "",
     list.map((x) => {
       const at = core.toMs(x.at);
       const text = handoverText(x);
-      return h("div", null,
-        h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
-        h("details", { class: "handover-preview" }, h("summary", { class: "card-note note-preview", text: text ? `«${text}»` : "без записи" }), h("p", { class: "card-note", text: text || "без записи" })));
+      return h("div", { class: "ps-notice", "data-tone": "info" }, icon("wrench", "ps-ico"),
+        h("div", { class: "ps-notice__body" },
+          h("span", { class: "ps-notice__line", text: text ? `«${text}»` : "без записи" }),
+          h("span", { class: "ps-field__hint", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` })));
     }));
 }
 
@@ -2054,6 +2118,47 @@ function renderStop(main, view) {
   fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
 }
 
+// Минуты простоя по зонам за смену: те же отрезки, что в сводке; округляет ядро (apportionMinutes)
+function shiftZoneMinutes(view, downMin) {
+  const shift = view.shift;
+  const ms = { plan: 0, unplanned: 0, failure: 0 };
+  const add = (reason, from, to) => {
+    const a = Math.max(from, shift.startMs);
+    const b = Math.min(to, shift.endMs, nowMs());
+    if (b > a) ms[zoneOf(reason, refs)] += b - a;
+  };
+  for (const s of view.segments) add(s.reason, s.startMs, s.open || s.endMs === null ? nowMs() : s.endMs);
+  if (view.open) add(view.open.reason, view.open.startMs, nowMs());
+  const keys = ["plan", "unplanned", "failure"];
+  const mins = core.apportionMinutes(keys.map((k) => ms[k]), downMin);
+  return Object.fromEntries(keys.map((k, i) => [k, mins[i]]));
+}
+// Итоги смены плитками: работа и три вида простоя; ниже — брак за смену
+function shiftKpis(view) {
+  const sum = shiftSummary(view);
+  const downMin = sum.downMinutes;
+  const zones = shiftZoneMinutes(view, downMin);
+  const tile = (zone, label, min) => h("div", { class: "ps-kpi", "data-zone": zone, "data-zero": min >= 1 ? null : "" },
+    h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), label),
+    h("span", { class: "ps-kpi__value", text: fmtHM(min) }));
+  const billet = Math.round(shiftDowntimes(view).reduce((n, d) => n + (Number(d.billet) || 0), 0) * 10) / 10;
+  return [
+    h("div", { class: "ps-kpis" },
+      tile("work", "Работа", shiftWorkMin(view, downMin)), tile("plan", "Плановый", zones.plan),
+      tile("unplanned", "Внеплановый", zones.unplanned), tile("failure", "Аварийный", zones.failure)),
+    h("div", { class: "ps-kpi", "data-kind": "billet", "data-zero": billet ? null : "" },
+      h("span", { class: "ps-kpi__label", text: "Брак за смену" }),
+      h("span", { class: "ps-kpi__value", text: fmtTons(billet) }))];
+}
+
+// Пункт проверки: считает система, мастер его не отмечает; у todo — кнопка перехода к исправлению
+function checkItem(done, text, action = null) {
+  return h("li", { class: "ps-check", "data-status": done ? "done" : "todo" },
+    h("span", { class: "ps-check__mark", "aria-hidden": "true" }, icon(done ? "tick" : "alert", "ps-ico")),
+    h("span", { class: "ps-check__text" }, h("span", { class: "ps-sr", text: done ? "Готово: " : "Нужно сделать: " }), text),
+    !done && action ? h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: action.onclick }, action.label) : null);
+}
+
 // Закрытие смены начинается со сверки записи на планшете с состоянием стана.
 function runningSince(view) {
   const ends = view.segments.filter((s) => !s.open && Number.isFinite(s.endMs)).map((s) => s.endMs);
@@ -2062,24 +2167,26 @@ function runningSince(view) {
 }
 function renderCloseCheck(main, view) {
   const open = view.open;
-  fill(main, backBtn("На главный экран", () => go("auto")),
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("На главный экран", () => go("auto")),
     question(open ? "Стан всё ещё стоит?" : "Стан в рабочем состоянии?"),
-    h("p", { class: "hint", text: open
+    h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: open
       ? `На планшете: стан стоит с ${fmtSince(open.since ?? open.startMs, view.shift)} · ${reasonLabel(open.reason) || "причина не указана"}`
-      : `На планшете: стан работает с ${fmtSince(runningSince(view), view.shift)}` }),
-    h("button", { class: "btn primary", onclick: () => go("closeConfirm") }, open ? "Да, стоит" : "Да, работает"),
-    h("button", { class: "btn", onclick: () => {
-      const current = buildView();
-      if (!!current.open !== !!open) { render(); return; }
-      if (current.open) {
-        if (!reusableRestart(ui.rw, current, nowMs())) { ui.wz = null; ui.rw = newRestart(current); }
-        ui.rw.thenClose = true;
-        go("restartTime");
-      } else {
-        ui.fw ||= { step: 1, atMs: nowMs(), group: null, reason: null, note: "" };
-        go("forgotStop");
-      }
-    } }, open ? "Нет, уже работает" : "Нет, стан стоит"));
+      : `На планшете: стан работает с ${fmtSince(runningSince(view), view.shift)}` })),
+    h("div", { class: "ps-actions ps-actions--col" },
+      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => go("closeConfirm") }, open ? "Да, стоит" : "Да, работает"),
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => {
+        const current = buildView();
+        if (!!current.open !== !!open) { render(); return; }
+        if (current.open) {
+          if (!reusableRestart(ui.rw, current, nowMs())) { ui.wz = null; ui.rw = newRestart(current); }
+          ui.rw.thenClose = true;
+          go("restartTime");
+        } else {
+          ui.fw ||= { step: 1, atMs: nowMs(), group: null, reason: null, note: "" };
+          go("forgotStop");
+        }
+      } }, open ? "Нет, уже работает" : "Нет, стан стоит"))));
 }
 
 function forgottenTimeError(view, ms, restart = false) {
@@ -2115,7 +2222,13 @@ function forgottenTimeFields(view, draft, field, restart, next) {
     update();
   });
   update();
-  return [h("p", { class: "muted", text: "Дата и время по Москве." }), input,
+  // Кнопки ±1 мин двигают то же значение, что и поле: проверки и формат события прежние
+  const stepper = timeStepper(restart ? "Время пуска" : "Время остановки", draft[field], (dir) => {
+    draft[field] = (Number.isFinite(draft[field]) ? draft[field] : minuteNow()) + dir * 60000;
+    delete draft.timeValue;
+    render();
+  });
+  return [h("p", { class: "muted", text: "Дата и время по Москве." }), stepper, input,
     h("div", { class: "tiles" }, [[10, "10 мин назад"], [30, "30 мин назад"], [60, "1 ч назад"], [120, "2 ч назад"]].map(([min, label]) =>
       h("button", { class: "tile", onclick: () => {
         draft[field] = Math.floor(nowMs() / 60000) * 60000 - min * 60000;
@@ -2712,7 +2825,7 @@ function renderManual(main, view) {
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
   const backLabel = mw.step === 4 ? "К выбору причины" : mw.step === 5 && tileMulti(mw) ? "К выбору пункта" : "К предыдущему вопросу";
-  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
+  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К простоям смены" : "На главный экран", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
   const next = () => { mw.step++; mw.error = ""; render(); };
   if (mw.step <= 2) {
     const start = mw.step === 1;
@@ -2747,9 +2860,13 @@ function renderManual(main, view) {
     error.hidden = !msg0;
     const choices = start ? [[10, "10 мин назад"], [30, "30 мин назад"], [60, "Час назад"]]
       : [[5, "Стоял 5 мин"], [15, "Стоял 15 мин"], [30, "Стоял 30 мин"]];
+    const stepper = timeStepper(start ? "Начало простоя" : "Конец простоя", mw[field], (dir) => {
+      mw[field] = (Number.isFinite(mw[field]) ? mw[field] : minuteNow()) + dir * 60000;
+      render();
+    });
     fill(main, ...top(), question(start ? "Когда стан встал?" : "Когда стан снова пошёл?"),
       h("p", { class: "muted", text: "Дата и время по Москве. Добавляем уже закончившийся простой этой смены." }),
-      input,
+      stepper, input,
       h("div", { class: "tiles" }, choices.map(([min, label]) => h("button", { class: "tile", onclick: () => {
         mw[field] = start ? mw.openedAt - min * 60000 : mw.from + min * 60000;
         render();
@@ -2890,38 +3007,27 @@ function openDetail(downtimeId, index = null) {
   go("detail");
 }
 
-// Сводка перед сдачей. Здесь же исправляют записи в течение смены.
-function renderShift(main, view) {
-  const sum = shiftSummary(view);
-  const downMin = sum.downMinutes;
-  const workMin = shiftWorkMin(view, downMin);
-  const dts = shiftDowntimes(view);
-  const gaps = handoverGaps(view);
-  fill(main, backBtn("На главный экран", () => go("auto")), question("Итог смены"),
-    h("p", { class: "muted", text: `${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}` }),
-    h("div", { class: "stats" },
-      h("div", { class: "stat good" }, "Работа", h("span", { class: "v", text: fmtDurMin(workMin) })),
-      h("div", { class: "stat bad" }, "Простой", h("span", { class: "v", text: fmtDurMin(downMin) }))),
-    view.open ? h("p", { class: "handover-note", text: "Стан стоит. После закрытия смены простой продолжится у следующей смены. Пуск отмечать не нужно." }) : null,
-    gaps.length ? h("p", { class: "handover-note", text: `Нужно дополнить записи: ${gaps.length}. Откройте их ниже или закройте смену с пометкой.` }) : null,
-    h("h2", { text: "Простои смены" }),
-    dts.length ? h("div", { class: "segs" }, dts.map((d) => downtimeRow(d, view.shift))) : h("p", { class: "muted", text: "Простоев не было." }),
-    h("button", { class: "btn", onclick: () => startManualWizard("shift") }, "Забыл отметить простой"),
-    h("button", { class: "btn primary", disabled: view.closed || !view.crew, onclick: () => { ui.closeReceipt = null; go("closeCheck"); } }, "Перейти к закрытию смены"));
-}
+// Простои смены: слева список, справа редактор записи (от 1024 px); на узких экранах
+// список и редактор — два экрана по ui.screen: «shift» (список) и «detail» (запись)
+function renderShift(main, view) { renderDowntimes(main, view, false); }
+function renderDetail(main, view) { renderDowntimes(main, view, true); }
 
-function downtimeRow(d, shift) {
+// Строка простоя: интервал, причина с зоной, что сделали, длительность
+function downtimeRow(d, shift, selected) {
   const missing = d.open ? [] : [...new Set(d.segs.flatMap(missingFields))];
-  return h("button", { class: "seg" + (d.open ? " open" : ""), onclick: () => openDetail(d.downtimeId) },
-    h("span", { class: "when", text: `${fmtSince(d.startMs, shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
-    h("span", null,
-      h("span", { class: "why", text: reasonLabel(d.reason) || "Причина не указана" }),
-      d.segs.length > 1 ? h("span", { class: "manual-tag", text: `Причина менялась · частей: ${d.segs.length}` }) : null,
-      d.continued ? h("span", { class: "manual-tag", text: "Начался в прошлую смену" }) : null,
-      d.open ? h("span", { class: "manual-tag", text: "Простой продолжается · передаётся следующей смене" }) : null,
-      missing.length ? h("span", { class: "badge-need", text: "Дополнить: " + missing.join(", ") }) : null,
-      h("span", { class: "manual-tag", text: "Открыть запись" })),
-    h("span", { class: "dur", text: d.open ? "идёт" : fmtDurMin(d.minutes) }));
+  const what = d.open ? "Идёт сейчас"
+    : missing.includes("что сделали") ? "Не указано, что сделали"
+    : missing.length ? `Дополнить: ${missing.join(", ")}`
+    : String(d.action || "").trim() || "—";
+  const note = [d.continued ? "Начался в прошлую смену" : "", d.segs.length > 1 ? `Причина менялась · частей: ${d.segs.length}` : ""].filter(Boolean).join(" · ");
+  return h("button", { type: "button", class: "ps-row", "aria-current": selected ? "true" : null, onclick: () => openDetail(d.downtimeId) },
+    h("span", { class: "ps-row__time", text: `${fmtSince(d.startMs, shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
+    h("span", { class: "ps-row__main" },
+      h("span", null, h("span", { class: "ps-tag", "data-zone": reasonRef(d.reason) ? zoneOf(core.reasonKey(d.reason), refs) : "pending",
+        text: reasonLabel(d.reason) || "Причина не указана" })),
+      h("span", { class: "ps-row__what", "data-missing": missing.length ? "" : null, text: what }),
+      note ? h("span", { class: "ps-row__note", text: note }) : null),
+    h("span", { class: "ps-row__dur", text: d.open ? "идёт" : fmtHM(d.minutes) }));
 }
 
 function cardData(view) {
@@ -2930,97 +3036,181 @@ function cardData(view) {
   const s = d.segs.find((x) => x.index === ui.card.index) || d.segs.at(-1);
   return { d, s };
 }
-function renderDetail(main, view) {
-  const data = cardData(view);
-  if (!data) {
-    fill(main, backBtn("К итогу смены", () => go("shift")), question("Записи нет в этой смене"),
-      h("p", { text: "Возможно, смена уже закончилась или запись изменили. Проверьте итог текущей смены." }));
-    return;
+
+// Черновик правки записи: поля, которые мастер не менял, подтягивают свежие данные
+function editorDraft(s) {
+  const now = { note: s.note || "", action: s.action || "", billet: s.billet == null ? "" : String(s.billet).replace(".", ",") };
+  let e = ui.edit;
+  if (!e || e.downtimeId !== s.downtimeId || e.index !== s.index) {
+    e = ui.edit = { downtimeId: s.downtimeId, index: s.index, base: { ...now }, ...now, billetOther: false };
+  } else {
+    for (const f of ["note", "action", "billet"]) if (e[f] === e.base[f]) e[f] = e.base[f] = now[f];
   }
+  return e;
+}
+// Тонны: чипы 0 … 2, «Другое» открывает поле; значение хранится в черновике записи
+function billetPicker(draft, onChange) {
+  const input = h("input", { id: "edit-billet", class: "ps-input", type: "text", maxlength: "8", inputmode: "decimal", autocomplete: "off",
+    placeholder: "Своё значение, тонн", "aria-label": "Брак в тоннах" });
+  input.value = draft.billet;
+  let other = draft.billetOther || (String(draft.billet).trim() !== "" && !BILLET_CHIPS.some((v) => sameTons(draft.billet, v)));
+  const otherChip = h("button", { type: "button", class: "ps-chip", "aria-pressed": "false" }, "Другое");
+  const chips = BILLET_CHIPS.map((v) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
+    onclick: () => { other = false; draft.billetOther = false; input.value = ""; draft.billet = v; sync(); onChange(); } }, v));
+  const sync = () => {
+    chips.forEach((chip, i) => chip.setAttribute("aria-pressed", String(!other && sameTons(draft.billet, BILLET_CHIPS[i]))));
+    otherChip.setAttribute("aria-pressed", String(other));
+    input.hidden = !other;
+  };
+  otherChip.addEventListener("click", () => { other = true; draft.billetOther = true; draft.billet = input.value; sync(); onChange(); input.focus(); });
+  input.addEventListener("input", () => { draft.billet = input.value; onChange(); });
+  sync();
+  return h("div", { class: "ps-chips" }, chips, otherChip, input);
+}
+
+// Редактор записи простоя: причина, что случилось, что сделали, брак. Время ставит система
+function renderEditor(view, data) {
   const { d, s } = data;
   ui.card.index = s.index;
-  const editText = (field) => {
-    ui.af = { downtimeId: s.downtimeId, index: s.index, reason: s.reason, field, value: s[field] || "" };
-    go("actionFix");
+  const draft = editorDraft(s);
+  const tile = (refs.tiles || []).find((t) => t.id === reasonGroup(s.reason)) || null;
+  // Смена причины идёт теми же шагами мастера, что и у пульта: плитка → «Что именно?» → описание
+  const openWizard = (t, item) => {
+    ui.wz = { mode: "shiftfix", downtimeId: s.downtimeId, index: s.index, step: 1, group: reasonGroup(s.reason), reason: s.reason, note: s.note || "" };
+    ui.wz.group = t.id;
+    ui.wz.unknown = false;
+    const items = reasonItems(t);
+    if (item) { chooseReasonItem(ui.wz, t, item); ui.wz.step = 3; }
+    else if (items.length === 1) { chooseReasonItem(ui.wz, t, items[0]); ui.wz.step = 3; }
+    else ui.wz.step = 2;
+    go("reason");
   };
-  const choice = (title, value, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { text: title }), h("span", { class: "action-help", text: value }));
-  fill(main, backBtn("К итогу смены", () => go("shift")),
-    question(`Простой с ${fmtClock(d.startMs)}`),
-    h("p", { class: "muted", text: d.open ? "Ещё идёт. Заполнение карточки не отмечает пуск." : `До ${fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }),
-    d.segs.length > 1 ? h("div", { class: "tiles" }, d.segs.map((part) => h("button", {
-      class: "tile" + (part.index === s.index ? " sel" : ""), onclick: () => { ui.card.index = part.index; render(); },
-    }, `${fmtClock(part.startMs)}–${part.open ? "сейчас" : fmtClock(part.endMs)}`, h("span", { class: "t-code", text: reasonLabel(part.reason) || "Без причины" })))) : null,
-    question("Что изменить?"),
-    choice("Причина", reasonLabel(s.reason) || "Не указана", () => {
-      ui.wz = { mode: "shiftfix", downtimeId: s.downtimeId, index: s.index, step: 1,
-        group: reasonGroup(s.reason), reason: s.reason, note: s.note || "" };
-      go("reason");
-    }),
-    choice("Что случилось", s.note || "Не указано", () => editText("note")),
-    choice("Что сделали", s.action || (d.open ? "Можно записать уже выполненную работу" : "Не указано"), () => editText("action")),
-    choice("Брак", s.billet == null ? "Не указан" : fmtTons(s.billet), () => {
-      ui.bl = { downtimeId: s.downtimeId, index: s.index, value: s.billet == null ? "" : String(s.billet), custom: false };
-      go("billet");
-    }),
-    h("p", { class: "hint", text: receiptFor(d.downtimeId).length ? receiptStatus(receiptFor(d.downtimeId)) : "Запись из данных сервера" }));
-}
-
-function renderActionFix(main, view) {
-  const af = ui.af;
-  if (!af) return go("detail");
-  const field = af.field || "action";
-  const note = field === "note";
-  const must = !note || needsNote(af.reason);
-  const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
-    placeholder: note ? noteHint(af.reason) : actionHint(af.reason), "aria-label": note ? "Что случилось" : "Что сделали" });
-  ta.value = af.value || "";
-  const error = h("p", { class: "error-text", text: note ? "Опишите своими словами, что случилось." : "Напишите, что сделали." });
-  const save = h("button", { class: "btn primary", onclick: () => {
-    if (must && !validAction(ta.value)) return;
-    const data = cardData(buildView());
-    if (!data || data.s.downtimeId !== af.downtimeId || data.s.index !== af.index) {
-      error.hidden = false; error.textContent = "Запись изменилась. Вернитесь к карточке и проверьте её."; return;
-    }
-    ui.af = null;
-    ui.screen = "detail";
-    send("fix", { downtimeId: af.downtimeId, index: af.index, [field]: ta.value.trim() });
-  } }, "Сохранить");
+  const noteMust = needsNote(s.reason);
+  const note = h("textarea", { class: "ps-input", id: "edit-note", rows: "3", maxlength: String(NOTE_MAX), placeholder: noteHint(s.reason), "aria-label": "Что случилось" });
+  note.value = draft.note;
+  const action = h("textarea", { class: "ps-input", id: "edit-action", rows: "3", maxlength: String(NOTE_MAX), placeholder: actionHint(s.reason), "aria-label": "Что сделали" });
+  action.value = draft.action;
+  const error = h("p", { class: "ps-field__error" });
+  error.hidden = true;
+  const save = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg" }, "Сохранить");
+  const cancel = h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--lg" }, "Отмена");
+  // Пустое поле не отправляем: стереть уже записанное нельзя, поэтому очищенное считается неизменённым
+  const changed = () => ["note", "action", "billet"].filter((f) => String(draft[f]).trim() !== "" && String(draft[f]).trim() !== String(draft.base[f]).trim());
+  // Что мешает сохранить: пустое поле не отправляем, непустое проверяем так же, как раньше
+  const problem = () => {
+    const list = changed();
+    if (list.includes("note") && noteMust && !validAction(draft.note)) return "Опишите своими словами, что случилось.";
+    if (list.includes("action") && !validAction(draft.action)) return "Напишите, что сделали.";
+    if (list.includes("billet") && !validBillet(draft.billet)) return "Укажите от 0 до 1000 тн.";
+    return "";
+  };
+  let touched = false;
   const update = () => {
-    af.value = ta.value;
-    save.disabled = must && !validAction(ta.value);
-    error.hidden = !save.disabled || !touched;
+    const list = changed();
+    save.disabled = !list.length;
+    cancel.hidden = !list.length;
+    const msg = touched ? problem() : "";
+    error.textContent = msg;
+    error.hidden = !msg;
   };
-  let touched = !!ta.value;
-  ta.addEventListener("input", () => { touched = true; update(); });
+  note.addEventListener("input", () => { draft.note = note.value; touched = true; update(); });
+  action.addEventListener("input", () => { draft.action = action.value; touched = true; update(); });
+  cancel.addEventListener("click", () => { ui.edit = null; render(); });
+  save.addEventListener("click", () => {
+    if (problem()) { touched = true; update(); showToast(problem()); return; }
+    const fresh = cardData(buildView());
+    if (!fresh || fresh.s.downtimeId !== s.downtimeId || fresh.s.index !== s.index) {
+      error.textContent = "Запись изменилась. Вернитесь к списку и проверьте её."; error.hidden = false; return;
+    }
+    const fields = {};
+    for (const f of changed()) {
+      const raw = String(draft[f]).trim();
+      fields[f] = f === "billet" ? Number(raw.replace(",", ".")) : raw;
+    }
+    ui.edit = null;
+    ui.screen = "detail";
+    // Каждое поле — отдельное событие fix, как и раньше: сервер сверяет их поэтому по одному
+    for (const [field, value] of Object.entries(fields)) send("fix", { downtimeId: s.downtimeId, index: s.index, [field]: value });
+  });
   update();
-  fill(main, backBtn("К записи простоя", () => go("detail")), question(note ? "Что случилось?" : "Что сделали?"),
-    note ? h("p", { class: "muted", text: reasonLabel(af.reason) }) : null, ta,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), error, save);
+  const parts = d.segs.length > 1 ? h("div", { class: "ps-chips", role: "group", "aria-label": "Часть простоя" }, d.segs.map((part) =>
+    h("button", { type: "button", class: "ps-chip", "aria-pressed": String(part.index === s.index),
+      onclick: () => { ui.card.index = part.index; ui.edit = null; render(); } },
+    `${fmtClock(part.startMs)}–${part.open ? "сейчас" : fmtClock(part.endMs)} · ${reasonLabel(part.reason) || "Без причины"}`))) : null;
+  const items = tile ? reasonItems(tile) : [];
+  const receipt = receiptFor(d.downtimeId);
+  return h("section", { class: "ps-card ps-editor", "aria-label": "Запись простоя" },
+    h("div", { class: "ps-card__head" },
+      h("h2", { class: "ps-card__title", text: `Простой ${fmtSince(d.startMs, view.shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
+      h("span", { class: "ps-card__aside", text: d.open ? "идёт" : fmtDurMin(d.minutes) })),
+    d.open ? h("p", { class: "ps-field__hint", text: "Ещё идёт. Заполнение записи не отмечает пуск." }) : null,
+    parts,
+    h("div", { class: "ps-form-row" },
+      h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Стан встал" }), h("output", { class: "ps-readout", text: fmtSince(d.startMs, view.shift) })),
+      h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Стан пошёл" }), h("output", { class: "ps-readout", text: d.endMs === null ? "ещё стоит" : fmtClock(d.endMs) })),
+      h("span", { class: "ps-field__hint", text: "Время ставит система." })),
+    h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-reason-label" },
+      h("span", { class: "ps-field__label", id: "edit-reason-label", text: "Причина" }),
+      h("div", { class: "ps-chips" }, (refs.tiles || []).map((t) =>
+        h("button", { type: "button", class: "ps-chip", "aria-pressed": String(!!tile && tile.id === t.id), onclick: () => openWizard(t) }, t.title))),
+      h("span", { class: "ps-field__hint", text: reasonRef(s.reason) ? reasonLabel(s.reason) : "Причина не указана" })),
+    items.length > 1 ? h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-item-label" },
+      h("span", { class: "ps-field__label", id: "edit-item-label", text: "Уточнение" }),
+      h("div", { class: "ps-chips" }, items.map((item) =>
+        h("button", { type: "button", class: "ps-chip", "aria-pressed": String(core.reasonKey(item.code) === core.reasonKey(s.reason)), onclick: () => openWizard(tile, item) }, item.label)))) : null,
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "edit-note", text: noteMust ? "Что случилось" : "Что случилось (по желанию)" }), note),
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "edit-action", text: "Что сделали" }), action,
+      h("span", { class: "ps-field__hint", text: d.open ? "Можно записать уже выполненную работу" : "Нужно заполнить до сдачи смены" })),
+    h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-billet-label" },
+      h("span", { class: "ps-field__label", id: "edit-billet-label", text: "Брак, тн" }),
+      billetPicker(draft, update),
+      h("span", { class: "ps-field__hint", text: "Если брака нет — 0" })),
+    error,
+    h("div", { class: "ps-actions" }, save, cancel),
+    h("p", { class: "ps-field__hint", text: receipt.length ? receiptStatus(receipt) : "Запись из данных сервера" }));
 }
 
-// Брак — самостоятельный вопрос карточки, не скрытый шаг после причины.
-function renderBillet(main, view) {
-  const bl = ui.bl;
-  if (!bl) return go("detail");
-  const save = (value) => {
-    if (!validBillet(value)) return showToast("Укажите от 0 до 1000 тн.");
-    ui.bl = null;
-    ui.screen = "detail";
-    send("fix", { downtimeId: bl.downtimeId, index: bl.index, billet: value });
-  };
-  const input = h("input", { type: "text", maxlength: "8", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
-  input.value = bl.value;
-  input.addEventListener("input", () => { bl.value = input.value; });
-  fill(main, backBtn("К записи простоя", () => go("detail")), question("Сколько заготовки ушло в брак?"),
-    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 тн." }),
-    h("div", { class: "tiles" }, [0, 0.5, 1, 2, 5].map((v) => h("button", { class: "tile", onclick: () => save(v) }, fmtTons(v)))),
-    h("label", { for: "billet-value", text: "Другое количество, тн" }),
-    Object.assign(input, { id: "billet-value" }),
-    h("button", { class: "btn primary", onclick: () => {
-      if (validBillet(input.value)) save(Number(input.value.trim().replace(",", ".")));
-      else showToast("Укажите от 0 до 1000 тн.");
-    } }, "Сохранить"));
+function renderDowntimes(main, view, editing) {
+  const sum = shiftSummary(view);
+  const downMin = sum.downMinutes;
+  const workMin = shiftWorkMin(view, downMin);
+  const dts = shiftDowntimes(view);
+  const gaps = handoverGaps(view);
+  const data = editing ? cardData(view) : null;
+  if (editing && !data) {
+    return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+      backBtn("К простоям смены", () => go("shift")), question("Записи нет в этой смене"),
+      h("p", { text: "Возможно, смена уже закончилась или запись изменили. Проверьте итог текущей смены." })));
+  }
+  const head = screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Простои смены",
+    h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => startManualWizard("shift") }, icon("plus", "ps-ico"), "Забыли отметить простой"),
+    editing ? "ps-head--list" : "");
+  const kpis = h("div", { class: "ps-kpis" },
+    h("div", { class: "ps-kpi", "data-kind": "work", "data-zero": workMin ? null : "" },
+      h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "work", "aria-hidden": "true" }), "Работа"),
+      h("span", { class: "ps-kpi__value", text: fmtHM(workMin) })),
+    h("div", { class: "ps-kpi", "data-kind": "down", "data-zero": downMin ? null : "" },
+      h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "unplanned", "aria-hidden": "true" }), "Простой"),
+      h("span", { class: "ps-kpi__value", text: fmtHM(downMin) })));
+  const list = h("div", { class: "ps-stack ps-dt-list" },
+    view.open ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "Стан стоит. После сдачи смены простой продолжится у следующей смены. Пуск отмечать не нужно." })) : null,
+    gaps.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: `Нужно дополнить записи: ${gaps.length}. Откройте их ниже или сдайте смену с пометкой.` })) : null,
+    kpis,
+    psCard(dts.length ? `${dts.length} ${plural(dts.length, "простой", "простоя", "простоев")}` : "Простои", dts.length ? "нажмите, чтобы исправить" : "",
+      dts.length ? h("div", { class: "ps-rows" }, dts.map((d) => downtimeRow(d, view.shift, !!data && data.d.downtimeId === d.downtimeId)))
+        : h("p", { class: "ps-field__hint", text: "Простоев не было." })));
+  const side = data ? renderEditor(view, data)
+    : h("section", { class: "ps-card ps-editor-empty" }, h("p", { class: "ps-field__hint", text: "Выберите простой в списке: здесь можно указать причину, что сделали и брак." }));
+  fill(main, h("div", { class: "ps-flow" },
+    editing ? backBtn("К простоям смены", () => go("shift"), "ps-back-narrow") : backBtn("На главный экран", () => go("auto")),
+    head,
+    h("div", { class: "ps-cols ps-cols--list", "data-editing": editing ? "" : null }, list, h("div", { class: "ps-stack ps-dt-editor" }, side)),
+    h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block ps-close-link", disabled: view.closed || !view.crew,
+      onclick: () => { ui.closeReceipt = null; go("closeCheck"); } }, icon("clip", "ps-ico"), "Сдать смену")));
 }
 
 // Черновик «что сделали по ремонту» относится к своему простою и своей смене
@@ -3032,38 +3222,59 @@ function renderCloseConfirm(main, view) {
   const gaps = handoverGaps(view);
   const trouble = rejectionGroups(records).length;
   const receipt = records.filter((r) => ui.closeReceipt?.includes(r.event.id));
-  let repairWorkField = null;
+  // Пункты проверки: по одной записи на простой, переход — к первой незаполненной
+  const byDowntime = (name) => [...new Map(gaps.filter((s) => s.missing.includes(name)).map((s) => [s.downtimeId, s])).values()];
+  const noReason = byDowntime("причина");
+  const noAction = byDowntime("что сделали");
+  const noBillet = byDowntime("брак");
+  const noOther = byDowntime("описание иной причины");
+  const fix = (list) => ({ label: "Заполнить", onclick: () => openDetail(list[0].downtimeId, list[0].index) });
+  const count = (list, what) => `${list.length} ${plural(list.length, "простой", "простоя", "простоев")} ${what}`;
+  const extra = [...noBillet, ...noOther];
+  const since = runningSince(view);
+  const checks = h("ul", { class: "ps-checklist" },
+    view.open ? checkItem(false, `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}: простой перейдёт следующей смене, пуск отмечать не нужно`)
+      : checkItem(true, Number.isFinite(since) ? `Все остановки закрыты — стан работает с ${fmtSince(since, view.shift)}` : "Все остановки закрыты"),
+    checkItem(!noReason.length, noReason.length ? count(noReason, "без причины") : "У каждого простоя есть причина", noReason.length ? fix(noReason) : null),
+    checkItem(!noAction.length, noAction.length ? count(noAction, "без «что сделали»") : "Везде указано, что сделали", noAction.length ? fix(noAction) : null),
+    checkItem(!extra.length, extra.length
+      ? `Дополнить: ${[noBillet.length ? `брак (${noBillet.length})` : "", noOther.length ? `описание иной причины (${noOther.length})` : ""].filter(Boolean).join(", ")}`
+      : "Брак и описания указаны", extra.length ? fix(extra) : null),
+    checkItem(!trouble && !queue.length, trouble ? `Сервер не принял записей: ${trouble}. Они останутся на планшете для исправления`
+      : queue.length ? `Ждут отправки: ${queue.length}` : "Все записи приняты сервером",
+    trouble ? { label: "Показать", onclick: () => { ui.rejectsOpen = true; renderRejects(); renderTopbar(); } } : null));
+  let repairWork = null;
   if (view.open) {
     const ta = h("textarea", {
-      class: "note-input",
+      class: "ps-input",
       id: "close-action",
       rows: "4",
       maxlength: String(NOTE_MAX),
       placeholder: "Например: сняли редуктор, ждём подшипник со склада",
+      "aria-label": "Что сделали по ремонту за смену и что осталось",
     });
     ta.value = closeActionDraft(view);
     ta.addEventListener("input", () => { ui.closeAction = { key: stopShiftKey(view), text: ta.value }; });
-    repairWorkField = [
-      h("label", { for: "close-action", text: "Что сделали по ремонту за смену и что осталось?" }),
-      ta,
-      h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    ];
+    repairWork = psCard("Что сделали по ремонту за смену и что осталось?", "увидит следующая смена", ta,
+      h("span", { class: "ps-field__hint", text: "Стан стоит, простой перейдёт следующей смене. Можно надиктовать — кнопка микрофона на клавиатуре." }));
   }
-  fill(main, backBtn("К проверке состояния стана", () => go("closeCheck")), question("Закрыть смену?"),
-    h("p", { class: "receipt", text: "Закрытие смены ещё не отправлено" }),
-    receipt.length ? h("p", { class: "receipt", text: receiptStatus(receipt) }) : null,
-    receipt.length && receiptStatus(receipt) === "Сохранено на планшете"
-      ? h("p", { class: "muted", text: "Запись уйдёт на сервер, когда появится связь." }) : null,
-    h("p", { text: view.open ? "Стан стоит. Простой перейдёт следующей смене, пуск отмечать не нужно. Напишите, что успели сделать по ремонту, — следующей смене будет проще."
-      : "Стан работает. Закроем смену с записанными итогами." }),
-    gaps.length ? h("div", { class: "handover-note" },
-      h("p", { text: `Без причины: ${gaps.filter((s) => s.missing.includes("причина")).length}. Без «что сделали»: ${gaps.filter((s) => s.missing.includes("что сделали")).length}. Без брака: ${gaps.filter((s) => s.missing.includes("брак")).length}. Дополните записи или закройте смену с пометкой.` }),
-      gaps.map((s) => h("button", { class: "btn", onclick: () => openDetail(s.downtimeId, s.index) },
-        `${fmtClock(s.startMs)} · дополнить: ${s.missing.join(", ")}`))) : h("p", { class: "muted", text: "У закрытых простоев заполнены причины, выполненные работы и необходимый брак." }),
-    trouble ? h("p", { class: "error-text", text: `Есть записи, которые сервер не принял: ${trouble}. Они останутся на планшете для исправления.` }) : null,
-    repairWorkField,
-    h("button", { class: "btn primary", disabled: !view.crew || view.closed, onclick: () => doCloseShift(gaps.length > 0 || trouble > 0) },
-      gaps.length || trouble ? "Закрыть смену с пометкой" : "Закрыть смену"));
+  const status = receipt.length ? receiptStatus(receipt) : null;
+  const { endMs } = view.shift;
+  fill(main, h("div", { class: "ps-flow" },
+    backBtn("К проверке состояния стана", () => go("closeCheck")),
+    screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Сдача смены"),
+    h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body" },
+        h("span", { text: "Закрытие смены ещё не отправлено" }),
+        status ? h("span", { class: "ps-notice__line", text: status }) : null,
+        status === "Сохранено на планшете" ? h("span", { class: "ps-notice__line", text: "Запись уйдёт на сервер, когда появится связь." }) : null)),
+    h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" }, psCard("Проверка перед сдачей", null, checks), repairWork),
+      h("div", { class: "ps-stack" },
+        psCard("Итоги смены", `до конца ${fmtDurMin((endMs - nowMs()) / 60000)}`, shiftKpis(view)),
+        h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", disabled: !view.crew || view.closed,
+          onclick: () => doCloseShift(gaps.length > 0 || trouble > 0) }, icon("clip", "ps-ico"), "Сдать смену"),
+        h("p", { class: "ps-field__hint", text: "Сдать можно и с незаполненным пунктом — следующая смена увидит его в списке." })))));
 }
 
 // Контракт: передача смены — только shift_close. Открытый простой не закрываем.
@@ -3102,18 +3313,25 @@ function renderClosed(main, view) {
   const info = ui.closedInfo;
   const list = records.filter((r) => info?.eventIds?.includes(r.event.id));
   const rejected = list.some((r) => r.status === "rejected");
-  fill(main, question(rejected ? "Закрытие смены нужно исправить" : "Смена закрыта"),
-    h("p", { class: "receipt", text: receiptStatus(list) }),
-    receiptStatus(list) === "Сохранено на планшете" ? h("p", { class: "muted", text: "Запись уйдёт на сервер, когда появится связь." }) : null,
-    info ? h("div", { class: "stats" },
-      h("div", { class: "stat good" }, "Работа", h("span", { class: "v", text: fmtDurMin(info.workMin) })),
-      h("div", { class: "stat bad" }, "Простои", h("span", { class: "v", text: `${info.stops} · ${fmtDurMin(info.downMin)}` }))) : null,
-    info?.note ? h("p", { class: "handover-note", text: info.note }) : null,
-    info?.action ? h("div", { class: "card" },
-      h("div", { class: "card-title", text: "Передали по ремонту" }),
-      h("div", { class: "card-note", text: `«${info.action}»` })) : null,
-    info?.open ? h("p", { class: "muted", text: "Следующий работник примет смену со стоящим станом. Простой продолжается." }) : null,
-    h("button", { class: "btn primary", onclick: () => { ui.crewId = null; ui.crewBack = false; go("crew"); } }, "Принять смену"));
+  const status = receiptStatus(list);
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    question(rejected ? "Закрытие смены нужно исправить" : "Смена закрыта"),
+    h("div", { class: "ps-notice", "data-tone": rejected ? "stop" : status === "Принято сервером" ? "ok" : "info" }, icon(rejected ? "alert" : "tick", "ps-ico"),
+      h("span", { class: "ps-notice__body" },
+        h("span", { text: status }),
+        status === "Сохранено на планшете" ? h("span", { class: "ps-notice__line", text: "Запись уйдёт на сервер, когда появится связь." }) : null)),
+    info ? h("div", { class: "ps-kpis" },
+      h("div", { class: "ps-kpi", "data-kind": "work", "data-zero": info.workMin ? null : "" },
+        h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "work", "aria-hidden": "true" }), "Работа"),
+        h("span", { class: "ps-kpi__value", text: fmtHM(info.workMin) })),
+      h("div", { class: "ps-kpi", "data-kind": "down", "data-zero": info.downMin ? null : "" },
+        h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "unplanned", "aria-hidden": "true" }), `Простои · ${info.stops}`),
+        h("span", { class: "ps-kpi__value", text: fmtHM(info.downMin) }))) : null,
+    info?.note ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: info.note })) : null,
+    info?.action ? psCard("Передали по ремонту", "", h("div", { class: "ps-notice", "data-tone": "info" }, icon("wrench", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: `«${info.action}»` }))) : null,
+    info?.open ? h("p", { class: "ps-field__hint", text: "Следующий работник примет смену со стоящим станом. Простой продолжается." }) : null,
+    h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => { ui.crewId = null; ui.crewBack = false; go("crew"); } }, "Принять смену")));
 }
 
 // Отклонённое событие хранится целиком, пока исправление не примет сервер.
@@ -3241,6 +3459,10 @@ function tick() {
   for (const el of document.querySelectorAll("[data-msk]")) el.textContent = fmtClock(now) + " МСК";
   for (const el of document.querySelectorAll("[data-until]")) el.textContent = fmtDurMin((Number(el.dataset.until) - now) / 60000);
   for (const el of document.querySelectorAll(".board-clock")) el.textContent = fmtClock(now);
+  for (const el of document.querySelectorAll(".ps-progress__fill[data-from]")) {
+    const from = Number(el.dataset.from);
+    el.style.width = `${Math.max(0, Math.min(100, ((now - from) / (Number(el.dataset.to) - from)) * 100)).toFixed(1)}%`;
+  }
   for (const el of document.querySelectorAll("[data-since]")) {
     const since = Number(el.dataset.since);
     el.textContent = el.dataset.fmt === "durs" ? fmtDurSec((now - since) / 1000)
