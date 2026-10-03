@@ -268,9 +268,6 @@ input {
   font-weight: 800;
   text-align: center;
 }
-.earlier { margin-top: 12px; }
-.earlier .hint { margin-top: 4px; }
-.earlier-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 
 /* Сводка итога смены */
 .stats {
@@ -405,9 +402,6 @@ input {
 
 /* Смена и действия главного экрана оформлены рядом с пультом ниже. */
 button.pill { cursor: pointer; font: inherit; font-weight: 700; }
-.tiles.one { grid-template-columns: 1fr; }
-a.tile { text-decoration: none; color: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.tile-off { opacity: 0.6; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .action-help { display: block; color: var(--text-soft); font-weight: 400; }
 .handover-note { padding: 16px 0; border-block: 1px solid var(--border-note); color: var(--text); }
 .receipt { font-weight: 700; }
@@ -478,14 +472,6 @@ label { display: block; margin-top: 20px; }
 .reason-zone-plan { --reason-zone-color: var(--rz-plan); }
 .reason-zone-unplanned { --reason-zone-color: var(--rz-unplanned); }
 .reason-zone-failure { --reason-zone-color: var(--rz-failure); }
-.tiles.reason-groups { grid-template-columns: 1fr; }
-.tile.reason-group { display: flex; flex-direction: column; align-items: flex-start;
-  justify-content: center; gap: 8px; min-height: 112px; text-align: left;
-  border-left: 10px solid var(--reason-zone-color); padding: 18px 20px; }
-.tiles.reason-items .tile.reason-group { min-height: 80px; padding: 14px 20px; }
-.reason-group-title { font-weight: 800; }
-.reason-group-subtitle { font-size: 0.75em; font-weight: 400; line-height: 1.4; color: var(--text-sub); }
-.btn.reason-later { min-height: 48px; padding: 10px 16px; font-size: 0.85em; margin-top: 12px; }
 .reason-zone-mark { display: inline-block; flex: 0 0 14px; width: 14px; height: 14px;
   border: 1px solid var(--mark-border); border-radius: 3px; margin-right: 8px;
   vertical-align: -1px; background: var(--reason-zone-color); }

@@ -747,7 +747,8 @@ function h(tag, attrs, ...kids) {
 }
 
 // Единые контурные иконки: SVG строится через DOM, без inline-кода и стилей.
-function icon(name) {
+// cls — "ico" (прежние экраны) или "ps-ico" (дизайн-система, обводка 2 px)
+function icon(name, cls = "ico") {
   const paths = {
     pulse: "M2 12h5l3-8 4 16 3-8h5",
     clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2",
@@ -762,9 +763,15 @@ function icon(name) {
     stopSq: "M7 7h10v10H7z",
     play: "M8 5.5v13l10.5-6.5z",
     calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
+    cobble: "M2 15c2.5 0 2.5-6 5-6s2.5 6 5 6 2.5-6 5-6 2.5 6 5 6",
+    wrench: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+    phone: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
+    tick: "M20 6 9 17l-5-5",
+    alert: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7.5v5.5M12 16.5h.01",
+    wifioff: "M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5-2.7M19 12.9a10 10 0 0 0-2.3-1.7M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8a15 15 0 0 0-11.3-3.7M12 20h.01",
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "ico");
+  svg.setAttribute("class", cls);
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(svg.namespaceURI, "path");
@@ -1184,21 +1191,31 @@ const DEFAULT_CONTACTS = [
 function renderContact(main, view) {
   // Первая плитка звонит мастеру, который принял смену, — по телефону из раздела «Администратор»
   const master = view.crew && (refs.people || []).find((p) => p.id === view.crew.personId);
-  const masterTile = { title: master ? `Мастер смены · ${master.name}` : "Мастер смены", tel: (master && master.phone) || "" };
-  const list = [masterTile, ...((refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS.slice(1))];
+  const masterTile = master ? { role: "Мастер смены", name: master.name, tel: master.phone || "" } : { name: "Мастер смены", tel: "" };
+  const list = [masterTile, ...((refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS.slice(1)).map((c) => ({ name: c.title, tel: c.tel }))];
   const back = ui.contactBack && ui.contactBack !== "contact" ? ui.contactBack : "auto";
   const status = online && !queue.length ? "Связь с сервером есть, нажатия доходят."
     : online ? `Отправляются нажатия: ${queue.length}.`
     : `Нет связи с сервером. Нажатия сохранены на планшете${queue.length ? ` (${queue.length})` : ""} и уйдут сами, когда связь появится.`;
-  fill(main,
+  const statusTone = online && !queue.length ? "ok" : "warn";
+  // Карточка звонка: мастер — «роль + имя», остальные — название из настроек. Номера нет — серая, без звонка
+  const card = (c) => {
+    const inside = [
+      h("span", { class: "ps-contact__icon" }, icon("phone", "ps-ico")),
+      h("span", { class: "ps-contact__text" },
+        c.role ? h("span", { class: "ps-contact__role", text: c.role }) : null,
+        h("span", { class: "ps-contact__name", text: c.name }),
+        h("span", { class: "ps-contact__phone", text: c.tel || "номер не задан" })),
+    ];
+    return c.tel
+      ? h("a", { class: "ps-contact", href: `tel:${c.tel.replace(/[^\d+]/g, "")}`, "aria-label": `Позвонить: ${c.role ? c.role + ", " : ""}${c.name}, ${c.tel}` }, ...inside)
+      : h("div", { class: "ps-contact", "aria-disabled": "true" }, ...inside);
+  };
+  fill(main, h("div", { class: "ps-flow" },
     backBtn("Вернуться", () => go(back)),
     question("Связаться"),
-    h("p", { class: "muted", text: status }),
-    h("div", { class: "tiles one" },
-      list.map((c) => c.tel
-        ? h("a", { class: "tile", href: `tel:${c.tel.replace(/[^\d+]/g, "")}` }, c.title, h("span", { class: "t-code", text: c.tel }))
-        : h("div", { class: "tile tile-off" }, c.title, h("span", { class: "t-code", text: "номер не задан" }))))
-  );
+    h("div", { class: "ps-notice", "data-tone": statusTone, role: "status" }, icon(statusTone === "ok" ? "tick" : online ? "alert" : "wifioff", "ps-ico"), h("span", { text: status })),
+    h("div", { class: "ps-contacts" }, list.map(card))));
 }
 
 // --- Раздел «Администратор»: время смен, мастера с телефонами, номера для «Связаться» ---
@@ -1759,16 +1776,21 @@ import("./report-ui.js").then((m) => {
 
 // Пульт стана (дизайн-система, вариант A): панель состояния с таймером и одна кнопка —
 // единственное действие, доступное сейчас. Стан работает — «Стан встал», стоит — «Стан пошёл»
-function millPanel({ running, since, subtitle, hint, onGo, onStop }) {
+function statePanel({ running, since, subtitle, compact = false, withReport = false }) {
   const start = Number.isFinite(since) ? since : nowMs();
+  return h("section", { class: "ps-state" + (compact ? " ps-state--compact" : ""), "data-state": running ? "run" : "stop", "aria-live": "polite" },
+    h("div", { class: "pult-state__top" },
+      h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
+      withReport ? reportMenu() : null),
+    h(compact ? "h2" : "h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
+    h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
+    subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null);
+}
+// below — блок между панелью и кнопкой (плитки причин, пока стан стоит)
+function millPanel({ running, since, subtitle, hint, onGo, onStop, below = null }) {
   return h("div", { class: "pult" },
-    h("section", { class: "ps-state", "data-state": running ? "run" : "stop", "aria-live": "polite" },
-      h("div", { class: "pult-state__top" },
-        h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
-        reportMenu()),
-      h("h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
-      h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
-      subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null),
+    statePanel({ running, since, subtitle, withReport: true }),
+    below,
     h("button", { class: "ps-action ps-action--" + (running ? "stop" : "run"), type: "button", "data-act": running ? "stop" : "run",
       onclick: running ? onStop : onGo },
       h("span", { class: "ps-action__icon" }, icon(running ? "stopSq" : "play")),
@@ -1989,11 +2011,21 @@ function renderStop(main, view) {
   const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
   const cur = open.reason;
 
+  // Причины ещё нет — плитки сразу под панелью состояния; нажатие открывает тот же мастер на втором шаге
+  const pick = cur ? null : h("section", { class: "ps-pick", "aria-label": "Причина остановки" },
+    h("div", { class: "ps-overline", text: "Почему стоит?" }),
+    reasonGroups(() => {
+      if (!(ui.wz && ui.wz.mode === "current" && ui.wz.downtimeId === open.downtimeId)) {
+        ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
+      }
+      return ui.wz;
+    }, (single) => { ui.wz.step = single ? 3 : 2; go("reason"); }));
   const left = h("div", null,
     millPanel({
       running: false,
       since,
       subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
+      below: pick,
       hint: "Время пуска поставит система",
       onGo: () => {
         if (reusableRestart(ui.rw, view, nowMs()) && !ui.rw.thenClose) {
@@ -2016,18 +2048,7 @@ function renderStop(main, view) {
       h("button", { class: "btn", onclick: () => go("confirmChange") }, "Изменить")
     );
   } else {
-    card = h("div", null,
-      h("div", { class: "card none" },
-        h("div", { class: "card-title", text: "Причина не указана" })
-      ),
-      h("button", {
-        class: "btn warn-btn",
-        onclick: () => {
-          ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
-          go("reason");
-        },
-      }, "Указать причину")
-    );
+    card = null;
   }
 
   fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
@@ -2267,31 +2288,41 @@ function chooseReasonItem(draft, tile, item) {
   }
   ui.focusNote = true;
 }
+// Иконка плитки: плановая — календарь, бурёжка — волна, поломка — ключ
+const REASON_ICON = { plan: "calendar", unplanned: "cobble", failure: "wrench" };
 // Плитка → next(true), если пункт выбран сразу (он один); иначе next(false) — нужен шаг «Что именно?»
+// draft — черновик мастера или функция, которая даёт его в момент нажатия (на пульте черновика ещё нет)
 function reasonGroups(draft, next) {
-  return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
-    h("button", { class: "tile reason-group reason-zone-" + tile.zone,
-      onclick: () => {
-        draft.group = tile.id;
-        draft.unknown = false;
-        const items = reasonItems(tile);
-        const single = items.length === 1;
-        if (single) chooseReasonItem(draft, tile, items[0]);
-        next(single);
-      } },
-    h("span", { class: "reason-group-title", text: tile.title }),
-    h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
+  const current = typeof draft === "function" ? draft : () => draft;
+  const shown = typeof draft === "function" ? null : draft;
+  return h("div", { class: "ps-reasons-box" },
+    h("div", { class: "ps-reasons", role: "group", "aria-label": "Причина остановки" }, (refs.tiles || []).map((tile) =>
+      h("button", { type: "button", class: "ps-reason", "data-zone": tile.zone, "aria-pressed": String(!!shown && shown.group === tile.id),
+        onclick: () => {
+          const d = current();
+          d.group = tile.id;
+          d.unknown = false;
+          const items = reasonItems(tile);
+          const single = items.length === 1;
+          if (single) chooseReasonItem(d, tile, items[0]);
+          next(single);
+        } },
+      h("span", { class: "ps-reason__icon" }, icon(REASON_ICON[tile.zone] || "wrench", "ps-ico")),
+      h("span", { class: "ps-reason__title", text: tile.title }),
+      h("span", { class: "ps-reason__sub", text: tile.subtitle })))));
 }
-// Шаг «Что именно?»: пункты плитки, полоска и подпись — по зоне пункта
+// Шаг «Что именно?»: пункты плитки чипами, квадрат и подпись — по зоне пункта
 const ITEM_ZONE_LABEL = { plan: "плановый простой", unplanned: "внеплановый простой", failure: "аварийный простой" };
 function reasonChoices(draft, next) {
   const tile = (refs.tiles || []).find((item) => item.id === draft.group);
-  return h("div", { class: "tiles reason-groups reason-items" }, reasonItems(tile).map((item) => {
+  return h("div", { class: "ps-chips ps-chips--items", role: "group", "aria-label": "Что именно" }, reasonItems(tile).map((item) => {
     const zone = zoneOf(core.reasonKey(item.code), refs);
-    return h("button", { class: "tile reason-group reason-zone-" + zone,
+    return h("button", { type: "button", class: "ps-chip ps-chip--item", "aria-pressed": String(draft.itemKey === reasonItemKey(tile, item)),
       onclick: () => { chooseReasonItem(draft, tile, item); next(); } },
-    h("span", { class: "reason-group-title", text: item.label }),
-    h("span", { class: "reason-group-subtitle", text: ITEM_ZONE_LABEL[zone] || "" }));
+    h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }),
+    h("span", { class: "ps-chip__text" },
+      h("span", { class: "ps-chip__label", text: item.label }),
+      h("span", { class: "ps-chip__zone", text: ITEM_ZONE_LABEL[zone] || "" })));
   }));
 }
 function focusReasonNote(ta) {
@@ -2329,8 +2360,12 @@ function renderReasonWizard(main, view) {
   if (wz.step === 2 && !(refs.tiles || []).some((t) => t.id === wz.group)) wz.step = 1;
 
   if (wz.step === 1) {
-    fill(main,
+    // Пока стан стоит, плитки идут сразу под панелью состояния
+    const stopped = ["current", "refix", "split"].includes(wz.mode) && view.open;
+    fill(main, h("div", { class: "ps-flow" },
       backBtn(...back1),
+      stopped ? statePanel({ running: false, since: view.open.since ?? view.open.startMs,
+        subtitle: `Стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}`, compact: true }) : null,
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
       reasonGroups(wz, (single) => {
@@ -2338,31 +2373,33 @@ function renderReasonWizard(main, view) {
         wz.step = single ? 3 : 2; render();
       }),
       !restarting && wz.mode === "past" ? h("button", {
-        class: "btn btn-flat reason-later",
+        type: "button",
+        class: "ps-btn ps-btn--ghost ps-btn--block",
         onclick: () => {
           if (wz.mode === "past") go("recorded");
           else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
         },
       }, "Укажу позже") : null
-    );
+    ));
     return;
   }
 
   if (wz.step === 2) {
-    fill(main,
+    fill(main, h("div", { class: "ps-flow" },
       backBtn("К выбору причины", () => { wz.step = 1; render(); }),
       stepLine(2 + offset, total),
       question("Что именно?"),
       reasonChoices(wz, () => {
         if (restarting) return finishReasonWizard(wz.note || "");
         wz.step = 3; render();
-      }));
+      })));
     return;
   }
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
-    class: "note-input",
+    class: "ps-input",
+    id: "wz-note",
     rows: "4",
     maxlength: String(NOTE_MAX),
     placeholder: noteHint(wz.reason),
@@ -2370,7 +2407,7 @@ function renderReasonWizard(main, view) {
   });
   ta.value = wz.note || "";
   const must = needsNote(wz.reason);
-  const needText = h("p", { class: "error-text", text: "Напишите, что случилось" });
+  const needText = h("p", { class: "ps-field__error", text: "Напишите, что случилось" });
   // Красная строка — только после попытки пройти дальше с пустым полем
   let tried = false;
   const upd = () => { needText.hidden = !must || !tried || validAction(ta.value); };
@@ -2380,18 +2417,23 @@ function renderReasonWizard(main, view) {
     if (must && !validAction(ta.value)) { tried = true; upd(); ta.focus(); return; }
     finishReasonWizard(withNote ? ta.value : "");
   };
-  fill(main,
+  fill(main, h("div", { class: "ps-flow" },
     backBtn(reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? "К выбору пункта" : "К выбору причины",
       () => { wz.step = reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? 2 : 1; render(); }),
     stepLine(tileMulti(wz) ? 3 : 2, tileMulti(wz) ? 3 : 2),
     question(must ? "Что случилось? Опишите своими словами" : "Расскажите своими словами"),
-    h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
-    ta,
-    must ? needText : null,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    h("button", { class: "btn primary", onclick: () => done(true) }, restarting ? "Далее" : "Сохранить"),
-    must ? null : h("button", { class: "btn", onclick: () => done(false) }, "Без описания")
-  );
+    h("div", { class: "ps-picked" },
+      h("span", { class: "ps-swatch", "data-zone": zoneOf(core.reasonKey(wz.reason), refs), "aria-hidden": "true" }),
+      h("span", { text: reasonLabel(wz.reason) })),
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "wz-note", text: must ? "Что случилось" : "Что случилось (по желанию)" }),
+      ta,
+      must ? needText : null,
+      h("span", { class: "ps-field__hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" })),
+    h("div", { class: "ps-actions" },
+      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => done(true) }, restarting ? "Далее" : "Сохранить"),
+      must ? null : h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => done(false) }, "Без описания"))
+  ));
   focusReasonNote(ta);
 }
 
@@ -2455,54 +2497,119 @@ function actionText(value) {
   return validAction(text) ? text : "";
 }
 
+// Быстрые варианты «что сделали» — из подсказки справочника к причине: «Например: заменили ножи, подтянули муфту»
+function quickActions(code) {
+  const hint = reasonRef(code) && reasonRef(code).actionHint;
+  if (!hint) return [];
+  return hint.replace(/^[^:]*:\s*/, "").split(",").map((t) => t.trim()).filter((t) => t.length >= 3)
+    .map((t) => t.charAt(0).toUpperCase() + t.slice(1)).slice(0, 4);
+}
+const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+// Брак чипами; другое значение вводится в поле (текст с запятой, 0–1000)
+const BILLET_CHIPS = ["0", "0,5", "1", "1,5", "2"];
+const sameTons = (a, b) => {
+  const x = String(a ?? "").trim().replace(",", ".");
+  return x !== "" && Number(x) === Number(b.replace(",", "."));
+};
+
 function renderRestartAction(main, view) {
   const rw = ui.rw;
   if (!restartMatches(view, rw)) return renderStaleRestart(main);
+  const reasonNow = rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open.reason;
   const ta = h("textarea", {
-    class: "note-input",
-    rows: "4",
+    class: "ps-input",
+    id: "restart-action",
+    rows: "3",
     maxlength: String(NOTE_MAX),
-    placeholder: actionHint(rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open.reason),
+    placeholder: actionHint(reasonNow),
     "aria-label": "Что сделали, чтобы запустить стан",
   });
   ta.value = rw.action ?? view.open.action ?? "";
+  // «Заполню потом» — тот же пуск без текста «что сделали»; мастер увидит простой с пометкой
+  const later = h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg" }, "Заполню потом");
+  // Быстрые варианты дописывают фразу в поле; повторное нажатие убирает её
+  const quick = quickActions(reasonNow);
+  const quickChips = quick.map((text) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
+    onclick: () => {
+      const cur = ta.value;
+      const hit = [text, lowerFirst(text)].find((v) => cur.includes(v));
+      if (hit) {
+        const rest = cur.replace(hit, "").replace(/\s*,\s*,/g, ",").replace(/^[\s,;.]+|[\s,;]+$/g, "").replace(/\s{2,}/g, " ");
+        ta.value = rest.charAt(0).toUpperCase() + rest.slice(1);
+      } else {
+        ta.value = cur.trim() ? cur.trim().replace(/[.,;]+$/, "") + ", " + lowerFirst(text) : text;
+      }
+      syncAction();
+    } }, text));
+  const syncAction = () => {
+    rw.action = ta.value;
+    quickChips.forEach((chip, i) => chip.setAttribute("aria-pressed", String([quick[i], lowerFirst(quick[i])].some((v) => ta.value.includes(v)))));
+    later.hidden = !!ta.value.trim();
+  };
+  ta.addEventListener("input", syncAction);
   // После бурёжки и аварии — обязательно, сколько заготовки испорчено (владелец, 01.10.2026)
   const needBillet = restartNeedsBillet(rw, view);
   // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
-  const billet = needBillet ? h("input", { id: "restart-billet", type: "text", maxlength: "8",
-    inputmode: "decimal", autocomplete: "off", placeholder: "Тонны, 0 — если брака нет", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
-  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
+  const billet = needBillet ? h("input", { id: "restart-billet", class: "ps-input", type: "text", maxlength: "8",
+    inputmode: "decimal", autocomplete: "off", placeholder: "Своё значение, тонн", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
+  const billetError = needBillet ? h("p", { class: "ps-field__error", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
+  let billetBox = null;
   if (needBillet) {
     billet.value = rw.billet ?? "";
     billetError.hidden = true;
+    let other = String(rw.billet ?? "").trim() !== "" && !BILLET_CHIPS.some((v) => sameTons(rw.billet, v));
+    const otherChip = h("button", { type: "button", class: "ps-chip", "aria-pressed": "false" }, "Другое");
+    const billetChips = BILLET_CHIPS.map((v) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
+      onclick: () => { other = false; billet.value = ""; rw.billet = v; billetError.hidden = true; syncBillet(); } }, v));
+    const syncBillet = () => {
+      billetChips.forEach((chip, i) => chip.setAttribute("aria-pressed", String(!other && sameTons(rw.billet, BILLET_CHIPS[i]))));
+      otherChip.setAttribute("aria-pressed", String(other));
+      billet.hidden = !other;
+    };
+    otherChip.addEventListener("click", () => { other = true; rw.billet = billet.value; billetError.hidden = true; syncBillet(); billet.focus(); });
     billet.addEventListener("input", () => { rw.billet = billet.value; billetError.hidden = true; });
+    syncBillet();
+    billetBox = h("div", { class: "ps-field", role: "group", "aria-labelledby": "restart-billet-label" },
+      h("span", { class: "ps-field__label", id: "restart-billet-label", text: "Сколько заготовки испорчено, тн" }),
+      h("div", { class: "ps-chips" }, billetChips, otherChip),
+      billet, billetError,
+      h("span", { class: "ps-field__hint", text: "Если брака нет — 0" }));
   }
-  const submit = h("button", { class: "btn primary", onclick: () => {
-    if (needBillet && !validBillet(billet.value)) { billetError.hidden = false; billet.focus(); return; }
-    finishRestart(ta.value);
-  } }, "Сохранить пуск");
-  ta.addEventListener("input", () => { rw.action = ta.value; });
+  const save = (rawAction) => {
+    if (needBillet && !validBillet(rw.billet)) {
+      billetError.hidden = false; if (!billet.hidden) billet.focus(); return;
+    }
+    finishRestart(rawAction);
+  };
+  const submit = h("button", { type: "button", class: "ps-btn ps-btn--run ps-btn--lg", onclick: () => save(ta.value) }, "Сохранить пуск");
+  later.addEventListener("click", () => save(""));
+  syncAction();
   const total = (rw.route === "reason" && ui.wz && tileMulti(ui.wz) ? 3 : 2) + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
-  fill(main,
+  fill(main, h("div", { class: "ps-flow" },
     backBtn(rw.route === "reason" ? (tileMulti(ui.wz) ? "К выбору пункта" : "К выбору причины") : "К причине", () => {
       if (rw.route === "reason") { ui.wz.step = tileMulti(ui.wz) ? 2 : 1; go("reason"); }
       else go("restartConfirm");
     }),
     stepLine(total, total),
-    question("Что сделали, чтобы запустить стан?"),
-    h("p", { class: "muted", text: `Время пуска: ${fmtSince(rw.startMs, view.shift)} МСК${rw.thenClose ? "" : " — по первому нажатию"}` }),
-    earlier.length ? h("div", { class: "earlier" },
-      h("p", { class: "hint", text: "Раньше по этому простою:" }),
-      earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
-    ta,
-    h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, тн" }) : null,
-    billet,
-    billetError,
-    submit
-  );
+    h("section", { class: "ps-card ps-restart", "aria-label": "Что сделали" },
+      h("div", null,
+        question("Что сделали, чтобы запустить стан?"),
+        h("p", { class: "ps-field__hint", text: `Время пуска: ${fmtSince(rw.startMs, view.shift)} МСК${rw.thenClose ? "" : " — по первому нажатию"}` })),
+      earlier.length ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+        h("div", { class: "ps-notice__body" },
+          h("span", { text: "Раньше по этому простою:" }),
+          earlier.map((text) => h("span", { class: "ps-notice__line", text: `«${text}»` })))) : null,
+      h("div", { class: "ps-field", role: "group", "aria-labelledby": "restart-action-label" },
+        h("span", { class: "ps-field__label", id: "restart-action-label", text: "Что сделали" }),
+        quickChips.length ? h("div", { class: "ps-chips" }, quickChips) : null,
+        ta,
+        h("span", { class: "ps-field__hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" })),
+      billetBox,
+      h("div", { class: "ps-actions" }, submit, later),
+      h("p", { class: "ps-field__hint", text: "Не заполните сейчас — мастер увидит простой с пометкой «не указано, что сделали»." }))
+  ));
 }
 // Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
 function reasonNeedsBillet(reason) {
@@ -3161,7 +3268,7 @@ window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer
 window.addEventListener("online", () => { flush(); loadState(); });
 document.addEventListener("click", (event) => {
   if (taps.blocked()) { event.preventDefault(); event.stopImmediatePropagation(); return; }
-  const button = event.target.closest?.("button.primary, button.mill-btn, button.tile");
+  const button = event.target.closest?.("button.primary, button.mill-btn, button.tile, button.ps-reason, button.ps-btn--primary, button.ps-btn--run");
   if (button && !button.disabled) {
     button.disabled = true;
     setTimeout(() => { if (button.isConnected) button.disabled = false; }, 400);

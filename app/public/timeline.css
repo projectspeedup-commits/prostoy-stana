@@ -516,7 +516,7 @@
 .rejects-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rejects-heading .btn { width: auto; font-size: 15px; margin: 0; }
 .saved-answers p { margin: 4px 0; }
-.saved-answers, .transfer, .card-note, .card-line, .handover-note, h2, .action-help, .seg, .earlier-text { overflow-wrap: anywhere; }
+.saved-answers, .transfer, .card-note, .card-line, .handover-note, h2, .action-help, .seg { overflow-wrap: anywhere; }
 .note-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .handover-preview[open] .note-preview { -webkit-line-clamp: 1; }
 .handover-preview summary { cursor: pointer; }
@@ -531,7 +531,6 @@
 .save-status.waiting::before { background: #bd7600; box-shadow: none; }
 .save-status.offline::before { background: #cf222e; box-shadow: none; }
 .topbar .pill, .theme-toggle { min-width: 44px; min-height: 44px; box-sizing: border-box; }
-.tile-off { opacity: 1; color: var(--text-muted); }
 .ds-legend__item--zero { opacity: 1; }
 .toast { pointer-events: none; }
 .toast.warning { color: var(--text); background: var(--bg); border: 2px solid var(--text-attn); }

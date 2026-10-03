@@ -305,7 +305,8 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   })()`);
   assert.ok((await contrast('.ds-legend__item--zero')).every(c=>c>=4.5));
   await evaluate(`document.querySelector('#conn').click()`);
-  assert.ok((await contrast('.tile-off')).every(c=>c>=4.5));
+  assert.ok((await contrast('.ps-contact[aria-disabled="true"] .ps-contact__phone')).every(c=>c>=4.5));
+  assert.ok((await contrast('.ps-contact[aria-disabled="true"] .ps-contact__name')).every(c=>c>=4.5));
   await evaluate(`document.querySelector('#demo').click()`);
   await send('Emulation.setDeviceMetricsOverride',{width:1366,height:768,deviceScaleFactor:1,mobile:false}); await sleep(200);
   assert.ok(await evaluate(`[...document.querySelectorAll('.ds-row__label')].filter(x=>x.textContent).every(x=>getComputedStyle(x).overflow==='visible' && x.getBoundingClientRect().height>=parseFloat(getComputedStyle(x).lineHeight))`));
