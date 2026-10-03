@@ -104,7 +104,8 @@ test("письмо: цифры совпадают с computeStats, есть пр
     assert.ok(body.includes("убрали раскат"), "что сделали");
     assert.ok(body.includes("застряла заготовка"), "что случилось");
     assert.ok(body.includes("Иванов Иван Иванович"), "мастер");
-    assert.ok(body.includes("https://stan.example.test/"), "ссылка");
+    assert.ok(!body.includes("https://stan.example.test/") && !body.includes("Открыть пульт") && !body.includes("Пульт:"), "без ссылки на пульт");
+    assert.ok(!body.includes("Во вложении"), "без строки о вложении");
   }
   assert.equal(s.byCrew.length > 0, true);
   assert.match(d.html, /<table/);
@@ -125,7 +126,7 @@ test("письмо: ночная смена с идущим простоем, т
   assert.ok(d.html.includes("ждём &lt;запчасть&gt;"));
   assert.match(d.text, /Мастер: Петров Пётр Петрович/);
   assert.match(d.text, /ещё идёт/);
-  assert.ok(d.text.includes("https://stan.tmpz-engineering.ru/"), "ссылка по умолчанию");
+  assert.ok(!d.text.includes("https://stan.tmpz-engineering.ru/") && !d.html.includes("Открыть пульт"), "ссылки на пульт в письме нет");
 });
 
 test("письмо: вложение — настоящий Excel-отчёт только за эту смену", () => {

@@ -120,9 +120,6 @@ export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "h
     ...(masterNames.length ? [["Мастер", masterNames.join(", ")]] : []),
     ...(crews.length ? [["Бригада", crews.join(", ")]] : []),
   ];
-  const attachNote = isShift
-    ? `Во вложении — Excel-отчёт только за эту смену (${kind} ${dateText}).`
-    : `Во вложении — Excel-отчёт за ${period.kind === "day" ? "сутки" : "период"} ${dateText}.`;
   const hiddenNote = hidden > 0 ? `Показаны первые ${MAX_STOP_ROWS} простоев, ещё ${hidden} — в Excel.` : "";
 
   // ---- текст
@@ -144,7 +141,6 @@ export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "h
     });
     if (hiddenNote) lines.push(hiddenNote);
   } else lines.push("простоев не было");
-  lines.push("", `Пульт: ${publicUrl}`, attachNote);
   const text = lines.join("\n");
 
   // ---- HTML (inline-стили, одна колонка до 640 px: читается в почте Яндекса и на телефоне)
@@ -176,8 +172,6 @@ export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "h
     + `<h2 style="${h2}">Главные причины</h2>${reasonsHtml}`
     + (byShift.length ? `<h2 style="${h2}">По сменам</h2>${byShiftHtml}` : "")
     + `<h2 style="${h2}">${isShift ? "Простои смены" : "Простои"}</h2>${stopsHtml}${hiddenNote ? `<p style="margin:0;font-size:13px;color:#5b6573;">${esc(hiddenNote)}</p>` : ""}`
-    + `<p style="margin:20px 0 0;font-size:15px;"><a href="${esc(publicUrl)}" style="color:#1d4ed8;">Открыть пульт</a></p>`
-    + `<p style="margin:8px 0 0;font-size:13px;color:#5b6573;">${esc(attachNote)}</p>`
     + `</div></body></html>`;
 
   return {
