@@ -152,6 +152,15 @@ body { padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
 @media (max-width: 599px) { .appnav { gap: 0; padding-inline: 0; } .appnav .pill { padding-inline: 0; letter-spacing: -0.01em; } }
 /* 320 px: шесть пунктов с подписью 13 px и зоной не меньше 44 px вместе дают 324 px — подпись чуть плотнее, без обрезки */
 @media (max-width: 359.98px) { .appnav .pill .pill-text { letter-spacing: -0.04em; } }
+/* Узкая панель (320 px с полосой прокрутки даёт ~305 px на шесть пунктов): значки по 44 px, подпись — только у текущего раздела.
+   Остальные подписи остаются в aria-label и title, зона нажатия не меньше 44 px, шрифт 13 px */
+@media (max-width: 599px) {
+  .appnav { container-type: inline-size; }
+  @container (max-width: 318px) {
+    .appnav .pill:not([aria-current="page"]) { flex: 0 0 44px; }
+    .appnav .pill:not([aria-current="page"]) .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+}
 
 /* ---------- Экраны рабочего: мастер причины, «что сделали», связь ----------
    Компоненты ps-* перенесены из bundle.css дизайн-системы; только токены из tokens.css. */
@@ -458,7 +467,11 @@ main:has(.ps-flow--chat) { max-width: 880px; }
 /* Телефон: четыре раздела — две строки по два, без внутренней прокрутки */
 @media (max-width: 599px) {
   .ps-subnav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); overflow: visible; padding-bottom: 0; }
-  .ps-subnav__item { flex: initial; min-width: 0; width: 100%; padding: 0 var(--space-3); white-space: normal; }
+  .ps-subnav__item { flex: initial; min-width: 0; width: 100%; padding: 0 var(--space-3); white-space: normal; overflow-wrap: anywhere; }
+}
+/* 320 px с полосой прокрутки: подпись «Номера «Связаться»» не должна выходить за кнопку */
+@media (max-width: 359.98px) {
+  .ps-subnav__item { gap: var(--space-1); padding: var(--space-1) var(--space-2); line-height: 18px; }
 }
 @media (min-width: 1024px) {
   .ps-subnav { display: grid; gap: 2px; align-content: start; position: sticky; top: 80px; overflow: visible; }
@@ -596,7 +609,8 @@ main:has(.ps-flow--chat) { max-width: 880px; }
   .ps-reason__icon { width: 36px; height: 36px; }
   .ps-reason__icon svg { width: 20px; height: 20px; }
   .ps-reason__title { font-size: 18px; line-height: 22px; }
-  .ps-reason__sub { grid-column: 1 / -1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; line-height: 17px; }
+  /* Пояснение показываем целиком: обрезка до двух строк убирала окончания фраз */
+  .ps-reason__sub { grid-column: 1 / -1; font-size: 13px; line-height: 17px; }
   /* Узкая колонка (планшет 1024 px): три плитки в ряд, значок над названием, пояснение скрыто — слова не рвутся */
   @container (max-width: 599px) {
     .ps-reasons { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }

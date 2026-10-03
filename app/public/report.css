@@ -20,6 +20,12 @@
   box-shadow: var(--shadow-toast);
   color: var(--text); font-size: 15px; font-weight: 400; line-height: 1.35; text-align: left; white-space: normal; }
 .rep-panel:focus { outline: none; }
+/* Телефон: панель закреплена в окне с отступами от краёв, кнопка «Скачать» достижима внутренней прокруткой.
+   Высоту при открытии и при изменении размера окна пересчитывает report-ui.js (--rep-room) */
+@media (max-width: 599px) {
+  .rep-panel { position: fixed; top: 8px; right: 8px; bottom: auto; left: 8px; width: auto; min-width: 0; max-width: none;
+    max-height: calc(100dvh - 16px); }
+}
 .rep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
 .rep-title { margin: 0; font-size: 19px; font-weight: 800; line-height: 1.25; }
 .rep-close { display: grid; place-items: center; flex: 0 0 auto; width: 48px; height: 48px; margin: -4px -6px -4px 0; padding: 0;
