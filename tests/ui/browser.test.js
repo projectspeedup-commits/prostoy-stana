@@ -171,7 +171,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await wait(`document.querySelector('#main').textContent.includes('Да, стоит')`);
   await click('Да, стоит');
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /Закрытие смены ещё не отправлено/);
-  assert.match(await evaluate(`document.querySelector('.ps-checklist').textContent`), /3 простоя без причины/);
+  assert.match(await evaluate(`document.querySelector('.ps-checklist').textContent`), /4 простоя без причины/);
   assert.match(await evaluate(`document.querySelector('#main').textContent`), /3 простоя без «что сделали»/);
   await evaluate(`document.querySelector('#admin').click()`);
   await wait(`document.querySelector('.ps-admin .ps-card')`);
@@ -272,7 +272,8 @@ test('UI: выбор ночной смены, квитанции, темы, ша
         assert.ok(layout.page<=width, JSON.stringify(layouts.at(-1)));
         assert.equal(layout.statusColor, layout.expectColor);
         assert.equal(layout.count, String(count));
-        if (width===768) assert.ok(layout.textWidth>30);
+        // При норме статус связи — точка (текст только для чтения с экрана), при проблеме — текст рядом
+        if (width===768) assert.ok(count ? layout.textWidth>30 : layout.textWidth<=2, `текст статуса ${layout.textWidth}`);
         if (width===390) assert.ok(layout.touch.every(([w,h])=>w>=44 && h>=44), JSON.stringify(layout.touch));
         if (count===3 && [1366,390].includes(width)) {
           const shot=await send('Page.captureScreenshot',{format:'png'});

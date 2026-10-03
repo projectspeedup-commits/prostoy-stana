@@ -37,6 +37,8 @@
 .rep-field { display: grid; gap: 4px; min-width: 0; margin: 0; }
 .rep-field-name { color: var(--text-muted); font-size: 13px; font-weight: 700; }
 .rep-date { width: 100%; min-width: 0; min-height: 48px; margin: 0; padding: 8px 10px; border-radius: 12px; font-size: 16px; }
+/* Узкий экран: даты одна под другой — в половине ширины год и значок календаря не помещаются */
+@media (max-width: 479px) { .rep-dates { grid-template-columns: minmax(0, 1fr); } }
 .rep-hint { margin: 0 0 12px; color: var(--text-muted); font-size: 13px; }
 .rep-error { margin: 0 0 12px; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .rep-panel .rep-go { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; margin: 0; }
