@@ -1232,4 +1232,9 @@ main:has(.ai-card) { max-width: 900px; margin-inline: auto; }
 .ai-actions .btn { flex: 1 1 160px; margin: 0; }
 
 /* Широкая шапка с «Спросить ассистента»: бренд не сжимается — уступает текст о связи */
-@media (min-width: 1200px) { .topbar .brand { flex-shrink: 0; } }
+@media (min-width: 1200px) {
+  .topbar .brand { flex-shrink: 0; }
+  /* текст о связи — в одну строку: перенос делал шапку выше и сжимал кнопки пульта */
+  .topbar .save-status .save-status-text, .topbar .save-status:not(.attention) .save-status-text {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
