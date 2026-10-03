@@ -22,7 +22,8 @@ const press = (el) => { for (const f of el.handlers.click || []) f({ currentTarg
 const button = (a, label) => findAll(a.main(), (e) => e.tagName === 'BUTTON' && text(e).includes(label))[0];
 async function openAdmin(a) {
   a.h.go('admin');
-  for (let i = 0; i < 50 && a.h.ui.admin?.loading !== false && !a.h.ui.admin?.settings; i++) await wait(20);
+  // Рассылка подгружается вторым запросом: без неё раздел «Рассылка на почту» в списке ещё не появился
+  for (let i = 0; i < 150 && !(a.h.ui.admin?.settings && (a.h.ui.admin.mail || a.h.ui.admin.mailError !== undefined)); i++) await wait(20);
   a.h.render();
 }
 

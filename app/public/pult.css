@@ -142,13 +142,16 @@ body { padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
 @media (max-width: 599px) {
   .appnav { display: flex; }
   .appnav .pill { flex: 1 1 auto; font-size: 13px; }
-  .appnav .pill { min-width: auto; }
+  /* Зона нажатия не меньше 44 px: «Пульт» с короткой подписью не должен сжиматься уже */
+  .appnav .pill { min-width: 44px; }
   .appnav .pill .pill-text { overflow: visible; text-overflow: clip; letter-spacing: -0.02em; }
   .appnav #admin, .appnav #ai-ask { flex: 0 0 44px; }
   .appnav #admin .pill-text, .appnav #ai-ask .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 
 @media (max-width: 599px) { .appnav { gap: 0; padding-inline: 0; } .appnav .pill { padding-inline: 0; letter-spacing: -0.01em; } }
+/* 320 px: шесть пунктов с подписью 13 px и зоной не меньше 44 px вместе дают 324 px — подпись чуть плотнее, без обрезки */
+@media (max-width: 359.98px) { .appnav .pill .pill-text { letter-spacing: -0.04em; } }
 
 /* ---------- Экраны рабочего: мастер причины, «что сделали», связь ----------
    Компоненты ps-* перенесены из bundle.css дизайн-системы; только токены из tokens.css. */
@@ -205,7 +208,7 @@ main:has(.ps-flow) > .cancel { min-height: var(--target-min); margin-top: var(--
 
 /* Чипы: уточнение причины, быстрые варианты, брак */
 .ps-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.ps-chip { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); margin: 0; padding: 0 var(--space-4); border-radius: var(--radius-pill); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 15px; line-height: 20px; font-weight: 600; text-align: left; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.ps-chip { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-width: 48px; min-height: var(--target-min); margin: 0; padding: 0 var(--space-4); border-radius: var(--radius-pill); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 15px; line-height: 20px; font-weight: 600; text-align: left; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .ps-chip:hover { background: var(--surface-2); }
 .ps-chip[aria-pressed="true"] { background: var(--ink); color: var(--ink-inverse); border-color: var(--ink); }
 .ps-chips--items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -431,6 +434,12 @@ main:has(.ps-cols) { max-width: var(--content-max); margin: 0 auto; }
 .ps-segmented { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 3px; border-radius: var(--radius-sm); background: var(--surface-3); }
 .ps-segmented button { min-height: var(--target-min); margin: 0; padding: 0 var(--space-4); border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 15px; line-height: 20px; font-weight: 600; cursor: pointer; white-space: nowrap; touch-action: manipulation; }
 .ps-segmented button:hover { color: var(--ink); }
+.ps-segmented { max-width: 100%; }
+.ps-segmented button { min-width: 0; }
+/* Узкий экран: четыре периода — в два ряда по два */
+@media (max-width: 479.98px) {
+  .ps-period { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .ps-segmented button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-1); }
 
 /* Раскладки */
@@ -463,6 +472,12 @@ main:has(.ps-flow--chat) { max-width: 880px; }
 .ps-person { display: grid; gap: var(--space-2) var(--space-3); grid-template-columns: minmax(0, 1fr); align-items: end; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); }
 .ps-person .ps-btn { justify-self: start; }
 @media (min-width: 600px) { .ps-person { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto; } }
+/* Выбор смены мастера: вторая строка карточки, «Убрать» остаётся справа в первой */
+.ps-person__crew .ps-segmented { justify-self: start; }
+@media (min-width: 600px) {
+  .ps-person__crew { grid-column: 1 / 3; grid-row: 2; }
+  .ps-person > .ps-btn { grid-column: 3; grid-row: 1; }
+}
 .ps-subcard { display: grid; gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; }
 .ps-send { display: grid; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--line); }
 .ps-send .ps-btn { justify-self: start; }
@@ -503,7 +518,9 @@ main:has(.ps-flow--chat) { max-width: 880px; }
 .ps-period { width: 100%; }
 @media (min-width: 600px) { .ps-period { width: auto; } }
 .ps-toolbar .ps-notice { flex: 1 1 260px; }
-.ps-head--stats .rep { margin-left: 0; position: relative; }
+.ps-head--stats { position: relative; }
+/* Панель отчёта привязана к полосе заголовка, а не к кнопке: иначе она сжимается до ширины кнопки */
+.ps-head--stats .rep { margin-left: 0; position: static; }
 .ps-head--stats .rep-btn { width: auto; min-height: var(--target-min); padding: 0 var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
   font-size: 15px; line-height: 20px; font-weight: 600; box-shadow: none; }
 .ps-head--stats .rep-btn:hover { background: var(--surface-2); }

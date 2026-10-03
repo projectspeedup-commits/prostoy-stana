@@ -110,7 +110,7 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
   renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
   groupFor, transferButton, conflictTarget, loadStats, renderShift, renderStats, renderClosed, resetStopDrafts,
   renderFio, mergeStored, armShiftTimer, renderDetail, renderCloseConfirm, renderCrew, shiftBlock, openDetail, renderHandoverCard, startManualWizard, cardData,
-  forgottenTimeFields, shiftKpis, shiftZoneMinutes, renderAdmin, renderAi, aiCard, askAi, saveAdmin, adminDraft, loadAdmin, adminProblems, metrics, loadAiStatus, renderRecorded, renderManualCheck, renderForgotStop, renderKey, renderNoRefs, renderLoading, renderRestartTime, renderRestartConfirm, renderConfirmChange, renderStaleRestart, renderRepairField, aiUi,
+  needsNote, forgottenTimeFields, shiftKpis, shiftZoneMinutes, renderAdmin, renderAi, aiCard, askAi, saveAdmin, adminDraft, loadAdmin, adminProblems, metrics, loadAiStatus, renderRecorded, renderManualCheck, renderForgotStop, renderKey, renderNoRefs, renderLoading, renderRestartTime, renderRestartConfirm, renderConfirmChange, renderStaleRestart, renderRepairField, aiUi,
 };`;
   // перехват тостов: showToast пишет в элемент #toast; соберём в массив
   code = code.replace("let toastTimer = null;", "let toastTimer = null; const __toasts = [];")

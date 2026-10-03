@@ -1561,9 +1561,19 @@ function renderAdmin(main) {
   };
 
   // --- Мастера по сменам
+  // Перенос между сменами меняет только crewId: id мастера остаётся, и у принятой смены не пропадает его телефон
+  const crewSwitch = (p) => h("div", { class: "ps-field ps-person__crew" }, h("span", { class: "ps-field__label", text: "Смена" }),
+    h("div", { class: "ps-segmented", role: "group", "aria-label": `Смена мастера ${p.name}`.trim() },
+      ["1", "2"].map((no) => h("button", { type: "button", "data-crew-pick": no, "aria-pressed": String(p.crewId === no),
+        onclick: () => {
+          if (p.crewId === no) return;
+          p.crewId = no; touch(); render();
+          main.querySelector?.(`[data-crew="${no}"] [data-crew-pick="${no}"][aria-pressed="true"]`)?.focus();
+        } }, `Смена ${no}`))));
   const personRow = (p) => h("div", { class: "ps-person" },
     field("Фамилия, имя, отчество", txt(p.name, { maxlength: "120", autocapitalize: "words", spellcheck: "false", "data-role": "name" }, (v) => { p.name = v; }), "ps-person__name"),
     field("Телефон", txt(p.phone, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { p.phone = v; })),
+    crewSwitch(p),
     remove(`Убрать мастера ${p.name}`.trim(), () => { s.people.splice(s.people.indexOf(p), 1); touch(); render(); }));
   const crewGroup = (crewId) => {
     const own = s.people.filter((p) => p.crewId === crewId);
@@ -1956,7 +1966,7 @@ function barList(title, rows, total, label, zone = null) {
         h("span", { class: "ps-bar__name" }, zone ? h("span", { class: "ps-swatch", "data-zone": zone(r), "aria-hidden": "true" }) : null, h("span", { text: label(r) })),
         h("span", { class: "ps-bar__val", text: barValue(r, total) })),
       h("div", { class: "ps-bar__track" }, r.byZone ? r.byZone.filter((z) => z.minutes > 0).map((z) =>
-        h("div", { class: "ps-bar__fill", "data-zone": z.zone, style: `width:${z.minutes / max * 100}%`, title: `${z.minutes} мин` }))
+        h("div", { class: "ps-bar__fill", "data-zone": z.zone, style: `width:${z.minutes / max * 100}%`, title: fmtDurMin(z.minutes) }))
         : h("div", { class: "ps-bar__fill", "data-zone": zone ? zone(r) : "neutral", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` }))))));
 }
 // Кольцо «работа и простой»: доли зон теми же цветами, что шкала суток
@@ -1977,7 +1987,7 @@ function zoneMetrics(st) {
       const row = (st.byZone || []).find((item) => item.zone === zone);
       return h("div", { class: "ps-zrow" },
         h("span", { class: "ps-zrow__name" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), h("span", { text: label })),
-        h("span", { class: "ps-zrow__val", text: row ? row.minutes + " мин · " + row.stops + " ост. · " + pct(row.share) : "—" }));
+        h("span", { class: "ps-zrow__val", text: row ? fmtDurMin(row.minutes) + " · " + row.stops + " ост. · " + pct(row.share) : "—" }));
     })),
   h("p", { class: "ps-field__hint", text: "Доля — от времени учёта за выбранный период. Остановка со сменой зоны учитывается в каждой из этих зон." }));
 }
@@ -3140,8 +3150,13 @@ function renderEditor(view, data) {
   error.hidden = true;
   const save = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg" }, "Сохранить");
   const cancel = h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--lg" }, "Отмена");
-  // Пустое поле не отправляем: стереть уже записанное нельзя, поэтому очищенное считается неизменённым
-  const changed = () => ["note", "action", "billet"].filter((f) => String(draft[f]).trim() !== "" && String(draft[f]).trim() !== String(draft.base[f]).trim());
+  // Пустое поле не отправляем, кроме необязательного «Что случилось»: его можно стереть (сервер принимает note: "").
+  // Если описание обязательно («иная причина»), очищенное считается неизменённым, как и у остальных полей
+  const changed = () => ["note", "action", "billet"].filter((f) => {
+    const now = String(draft[f]).trim();
+    if (now === String(draft.base[f]).trim()) return false;
+    return now !== "" || (f === "note" && !noteMust);
+  });
   // Что мешает сохранить: пустое поле не отправляем, непустое проверяем так же, как раньше
   const problem = () => {
     const list = changed();

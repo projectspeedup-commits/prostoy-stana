@@ -40,7 +40,7 @@ export function dayChart(days) {
   svg.append(text(4, T + 4, "ч", { class: "tick" }));
 
   // Подписи по X: не чаще, чем помещается
-  const every = Math.ceil(n / Math.max(1, Math.floor(plotW / 38)));
+  const every = Math.ceil(n / Math.max(1, Math.floor(plotW / 46)));
   days.forEach((d, i) => {
     const cx = L + slot * i + slot / 2;
     const x = cx - bw / 2;
@@ -60,6 +60,7 @@ export function dayChart(days) {
     }
   });
   svg.append(text(L + plotW / 2, H - 6, "сутки", { class: "tick", "text-anchor": "middle" }));
+  fitFonts(svg, W);
   return svg;
 }
 
@@ -100,7 +101,21 @@ export function donut(rows, centerTitle) {
   });
   svg.append(text(cx, cy - 2, hm(total), { class: "center", "text-anchor": "middle" }));
   svg.append(text(cx, cy + 16, centerTitle, { class: "tick", "text-anchor": "middle" }));
+  fitFonts(svg, W);
   return svg;
+}
+
+// Подписи графика не должны быть мельче 13 экранных px: SVG растягивается по ширине карточки,
+// поэтому размер шрифта в единицах viewBox считаем по фактическому масштабу (--chart-fs читает app.css)
+export const MIN_CHART_FONT = 13;
+function fitFonts(svg, viewW) {
+  const fit = () => {
+    if (!svg.isConnected) return;
+    const w = svg.getBoundingClientRect().width;
+    if (w > 0) svg.style.setProperty("--chart-fs", `${Math.max(MIN_CHART_FONT, Math.ceil((MIN_CHART_FONT * viewW / w) * 10) / 10)}px`);
+  };
+  if (typeof ResizeObserver === "function") new ResizeObserver(fit).observe(svg);
+  else if (typeof requestAnimationFrame === "function") requestAnimationFrame(fit);
 }
 
 function label(day) { return `${day.slice(8, 10)}.${day.slice(5, 7)}`; }
