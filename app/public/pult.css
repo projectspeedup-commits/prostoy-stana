@@ -1,0 +1,136 @@
+/* Пульт по дизайн-системе «Простой стана» (вариант A): панель состояния + одна кнопка действия,
+   две колонки от 1024 px, шкала суток полосой под ними. Только токены из tokens.css. */
+
+/* ---------- Раскладка главного экрана ---------- */
+main:has(.with-scale) { max-width: var(--content-max); margin: 0 auto; }
+.with-scale { gap: var(--space-4); align-items: start; }
+.with-scale__main { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); align-items: start; }
+.with-scale__main > .stop-grid { display: contents; }
+.with-scale__main > .stop-grid > * { min-width: 0; }
+@media (min-width: 1024px) {
+  .with-scale__main { grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr); }
+  .with-scale__main > .pult, .with-scale__main > .stop-grid > :first-child { grid-column: 1; grid-row: 1 / span 2; }
+  .with-scale__main > .shift-block, .with-scale__main > .stop-grid > :last-child { grid-column: 2; }
+}
+
+/* ---------- Пульт ---------- */
+.pult { display: grid; gap: var(--space-4); }
+.ps-state { position: relative; display: grid; gap: var(--space-2); padding: var(--space-5); border-radius: var(--radius-lg);
+  background: var(--run-soft); color: var(--run-ink); }
+.ps-state[data-state="stop"] { background: var(--stop-soft); color: var(--stop-ink); }
+.pult-state__top { display: flex; align-items: center; gap: var(--space-3); min-height: 40px; }
+.pult-state__top .report-menu, .pult-state__top > :not(.ps-state__eyebrow) { margin-left: auto; }
+.ps-state__eyebrow { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; line-height: 16px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; }
+.ps-state__title { margin: 0; font-size: 44px; line-height: 48px; font-weight: 800; letter-spacing: -0.01em; }
+.ps-state__timer { font-variant-numeric: tabular-nums; font-size: 64px; line-height: 64px; font-weight: 700; letter-spacing: -0.02em; }
+.ps-state__meta { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--ink-2); }
+.ps-dot { position: relative; width: 12px; height: 12px; flex: none; border-radius: var(--radius-pill); background: var(--run); }
+.ps-dot[data-tone="stop"] { background: var(--stop); }
+.ps-dot[data-live]::after { content: ""; position: absolute; inset: -4px; border-radius: inherit; border: 2px solid currentColor;
+  opacity: 0; animation: ps-pulse 2s ease-out infinite; }
+@keyframes ps-pulse { 0% { opacity: .7; transform: scale(.6); } 100% { opacity: 0; transform: scale(1.4); } }
+
+.ps-action { display: flex; align-items: center; gap: var(--space-4); width: 100%; min-height: var(--action-height); margin: 0;
+  padding: var(--space-4) var(--space-5); border: 0; border-radius: var(--radius-lg); box-shadow: var(--shadow-action);
+  cursor: pointer; text-align: left; touch-action: manipulation; transition: transform .08s ease, filter .12s ease;
+  -webkit-tap-highlight-color: transparent; }
+.ps-action:active { transform: translateY(2px); box-shadow: none; }
+.ps-action:hover { filter: brightness(1.06); }
+.ps-action--stop { background: var(--stop-strong); color: var(--on-stop); }
+.ps-action--run { background: var(--run-strong); color: var(--on-run); }
+.ps-action__icon { display: grid; place-items: center; width: 64px; height: 64px; flex: none; border-radius: var(--radius-pill); border: 3px solid currentColor; }
+.ps-action__icon .ico { width: 30px; height: 30px; fill: currentColor; stroke: none; }
+.ps-action__text { display: grid; gap: 2px; min-width: 0; }
+.ps-action__label { font-size: 30px; line-height: 34px; font-weight: 800; letter-spacing: 0.01em; text-transform: uppercase; }
+.ps-action__hint { font-size: 15px; line-height: 20px; font-weight: 500; opacity: .92; overflow-wrap: anywhere; }
+.ps-action:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .ps-dot[data-live]::after { animation: none; } .ps-action { transition: none; } }
+
+/* Телефон: компактнее, чтобы пульт и кнопка помещались на первом экране */
+@media (max-width: 599px) {
+  .ps-state { padding: var(--space-4); gap: var(--space-1); }
+  .ps-state__title { font-size: 30px; line-height: 34px; }
+  .ps-state__timer { font-size: 44px; line-height: 48px; }
+  .ps-action { min-height: calc(var(--target-glove) + var(--space-4)); padding: var(--space-3) var(--space-4); gap: var(--space-3); }
+  .ps-action__icon { width: 52px; height: 52px; border-width: 2.5px; }
+  .ps-action__icon .ico { width: 24px; height: 24px; }
+  .ps-action__label { font-size: 24px; line-height: 28px; }
+  .ps-action__hint { font-size: 13px; line-height: 18px; }
+}
+.pult:has(.rep.is-open) { position: relative; z-index: 4; }
+
+/* ---------- Шапка ---------- */
+.topbar { flex-wrap: nowrap; gap: var(--space-3); min-height: 64px; padding: calc(8px + env(safe-area-inset-top)) var(--space-4) 8px;
+  background: var(--surface); border-bottom: 1px solid var(--line); }
+.topbar .brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; margin-right: auto; text-align: left; }
+.brand-mark { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: var(--radius-sm); background: var(--ink); color: var(--ink-inverse); }
+.brand-mark .ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
+.brand-name { display: grid; min-width: 0; }
+.topbar .brand-name strong { font-size: 16px; line-height: 20px; font-weight: 800; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.topbar .brand-name span { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-3); }
+.topclock { display: grid; justify-items: end; flex: none; font-size: 22px; line-height: 26px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.topclock small { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-3); }
+.topbar .theme-toggle { display: grid; place-items: center; width: var(--target-min); height: var(--target-min); flex: none; padding: 0; margin: 0;
+  border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: none; }
+.topbar .theme-toggle:hover { background: var(--surface-2); }
+.topbar .save-status { color: var(--ink-2); font-size: 13px; line-height: 18px; font-weight: 600; }
+.save-status.online::before { background: var(--run); }
+.save-status.waiting::before { background: var(--warn); }
+.save-status.offline::before { background: var(--stop); }
+@media (max-width: 599px) {
+  .topbar { gap: var(--space-2); padding-inline: var(--space-3); }
+  .topbar .brand-name { display: none; }
+  .topclock { font-size: 18px; line-height: 22px; }
+  .topclock small { display: none; }
+}
+
+/* ---------- Навигация: снизу на телефоне и планшете, слева от 1024 px ---------- */
+.appnav { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  gap: 2px; min-height: var(--tabbar-height); padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--line); }
+.appnav .pill { display: grid; justify-items: center; align-content: center; gap: 2px; min-width: 0; min-height: var(--target-glove); margin: 0;
+  padding: 6px 2px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink-2); box-shadow: none;
+  font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.appnav .pill[hidden] { display: none; }
+.appnav .pill .ico { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.appnav .pill .pill-text { position: static; width: auto; height: auto; overflow: hidden; clip-path: none; max-width: 100%; text-overflow: ellipsis; }
+.appnav .pill:hover { background: var(--surface-2); color: var(--ink); }
+.appnav .pill[aria-current="page"] { background: var(--ink); color: var(--ink-inverse); }
+body { padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom)); }
+.toast { bottom: calc(var(--tabbar-height) + 16px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) {
+  .appnav { top: 0; bottom: 0; right: auto; width: var(--rail-width); grid-auto-flow: row; grid-auto-rows: min-content; grid-auto-columns: auto;
+    align-content: start; gap: var(--space-1); padding: calc(76px + env(safe-area-inset-top)) var(--space-2) var(--space-3);
+    border-top: 0; border-right: 1px solid var(--line); }
+  body { padding-bottom: 0; padding-left: var(--rail-width); }
+  .toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
+  /* Подпись под значком: «Показатели» не помещается в 80 px крупным шрифтом */
+  .appnav .pill { font-size: 12px; }
+}
+/* Excel на телефоне — только значок */
+@media (max-width: 599px) {
+  .ps-state .rep-label { display: none; }
+  .ps-state .rep-btn { width: 44px; padding: 0; }
+}
+.topbar .brand { order: -1; margin-left: 0; }
+@media (max-width: 599px) { .appnav { padding-inline: 2px; } .appnav .pill { font-size: 11px; padding-inline: 0; } }
+
+/* ---------- Шкала суток: полоса во всю ширину, итоги смены плитками ---------- */
+.day-scale { width: 100%; padding: var(--space-5); border-radius: var(--radius-md); background: var(--surface);
+  border: 1px solid var(--line); box-shadow: var(--shadow-1); }
+.day-scale__title { font-size: 20px; line-height: 26px; font-weight: 700; color: var(--ink); }
+.day-scale__rows { height: 160px; padding-top: 36px; }
+.ds-row__track { border-radius: 2px; }
+.ds-row--future .ds-row__track, .ds-row--nodata .ds-row__track { background: var(--zone-empty); border: 0; }
+.ds-seg.z-failure, .ds-legend__chip.z-failure { background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(255, 255, 255, .45) 3px 5px); }
+.day-scale__legend { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-3); padding-top: 0; border-top: 0; }
+.day-scale__legend-title { grid-column: 1 / -1; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-2); }
+.ds-legend__item { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-2); }
+.ds-legend__chip { width: 12px; height: 12px; border: 0; }
+.ds-legend__val { grid-column: 1 / -1; margin-left: 0; font-size: 24px; line-height: 28px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ds-legend__item--zero .ds-legend__val { color: var(--ink-3); }
+@media (min-width: 768px) { .day-scale__legend { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 599px) { .day-scale { padding: var(--space-4); } .ds-legend__item { font-size: 12px; } .ds-legend__val { font-size: 20px; line-height: 24px; } }
+@media (min-width: 600px) { .topbar .save-status-text { white-space: nowrap; } }

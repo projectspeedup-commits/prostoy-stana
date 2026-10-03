@@ -759,6 +759,8 @@ function icon(name) {
     chevron: "m9 5 7 7-7 7",
     sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M1 12h2M21 12h2M4 4l1.5 1.5M18.5 18.5 20 20M4 20l1.5-1.5M18.5 5.5 20 4",
     moon: "M20.5 14a9 9 0 0 1-10.5-10.5A9 9 0 1 0 20.5 14Z",
+    stopSq: "M7 7h10v10H7z",
+    play: "M8 5.5v13l10.5-6.5z",
     calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -871,6 +873,32 @@ function renderTopbar() {
     ask.hidden = !key || !refs || !canAdmin || !aiUi.status || Boolean(aiUi.status.unavailable);
     ask.classList.toggle("is-on", ui.screen === "ai");
   }
+  // Навигация: «Простои» и «Показатели», отметка текущего раздела
+  for (const [id, screen] of [["nav-shift", "shift"], ["nav-stats", "stats"]]) {
+    const b = $(id);
+    if (!b) continue;
+    if (!b.dataset.bound) {
+      b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        if (!key || !refs) return;
+        if (isDraftScreen(ui.screen)) ui.resume = ui.screen;
+        window.scrollTo(0, 0);
+        go(screen);
+      });
+    }
+    b.hidden = !key;
+  }
+  const current = { contact: "conn", shift: "nav-shift", detail: "nav-shift", stats: "nav-stats", admin: "admin", ai: "ai-ask" }[ui.screen]
+    || (!ui.screen || ui.screen === "auto" ? "demo" : null);
+  for (const id of ["demo", "nav-shift", "nav-stats", "conn", "admin", "ai-ask"]) {
+    const b = $(id);
+    if (!b) continue;
+    if (id === current) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  }
+  const clock = $("topclock-time");
+  if (clock && !clock.textContent) clock.textContent = fmtClock(nowMs()) + " МСК";
+  const date = $("topdate");
+  if (date) date.textContent = fmtDateLong(nowMs());
 }
 
 function renderRejects() {
@@ -1729,41 +1757,36 @@ import("./report-ui.js").then((m) => {
   softRender();
 }).catch(() => { /* кнопки отчёта не будет */ });
 
-// Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
-function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
-  const btn = (kind, on, label, onclick) => h("button", {
-    class: `mill-btn mill-${kind}${on ? " is-on" : ""}`,
-    "aria-pressed": on ? "true" : "false",
-    "aria-label": "СТАН " + label,
-    onclick: on ? () => showToast(running ? "Стан уже работает" : "Стан уже стоит") : onclick,
-  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }),
-    h("span", { class: "mill-label" }, h("span", { text: "СТАН" }), h("span", { text: label })));
-  return h("div", { class: "mill-console" },
-    h("div", { class: "mill-status " + (running ? "is-run" : "is-stop") },
-      h("div", { class: "mill-state" }, icon("pulse"),
-        h("div", null, h("div", { class: "mill-state-title" }, running ? "Стан работает · " : "Стан стоит · ", info),
-          subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
-      reportMenu(),
-      h("div", { class: "mill-clock" }, icon("clock"),
-        h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
-          h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
-    h("div", { class: "mill-panel" },
-      btn("go", running, "РАБОТАЕТ", onGo),
-      btn("stop", !running, "ОСТАНОВЛЕН", onStop),
-      hint ? h("p", { class: "mill-hint" }, icon("info"), h("span", { text: hint })) : null));
+// Пульт стана (дизайн-система, вариант A): панель состояния с таймером и одна кнопка —
+// единственное действие, доступное сейчас. Стан работает — «Стан встал», стоит — «Стан пошёл»
+function millPanel({ running, since, subtitle, hint, onGo, onStop }) {
+  const start = Number.isFinite(since) ? since : nowMs();
+  return h("div", { class: "pult" },
+    h("section", { class: "ps-state", "data-state": running ? "run" : "stop", "aria-live": "polite" },
+      h("div", { class: "pult-state__top" },
+        h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
+        reportMenu()),
+      h("h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
+      h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
+      subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null),
+    h("button", { class: "ps-action ps-action--" + (running ? "stop" : "run"), type: "button", "data-act": running ? "stop" : "run",
+      onclick: running ? onStop : onGo },
+      h("span", { class: "ps-action__icon" }, icon(running ? "stopSq" : "play")),
+      h("span", { class: "ps-action__text" },
+        h("span", { class: "ps-action__label", text: running ? "Стан встал" : "Стан пошёл" }),
+        hint ? h("span", { class: "ps-action__hint", text: hint }) : null)));
 }
 
 // Главный экран: стан работает
 function renderRun(main, view) {
-  const dts = shiftDowntimes(view);
   // С последнего пуска, даже если он был в прошлую смену; до первой записи о стане ничего не известно
   const lastStart = Math.min(nowMs(), runningSince(view));
   fill(main, withScale(view,
     millPanel({
       running: true,
-      info: h("span", { class: "mill-info", dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
-      subtitle: Number.isFinite(lastStart) ? `с ${fmtClock(lastStart)}` : null,
-      hint: "Нажмите красную кнопку, как только стан остановился",
+      since: lastStart,
+      subtitle: Number.isFinite(lastStart) ? `Пущен в ${fmtClock(lastStart)}` : null,
+      hint: "Нажмите сразу при остановке — время поставит система",
       onStop: () => {
         const downtimeId = crypto.randomUUID();
         send("stop", { downtimeId });
@@ -1964,15 +1987,14 @@ function renderHandoverCard(open) {
 function renderStop(main, view) {
   const open = view.open;
   const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
-  const elapsed = nowMs() - since;
   const cur = open.reason;
 
   const left = h("div", null,
     millPanel({
       running: false,
-      info: h("span", { class: "mill-info" }, h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
-      subtitle: `стоит с ${fmtSince(since, view.shift)}`,
-      hint: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу.",
+      since,
+      subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
+      hint: "Время пуска поставит система",
       onGo: () => {
         if (reusableRestart(ui.rw, view, nowMs()) && !ui.rw.thenClose) {
           return go(ui.wz?.mode === "restart" ? "reason" : ui.rw.route ? "restartAction" : "restartConfirm");

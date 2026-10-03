@@ -96,7 +96,7 @@ test('Раунд 2.11: таймер пересменки обновляет со
 test('Раунд 2.12: принятое чужое состояние с причиной закрывает мастер причины', async (t) => {
   const { a, save } = await fixture(t);
   await save({ id: 'peer-stop', type: 'stop', at: at(150), reason: 'avaria', note: 'Чужая причина' });
-  a.h.renderRun(a.main(), a.h.buildView()); a.click(a.main(), 'ОСТАНОВЛЕН'); await a.pump();
+  a.h.renderRun(a.main(), a.h.buildView()); a.click(a.main(), 'Стан встал'); await a.pump();
   assert.equal(a.h.ui.wz, null); assert.equal(a.h.ui.screen, 'auto');
   assert.equal(a.h.serverState.open.segments[0].reason, 'avaria');
   assert.ok(a.h.toasts.some((s) => s.includes('Причина уже указана с другого устройства:')));

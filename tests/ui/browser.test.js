@@ -77,9 +77,9 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await click('Смена 2');
   await evaluate(`document.querySelector('#main .tiles button').click()`);
   await sleep(150);
-  await send('Runtime.evaluate', { expression: `document.querySelector('.mill-stop')?.click()` });
+  await send('Runtime.evaluate', { expression: `document.querySelector('.ps-action--stop')?.click()` });
   assert.equal(app.db.prepare("SELECT count(*) n FROM events WHERE type = 'stop'").get().n, 0, 'Второй тап после приёма не останавливает стан');
-  await wait(`document.querySelector('.mill-panel') && JSON.parse(localStorage.getItem('stan.queue')).length === 0`);
+  await wait(`document.querySelector('.pult') && JSON.parse(localStorage.getItem('stan.queue')).length === 0`);
   await post([0, 1, 2].map((i) => ({ id: `short${i}`, type: 'manual', at: new Date(now).toISOString(),
     from: new Date(now - 3600000 + i * 60000).toISOString(), to: new Date(now - 3600000 + i * 60000 + 20000).toISOString() })));
   // Перезагрузка проверяет и очистку старых квитанций, и отдельное хранение очереди.
@@ -89,7 +89,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
     localStorage.setItem('stan.session.v1', JSON.stringify(s));
   })()` });
   await send('Page.reload');
-  await wait(`document.querySelector('.mill-panel') && document.querySelector('.ds-legend__item:has(.z-unplanned) .ds-legend__val')?.textContent === '1 мин'`);
+  await wait(`document.querySelector('.pult') && document.querySelector('.ds-legend__item:has(.z-unplanned) .ds-legend__val')?.textContent === '1 мин'`);
   assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.length`), 300);
   assert.equal(await evaluate(`Object.hasOwn(JSON.parse(localStorage.getItem('stan.session.v1')), 'queue')`), false);
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seedRecords.identifier });
@@ -125,26 +125,26 @@ test('UI: выбор ночной смены, квитанции, темы, ша
     if (state === 'stopped') {
       // Второй планшет уже остановил стан, первый ещё видит прежний снимок.
       await post([{ id: 'remote-stop', type: 'stop', at: new Date(now - 60000).toISOString() }]);
-      await evaluate(`document.querySelector('.mill-stop').click()`);
-      await wait(`!document.querySelector('.mill-panel')`);
+      await evaluate(`document.querySelector('.ps-action--stop').click()`);
+      await wait(`!document.querySelector('.pult')`);
       await wait(`document.querySelector('#toast').textContent.includes('Стан уже остановлен с 22:59')`);
       assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).draft.wz?.downtimeId`), 'remote-stop');
       assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.some(r=>r.status==='rejected')`), false);
       await evaluate(`document.querySelector('#demo').click()`);
-      await wait(`document.querySelector('.mill-status.is-stop')`);
+      await wait(`document.querySelector('.ps-state[data-state="stop"]')`);
     }
     for (const [width, height] of [[320, 720], [375, 812], [600, 800], [768, 1024], [820, 900], [1100, 700], [1200, 800], [1600, 900]]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
       await sleep(60);
       if (width === 320 && state === 'running') {
         const ax = await send('Accessibility.getFullAXTree');
-        for (const name of ['Администратор', 'Спросить ассистента', 'Связаться', 'На главный экран', 'Переключить на светлую тему']) {
+        for (const name of ['Администратор', 'Спросить ассистента', 'Связаться', 'Пульт', 'Простои за смену', 'Показатели стана', 'Переключить на светлую тему']) {
           assert.ok(ax.nodes.some((n) => n.role?.value === 'button' && n.name?.value === name), `Доступное имя: ${name}`);
         }
       }
       const sizes = await evaluate(`(() => {
         const h = document.querySelector('.topbar');
-        const b = document.querySelector('.mill-stop'), l = b.querySelector('.mill-label'), lamp = b.querySelector('.mill-lamp');
+        const b = document.querySelector('.ps-action'), l = b.querySelector('.ps-action__label'), lamp = b;
         return { viewport: innerWidth, page: document.documentElement.scrollWidth, header: h.scrollWidth, client: h.clientWidth,
           label: l.getBoundingClientRect().width, lamp: lamp.getBoundingClientRect().width, lampHeight: lamp.getBoundingClientRect().height, labelScroll: l.scrollWidth, labelClient: l.clientWidth };
       })()`);
@@ -154,7 +154,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
       if (state === 'stopped') {
         assert.ok(sizes.label <= sizes.lamp + 1, JSON.stringify(results.at(-1)));
         assert.ok(sizes.labelScroll <= sizes.labelClient, JSON.stringify(results.at(-1)));
-        if (width >= 1100) assert.ok(sizes.lampHeight >= sizes.lamp * 0.5, JSON.stringify(results.at(-1)));
+        assert.ok(sizes.lampHeight >= 64, JSON.stringify(results.at(-1)));
       }
       if (state === 'stopped' && [320, 768, 1100].includes(width)) {
         const shot = await send('Page.captureScreenshot', { format: 'png' });
@@ -212,7 +212,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
   for (const id of ['dismiss1', 'dismiss2', 'dismiss3']) assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.find(r=>r.event.id===${JSON.stringify(id)}).status`), 'dismissed');
   await send('Page.reload');
-  await wait(`document.querySelector('.mill-panel')`);
+  await wait(`document.querySelector('.pult')`);
   assert.equal(await evaluate(`document.querySelector('#rejects').hidden`), true);
   await click('Простои за смену');
   await evaluate(`document.querySelector('.segs button').click()`);
@@ -241,24 +241,25 @@ test('UI: выбор ночной смены, квитанции, темы, ша
         s.draft = {screen:'auto'};
         localStorage.setItem('stan.session.v1',JSON.stringify(s));
       })()`});
-      await send('Page.reload'); await wait(`document.querySelector('.mill-panel') && document.querySelector('#save-status').classList.contains('${count ? 'waiting' : 'online'}')`);
+      await send('Page.reload'); await wait(`document.querySelector('.pult') && document.querySelector('#save-status').classList.contains('${count ? 'waiting' : 'online'}')`);
       await send('Page.removeScriptToEvaluateOnNewDocument',{identifier:layoutSeed.identifier});
       for (const [width, height] of sizesToCheck) {
         await send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor:1, mobile:false}); await sleep(130);
         const layout = await evaluate(`(() => {
-          const keys = [...document.querySelectorAll('.mill-btn')].map(b=>{
-            const r=b.getBoundingClientRect(), lamp=b.querySelector('.mill-lamp').getBoundingClientRect();
-            return {height:r.height,lamp:lamp.height,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('.mill-btn')===b};
+          const keys = [...document.querySelectorAll('.ps-action')].map(b=>{
+            const r=b.getBoundingClientRect(), lamp=r;
+            return {height:r.height,lamp:lamp.height,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('.ps-action')===b};
           });
+          const tok=n=>{const p=document.createElement('i');p.style.background='var(--'+n+')';document.body.append(p);const c=getComputedStyle(p).backgroundColor;p.remove();return c;};
           const st=document.querySelector('#save-status'), txt=st.querySelector('.save-status-text').getBoundingClientRect();
-          return {keys,page:document.documentElement.scrollWidth,statusColor:getComputedStyle(st,'::before').backgroundColor,
+          return {keys,page:document.documentElement.scrollWidth,statusColor:getComputedStyle(st,'::before').backgroundColor,expectColor:tok(${count ? "'warn'" : "'run'"}),
             count:st.querySelector('.save-status-count').textContent,textWidth:txt.width,
             touch:[...document.querySelectorAll('.topbar button')].filter(b=>!b.hidden).map(b=>{const r=b.getBoundingClientRect();return [r.width,r.height]})};
         })()`);
         layouts.push({state,count,width,height,...layout});
         assert.ok(layout.keys.every(k=>k.hit && k.height>=44 && k.lamp>35), JSON.stringify(layouts.at(-1)));
         assert.ok(layout.page<=width, JSON.stringify(layouts.at(-1)));
-        assert.equal(layout.statusColor, count ? 'rgb(189, 118, 0)' : 'rgb(34, 134, 58)');
+        assert.equal(layout.statusColor, layout.expectColor);
         assert.equal(layout.count, String(count));
         if (width===768) assert.ok(layout.textWidth>30);
         if (width===390) assert.ok(layout.touch.every(([w,h])=>w>=44 && h>=44), JSON.stringify(layout.touch));
@@ -290,7 +291,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await send('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
   await evaluate(`document.dispatchEvent(new Event('visibilitychange'))`);
   await wait(`document.querySelector('#save-status').classList.contains('offline')`);
-  assert.equal(await evaluate(`getComputedStyle(document.querySelector('#save-status'),'::before').backgroundColor`),'rgb(207, 34, 46)');
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('#save-status'),'::before').backgroundColor`), await evaluate(`(()=>{const p=document.createElement('i');p.style.background='var(--stop)';document.body.append(p);const c=getComputedStyle(p).backgroundColor;p.remove();return c;})()`));
   await send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:0,uploadThroughput:0});
   await evaluate(`document.dispatchEvent(new Event('visibilitychange'))`);
   await wait(`document.querySelector('#save-status').classList.contains('waiting')`);
@@ -300,7 +301,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   const contrast = async selector => evaluate(`(()=>{
     const x=document.querySelector(${JSON.stringify(selector)}),rgb=getComputedStyle(x).color.match(/[0-9.]+/g).slice(0,3).map(Number);
     const lum=c=>c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
-    const l=lum(rgb);return [lum([233,239,245]),lum([215,225,235])].map(bg=>(Math.max(l,bg)+.05)/(Math.min(l,bg)+.05));
+    const l=lum(rgb);return [lum([238,241,244]),lum([244,246,248])].map(bg=>(Math.max(l,bg)+.05)/(Math.min(l,bg)+.05));
   })()`);
   assert.ok((await contrast('.ds-legend__item--zero')).every(c=>c>=4.5));
   await evaluate(`document.querySelector('#conn').click()`);

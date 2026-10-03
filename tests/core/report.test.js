@@ -160,7 +160,7 @@ test("сводка: простои по причинам — одна причи
   ].map((row) => (row[1] === undefined ? [row[0], null, row[2], row[3], row[4]] : row)));
   const fills = [];
   for (let r = top + 1; r < top + 5; r++) fills.push(sheet.rows[r][1].fill);
-  assert.deepEqual(fills, ["FFE5383B", "FF3B82F6", "FFF2A900", "FFF2A900"]);
+  assert.deepEqual(fills, ["FFDC2626", "FF2563EB", "FFD97706", "FFD97706"]);
   assert.equal(sheet.rows[top + 5][0].bold, true);
   assert.equal(typeof minutesOf(sheet.rows[top + 5][3]), "number");
 });
@@ -217,7 +217,7 @@ test("журнал: часть простоя в пределах смены, т
     ["сломался привод", "заменили муфту"], ["сломался привод", "заменили муфту"], ["", ""], ["", ""],
   ]);
   // Тип залит цветом зоны, как на экране
-  assert.deepEqual(rows.map((r) => r.typeFill), ["FF3B82F6", "FFF2A900", "FFE5383B", "FFE5383B", "FFF2A900", "FFF2A900"]);
+  assert.deepEqual(rows.map((r) => r.typeFill), ["FF2563EB", "FFD97706", "FFDC2626", "FFDC2626", "FFD97706", "FFD97706"]);
   // Даты — настоящие даты Excel по МСК, длительность — словами, число минут — последней колонкой
   assert.equal(sheet.rows[3][1].format, "dd\\.mm\\.yyyy");
   assert.equal(sheet.rows[3][4].format, "dd\\.mm\\.yyyy\\ hh:mm");
@@ -392,11 +392,11 @@ test("в файле нет внутренних кодов: ни ключей п
   assert.deepEqual(reasons, ["Плановая (вид не указан)", "Бурёжка (место не указано)", "Аварийный простой", "Плановая (вид не указан)", "Аварийный простой", "Бурёжка (место не указано)", "Причина не из справочника"]);
 });
 
-test("цвета типов — токены --z-plan, --z-unplanned, --z-failure светлой темы app.css; подписи — как в легенде шкалы", () => {
-  const css = fs.readFileSync(new URL("../../app/public/app.css", import.meta.url), "utf8");
-  const block = css.slice(css.indexOf(':root[data-theme="light"] {'));
+test("цвета типов — токены --zone-plan, --zone-unplanned и --stop темы «День» (tokens.css); подписи — как в легенде шкалы", () => {
+  const css = fs.readFileSync(new URL("../../app/public/tokens.css", import.meta.url), "utf8");
+  const block = css.slice(css.indexOf(':root, [data-theme="light"] {'));
   const token = (name) => new RegExp(`--${name}:\\s*#([0-9a-fA-F]{6})`).exec(block.slice(0, block.indexOf("\n}")))[1].toUpperCase();
-  assert.deepEqual(ZONE_FILL, { plan: token("z-plan"), unplanned: token("z-unplanned"), failure: token("z-failure") });
+  assert.deepEqual(ZONE_FILL, { plan: token("zone-plan"), unplanned: token("zone-unplanned"), failure: token("stop") });
   const legend = fs.readFileSync(new URL("../../app/public/timeline.js", import.meta.url), "utf8");
   for (const [zone, label] of Object.entries(ZONE_LABEL)) assert.ok(legend.includes(`["${zone}", "${label}"]`), `${zone}: ${label}`);
   assert.deepEqual(ZONE_LABEL, { plan: "Плановый простой", unplanned: "Внеплановый простой", failure: "Аварийный простой" });

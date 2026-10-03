@@ -1,0 +1,40 @@
+/* Токены дизайн-системы «Простой стана». Источник — tokens.json системы; не правьте значения вручную.
+   Темы: «День» — :root и [data-theme="light"], «Ночь» — [data-theme="dark"] (тему ставит theme.js). */
+@font-face { font-family: "Golos Text"; font-style: normal; font-weight: 400 900; font-display: swap;
+  src: url("fonts/golos-text-cyrillic.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Golos Text"; font-style: normal; font-weight: 400 900; font-display: swap;
+  src: url("fonts/golos-text-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root, [data-theme="light"] {
+  --bg: #eef1f4; --surface: #ffffff; --surface-2: #f4f6f8; --surface-3: #e3e8ed;
+  --line: #dde2e7; --line-strong: #7e8a96;
+  --ink: #0f1720; --ink-2: #3b4652; --ink-3: #5a6571; --ink-inverse: #ffffff; --focus: #0b5fd0;
+  --run: #159447; --run-strong: #15803d; --on-run: #ffffff; --run-soft: #e3f5e9; --run-ink: #14532d;
+  --stop: #dc2626; --stop-strong: #c81e1e; --on-stop: #ffffff; --stop-soft: #fde8e8; --stop-ink: #8f1414;
+  --zone-work: var(--run); --zone-plan: #2563eb; --zone-unplanned: #d97706; --zone-failure: var(--stop); --zone-empty: var(--surface-3);
+  --plan-soft: #e6eefe; --plan-ink: #1d4ed8; --unplanned-soft: #fff4d6; --unplanned-ink: #7a5200;
+  --warn: #d97706; --warn-soft: #fff6db; --warn-ink: #7a4a00; --scrim: rgba(12, 16, 19, 0.55);
+  --shadow-1: 0 1px 2px rgba(15, 23, 32, 0.06), 0 1px 3px rgba(15, 23, 32, 0.06);
+  --shadow-2: 0 12px 32px rgba(15, 23, 32, 0.14);
+  --shadow-action: 0 2px 0 rgba(15, 23, 32, 0.18);
+}
+[data-theme="dark"] {
+  --bg: #0c1013; --surface: #141a1f; --surface-2: #1a2127; --surface-3: #252d34;
+  --line: #263039; --line-strong: #6b7783;
+  --ink: #edf1f4; --ink-2: #b6c0c9; --ink-3: #8d99a4; --ink-inverse: #0f1720; --focus: #7db4ff;
+  --run: #22c55e; --run-strong: #15803d; --on-run: #ffffff; --run-soft: #0f2a1b; --run-ink: #86efac;
+  --stop: #f04848; --stop-strong: #c81e1e; --on-stop: #ffffff; --stop-soft: #2e1214; --stop-ink: #ffaaa8;
+  --zone-work: var(--run); --zone-plan: #4f8dff; --zone-unplanned: #ffc53d; --zone-failure: var(--stop); --zone-empty: var(--surface-3);
+  --plan-soft: #14213d; --plan-ink: #9cc0ff; --unplanned-soft: #2f2508; --unplanned-ink: #ffd36b;
+  --warn: #fbbf24; --warn-soft: #2b2209; --warn-ink: #ffd36b; --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-action: 0 2px 0 rgba(0, 0, 0, 0.45);
+}
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --radius-xs: 6px; --radius-sm: 10px; --radius-md: 16px; --radius-lg: 24px; --radius-pill: 999px;
+  --target-min: 48px; --target-glove: 64px; --action-height: 120px; --rail-width: 96px; --tabbar-height: 72px; --content-max: 1600px;
+  --font-sans: "Golos Text", "Segoe UI", system-ui, sans-serif;
+}

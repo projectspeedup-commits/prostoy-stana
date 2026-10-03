@@ -22,8 +22,8 @@ const EXCEL_EPOCH = 25569; // серийный номер Excel для 1970-01-0
 
 export const REPORT_SHEETS = ["Сводка", "По сменам", "Журнал простоев", "Приём и сдача смен"];
 
-// Цвета зон — токены --z-plan, --z-unplanned, --z-failure светлой темы (app.css); тест сверяет их с файлом.
-export const ZONE_FILL = { plan: "3B82F6", unplanned: "F2A900", failure: "E5383B" };
+// Цвета зон — токены --zone-plan, --zone-unplanned и --stop темы «День» (tokens.css); тест сверяет их с файлом.
+export const ZONE_FILL = { plan: "2563EB", unplanned: "D97706", failure: "DC2626" };
 const ZONE_TEXT = { plan: "FFFFFF", unplanned: "1A1C20", failure: "FFFFFF" };
 export const ZONE_LABEL = { plan: "Плановый простой", unplanned: "Внеплановый простой", failure: "Аварийный простой" };
 const ZONES = ["plan", "unplanned", "failure"];
