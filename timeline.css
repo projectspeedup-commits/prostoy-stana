@@ -153,7 +153,7 @@
   white-space: nowrap;
 }
 /* Бейдж целиком занимает ячейку подписи и не перекрывает соседние часы. */
-@media (min-width: 1100px) {
+@media not all {
   .ds-row--now { min-height: 16px; }
   .ds-row--now .ds-row__label { visibility: hidden; }
   .ds-nowbadge { top: 0; bottom: 0; width: 44px; transform: none;
@@ -252,7 +252,7 @@
 
 /* --- Горизонтальная шкала на экране уже 1100 px: планшет стоя и телефон --- */
 
-@media (max-width: 1099px) {
+@media all {
   .day-scale {
     width: 100%;
   }
@@ -365,10 +365,9 @@
   }
 }
 
-/* Легенда на телефоне — в два столбца */
+/* Легенда на телефоне — в один столбец: подписи «Внеплановый простой» и «Аварийный простой» длинные, в два столбца на 320 px не помещаются */
 @media (max-width: 480px) {
   .day-scale__legend {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px 12px;
   }
 }
@@ -388,7 +387,7 @@
 
 
 /* Узкий экран: шкала полосой под главными кнопками, чтобы не отодвигать их вниз */
-@media (max-width: 1099px) {
+@media all {
   .with-scale { grid-template-columns: minmax(0, 1fr); }
   .with-scale > .day-scale { order: 2; }
 }
@@ -399,7 +398,7 @@
 .ds-shift__name .ico { width: 16px; height: 16px; }
 .ds-shift { align-items: center; padding-block: 6px; }
 .day-scale__legend { border-top: 1px solid var(--metal-card-edge); padding-top: 10px; margin-top: 12px; gap: 6px; }
-@media (max-width: 1099px) {
+@media all {
   .ds-row { height: auto; margin: 0; }
   .ds-shift { padding: 0; }
   :root { --screen-gutter: 16px; }
@@ -408,7 +407,7 @@
   :root { --screen-gutter: 12px; }
   .ds-legend__item { font-size: 11px; }
 }
-@media (min-width: 1100px) and (max-height: 950px) {
+@media not all {
   .ds-row { height: 10px; }
   .ds-row__label { font-size: 11px; line-height: 10px; }
 }
@@ -416,7 +415,7 @@
 /* --- Монитор: главный экран целиком в высоту окна, без прокрутки (владелец, 01.10.2026) ---
    Шкала сжимает 48 строк под высоту, пульт забирает остаток справа, клавиши считаются
    от высоты пульта (cqh), три кнопки смены — в один ряд. Планшет и телефон — как раньше. */
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+@media not all {
   body:has(#main .with-scale) { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
   body:has(#main .with-scale) > .topbar { flex: none; width: 100%; box-sizing: border-box; padding-block: 12px; }
   body:has(#main .with-scale) > #main { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box;
@@ -467,7 +466,7 @@
   .shift-action .action-help { font-size: 12.5px; margin-top: 2px; }
 }
 /* Низкий монитор (ноутбук 1366×768 и т.п.): убираем второстепенные строки, чтобы клавиши не мельчали */
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) and (max-height: 760px) {
+@media not all {
   .mill-status { padding-block: 8px; margin-bottom: 8px; }
   .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
   .shift-avatar, .shift-person p.muted, .shift-action .action-help { display: none; }
@@ -480,14 +479,14 @@
   .mill-panel { padding: 12px 14px 8px; }
 }
 /* Монитор: клавиша заполняет всю половину пульта по ширине и высоте, табличка — под ней */
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+@media not all {
   .mill-panel { padding: 16px 16px 10px; gap: 10px 0; }
   .mill-btn { flex-direction: column; align-items: stretch; justify-content: stretch; gap: 10px; padding: 0 12px; }
   .mill-lamp { flex: 1 1 auto; width: 100%; height: auto; min-height: 0; max-width: none; aspect-ratio: auto; }
   .mill-label { flex: none; width: 100%; max-width: none; text-align: center; padding: 6px 10px; font-size: clamp(16px, 2.4cqi, 32px); }
 }
 /* Вертикальный монитор: клавиша не вытягивается в колонну — высота не больше 0,8 ширины половины пульта */
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+@media not all {
   .mill-btn { justify-content: center; }
   .mill-lamp { flex: 0 1 auto; height: 100%; max-height: calc((50cqi - 40px) * 0.8); }
 }
@@ -499,7 +498,7 @@
 .mill-btn { min-width: 0; container-type: inline-size; }
 .mill-label { box-sizing: border-box; max-width: 100%; font-size: clamp(10px, 7cqi, 32px); overflow-wrap: anywhere; }
 .current-shift { outline: 2px solid var(--focus); outline-offset: -2px; }
-@media (min-width: 1100px) and (min-height: 600px) and (orientation: landscape) {
+@media not all {
   .mill-lamp { max-height: 80cqi; }
 }
 @media (max-width: 820px) { .brand { display: none; } }
@@ -523,7 +522,7 @@
 .handover-preview summary { cursor: pointer; }
 .topbar { background: var(--metal-page); background-attachment: fixed; }
 .topbar::before { display: none; }
-.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 250px; justify-content: flex-start;
+.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 auto; justify-content: flex-start;
   min-height: 44px; padding: 6px; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; text-align: left; }
 .save-status .save-status-text, .save-status:not(.attention) .save-status-text {
   position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: normal; }
@@ -548,7 +547,7 @@
   #rejects { inset: 72px 8px 8px; width: auto; padding: 12px; }
 }
 /* Часы могут быть выше своей получасовой полоски. Не срезаем буквы строкой. */
-@media (min-width: 1100px) {
+@media not all {
   .ds-row { overflow: visible; }
   .ds-row__label { height: 14px; align-self: center; line-height: 14px; position: relative; z-index: 1; overflow: visible; }
   .ds-row--tick .ds-row__label { transform: translateY(-1px); }

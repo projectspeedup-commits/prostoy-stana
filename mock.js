@@ -4,6 +4,7 @@ import * as core from "./core/core.js";
 import { DEFAULT_REFS } from "./core/refs.js";
 import { computeStats, periodRange } from "./core/stats.js";
 import { settingsFromRefs, validateSettings } from "./core/settings.js";
+import { validateMailSettings, emptyMailSettings, normalizeEmail } from "./core/mail-settings.js";
 import { reportFile } from "./core/report.js";
 
 // Справочник причин, плиток и узлов — тот же, что у сервера
@@ -97,6 +98,11 @@ function serverTime() {
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Рассылка в демо: настройки живут в памяти вкладки, письма не отправляются
+let mailSettings = emptyMailSettings();
+let mailVersion = 1;
+const mailView = () => ({ ok: true, mail: mailSettings, mailVersion: String(mailVersion), smtpConfigured: true, envFallback: 0 });
+
 /** Замена fetch для app.js: api(path, {method, body}) → распарсенный ответ. */
 export async function api(path, options = {}) {
   await pause(120); // как сеть в цеху
@@ -106,6 +112,34 @@ export async function api(path, options = {}) {
   }
   const url = new URL(path, "http://mock.local");
   const method = (options.method || "GET").toUpperCase();
+  if (url.pathname === "/api/admin/ai/status" && method === "GET") return { ok: true, configured: true, model: "demo", spentTodayUsd: 0, dailyUsd: 1 };
+  if (url.pathname === "/api/admin/ai/ask" && method === "POST") {
+    return { ok: true, answer: "Демо: здесь будет ответ ИИ по данным стана.", costUsd: 0 };
+  }
+  if (url.pathname === "/api/admin/mail" && method === "GET") return mailView();
+  if (url.pathname === "/api/admin/mail" && method === "PUT") {
+    const fail = (status, error, message) => {
+      throw Object.assign(new Error("http_" + status), { status, data: { ok: false, error, message } });
+    };
+    let body;
+    try { body = JSON.parse(options.body || ""); }
+    catch { fail(400, "bad_request", "Некорректный JSON в теле запроса."); }
+    if (String(body?.mailVersion) !== String(mailVersion)) fail(409, "conflict", "Рассылку уже изменили на другом устройстве. Обновите экран и повторите.");
+    try { mailSettings = validateMailSettings(body?.mail); }
+    catch (e) {
+      if (e.code !== "bad_request") throw e;
+      fail(400, "bad_request", e.message);
+    }
+    mailVersion += 1;
+    return mailView();
+  }
+  if (url.pathname === "/api/mail/test" && method === "POST") {
+    let body = {};
+    try { body = JSON.parse(options.body || "{}"); } catch { /* пустое тело */ }
+    const email = normalizeEmail(body?.email);
+    if (!email) throw Object.assign(new Error("http_400"), { status: 400, data: { ok: false, error: "bad_request", message: "Укажите настоящий адрес электронной почты." } });
+    return { ok: true, to: [email], message: `Демо: письмо на ${email} не отправляется, настоящая отправка работает на сервере.` };
+  }
   if (url.pathname === "/api/admin/settings" && method === "GET") {
     return { ok: true, settings: settingsFromRefs(refs), refsVersion: REFS_VERSION };
   }

@@ -6,6 +6,7 @@ import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
 import { dayCells } from "./core/zones.js";
 import { dayScale } from "./timeline.js";
+import { validateMailSettings, normalizeEmail, MAIL_WHAT_TITLE } from "./core/mail-settings.js";
 
 const STORE_KEY = "stan.deviceKey";
 const QUEUE_KEY = "stan.queue";
@@ -351,7 +352,7 @@ async function loadRefs() {
       refs = d.refs;
       refsVersion = d.refsVersion || null;
       canAdmin = d.canAdmin !== false;
-      if (!canAdmin && ui.screen === "admin") ui.screen = "auto";
+      if (!canAdmin && (ui.screen === "admin" || ui.screen === "ai")) ui.screen = "auto";
       writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
       setOnline(true);
       render();
@@ -758,6 +759,8 @@ function icon(name) {
     chevron: "m9 5 7 7-7 7",
     sun: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M12 1v2M12 21v2M1 12h2M21 12h2M4 4l1.5 1.5M18.5 18.5 20 20M4 20l1.5-1.5M18.5 5.5 20 4",
     moon: "M20.5 14a9 9 0 0 1-10.5-10.5A9 9 0 1 0 20.5 14Z",
+    stopSq: "M7 7h10v10H7z",
+    play: "M8 5.5v13l10.5-6.5z",
     calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -854,6 +857,48 @@ function renderTopbar() {
     admin.hidden = !key || !canAdmin;
     admin.classList.toggle("is-on", ui.screen === "admin");
   }
+  // «Спросить ассистента»: только ключу владельца и только если ИИ есть на сервере (статус ещё не пришёл — кнопки нет)
+  const ask = $("ai-ask");
+  if (ask) {
+    if (!ask.dataset.bound) {
+      ask.dataset.bound = "1";
+      ask.addEventListener("click", () => {
+        if (!key || !refs || !canAdmin) return;
+        ui.aiFocus = true;
+        window.scrollTo(0, 0);
+        go("ai");
+      });
+    }
+    if (key && refs && canAdmin) loadAiStatus();
+    ask.hidden = !key || !refs || !canAdmin || !aiUi.status || Boolean(aiUi.status.unavailable);
+    ask.classList.toggle("is-on", ui.screen === "ai");
+  }
+  // Навигация: «Простои» и «Показатели», отметка текущего раздела
+  for (const [id, screen] of [["nav-shift", "shift"], ["nav-stats", "stats"]]) {
+    const b = $(id);
+    if (!b) continue;
+    if (!b.dataset.bound) {
+      b.dataset.bound = "1";
+      b.addEventListener("click", () => {
+        if (!key || !refs) return;
+        if (isDraftScreen(ui.screen)) ui.resume = ui.screen;
+        window.scrollTo(0, 0);
+        go(screen);
+      });
+    }
+    b.hidden = !key;
+  }
+  const current = { contact: "conn", shift: "nav-shift", detail: "nav-shift", stats: "nav-stats", admin: "admin", ai: "ai-ask" }[ui.screen]
+    || (!ui.screen || ui.screen === "auto" ? "demo" : null);
+  for (const id of ["demo", "nav-shift", "nav-stats", "conn", "admin", "ai-ask"]) {
+    const b = $(id);
+    if (!b) continue;
+    if (id === current) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  }
+  const clock = $("topclock-time");
+  if (clock && !clock.textContent) clock.textContent = fmtClock(nowMs()) + " МСК";
+  const date = $("topdate");
+  if (date) date.textContent = fmtDateLong(nowMs());
 }
 
 function renderRejects() {
@@ -1116,6 +1161,7 @@ function renderScreen() {
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
     case "admin": return renderAdmin(main, view);
+    case "ai": return renderAi(main);
     case "stats": return renderStats(main, view);
     case "detail": return renderDetail(main, view);
     case "repair": return renderRepair(main, view);
@@ -1174,7 +1220,10 @@ function loadAdmin() {
   if (adminReq) return;
   ui.admin = { loading: true };
   adminReq = api("/api/admin/settings")
-    .then((d) => { ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion }; })
+    .then(async (d) => {
+      ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion };
+      await loadAdminMail(ui.admin); // рассылка не должна ломать остальной раздел
+    })
     .catch((err) => {
       if (err && err.status === 401) badKey();
       ui.admin = { loadError: err && err.status === 403 ? (err.data?.message || "Раздел «Администратор» открывается только ключом владельца.")
@@ -1183,6 +1232,54 @@ function loadAdmin() {
         : "Нет связи с сервером. Настройки открываются и сохраняются только при связи." };
     })
     .finally(() => { adminReq = null; if (ui.screen === "admin") render(); });
+}
+
+// --- «Рассылка на почту»: получатели и расписание (отдельное хранилище на сервере, GET/PUT /api/admin/mail)
+const MAIL_DAYS = [[1, "Пн"], [2, "Вт"], [3, "Ср"], [4, "Чт"], [5, "Пт"], [6, "Сб"], [7, "Вс"]];
+const MAIL_QUICK = [
+  ["После каждой смены", [["08:05", "shift", [1, 2, 3, 4, 5, 6, 7]], ["20:05", "shift", [1, 2, 3, 4, 5, 6, 7]]]],
+  ["Утром за сутки", [["08:10", "day", [1, 2, 3, 4, 5, 6, 7]]]],
+  ["По понедельникам за неделю", [["08:15", "week", [1]]]],
+];
+function mailDraft(m) {
+  return {
+    recipients: ((m && m.recipients) || []).map((r) => ({
+      id: r.id ?? null, name: r.name || "", email: r.email || "", enabled: r.enabled !== false,
+      sends: (r.sends || []).map((x) => ({ time: x.time, what: x.what, days: [...(x.days || [1, 2, 3, 4, 5, 6, 7])] })),
+    })),
+  };
+}
+async function loadAdminMail(a) {
+  try {
+    const d = await api("/api/admin/mail");
+    a.mail = mailDraft(d.mail);
+    a.mailVersion = d.mailVersion;
+    a.smtpConfigured = d.smtpConfigured !== false;
+    a.envFallback = d.envFallback || 0;
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    a.mail = null; // старый сервер без рассылки: раздел просто не показываем
+    a.mailError = err && err.status && err.status !== 404 ? "Рассылку не удалось загрузить." : null;
+  }
+}
+function mailPayload(a) {
+  // Проверка тем же правилом, что на сервере; ошибка — по-русски
+  return validateMailSettings({ recipients: a.mail.recipients.map(({ id, name, email, enabled, sends }) => ({ id, name, email, enabled, sends })) });
+}
+async function sendMailTest(r) {
+  const test = r._test = { busy: true };
+  render();
+  const email = normalizeEmail(r.email);
+  if (!email) { r._test = { ok: false, text: "Сначала впишите настоящий адрес почты." }; return render(); }
+  try {
+    const d = await api("/api/mail/test", { method: "POST", body: JSON.stringify({ email, what: r.sends[0]?.what || "shift" }) });
+    r._test = { ok: true, text: d.message || `Пробное письмо отправлено на ${email}.` };
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    r._test = { ok: false, text: (err && err.data && err.data.message) || "Нет связи с сервером. Пробное письмо не отправлено." };
+  }
+  void test;
+  render();
 }
 const hmMin = (v) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
 const fmtLen = (min) => (min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
@@ -1208,6 +1305,10 @@ async function saveAdmin() {
   if (!a || !a.settings || a.saving) return;
   const s = a.settings;
   const problems = adminProblems(s);
+  let mailOut = null;
+  if (a.mail && a.mailDirty) {
+    try { mailOut = mailPayload(a); } catch (e) { problems.push(e.message); }
+  }
   if (problems.length) { a.error = problems; return render(); }
   a.saving = true;
   a.error = null;
@@ -1219,7 +1320,19 @@ async function saveAdmin() {
   };
   try {
     const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings, refsVersion: a.refsVersion }) });
-    ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion };
+    const keep = { mail: a.mail, mailVersion: a.mailVersion, smtpConfigured: a.smtpConfigured, envFallback: a.envFallback, mailDirty: a.mailDirty };
+    ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion, ...keep };
+    if (mailOut) {
+      try {
+        const m = await api("/api/admin/mail", { method: "PUT", body: JSON.stringify({ mail: mailOut, mailVersion: a.mailVersion }) });
+        Object.assign(ui.admin, { mail: mailDraft(m.mail), mailVersion: m.mailVersion, envFallback: m.envFallback || 0, mailDirty: false });
+      } catch (err) {
+        if (err && err.status === 401) badKey();
+        ui.admin.error = ["Настройки сохранены, а рассылка нет: " + ((err && err.data && err.data.message) || "нет связи с сервером. Повторите, когда связь появится.")];
+        render();
+        return;
+      }
+    }
     showToast("Настройки сохранены");
     await loadRefs();
   } catch (err) {
@@ -1230,6 +1343,79 @@ async function saveAdmin() {
       : "Нет связи с сервером. Настройки не сохранены — повторите, когда связь появится.")];
   }
   render();
+}
+// --- «Спросить ИИ о работе стана»: разговор живёт только в памяти страницы (POST /api/admin/ai/ask)
+const AI_EXAMPLES = ["Сколько стоял стан за эту неделю и почему?", "Какие причины простоев чаще всего в этом месяце?", "Сравни вчерашние сутки с позавчерашними", "Стан сейчас работает?"];
+const aiUi = { status: null, statusReq: false, log: [], text: "", busy: false, error: "" };
+function loadAiStatus() {
+  if (aiUi.statusReq || aiUi.status) return;
+  aiUi.statusReq = true;
+  api("/api/admin/ai/status")
+    .then((d) => { aiUi.status = d; })
+    .catch((err) => {
+      if (err && err.status === 401) badKey();
+      aiUi.status = { unavailable: true }; // старый сервер без ИИ: карточку не показываем
+    })
+    .finally(() => { if (ui.screen === "ai") render(); else renderTopbar(); });
+}
+async function askAi(question) {
+  question = String(question || "").trim();
+  if (!question || aiUi.busy) return;
+  const history = aiUi.log.slice(-6).map((m) => ({ role: m.role, content: m.content }));
+  aiUi.log.push({ role: "user", content: question });
+  aiUi.text = ""; aiUi.error = ""; aiUi.busy = true;
+  render();
+  try {
+    const d = await api("/api/admin/ai/ask", { method: "POST", body: JSON.stringify({ question, history }) });
+    aiUi.log.push({ role: "assistant", content: String(d.answer || "") });
+  } catch (err) {
+    if (err && err.status === 401) badKey();
+    // Вопрос без ответа убираем из ленты и истории и возвращаем в поле — его можно отправить ещё раз
+    aiUi.log.pop();
+    aiUi.text = question;
+    aiUi.error = (err && err.data && err.data.message) || "Нет связи с сервером. Повторите, когда связь появится.";
+  }
+  aiUi.busy = false;
+  if (ui.screen === "ai") ui.aiFocus = true;
+  render();
+}
+function aiCard() {
+  const st = aiUi.status;
+  if (!st || st.unavailable) return null;
+  const input = h("textarea", { class: "ai-input", maxlength: "1000", rows: "3", "aria-label": "Вопрос о работе стана", placeholder: "Например: почему вчера стоял стан?" });
+  input.value = aiUi.text;
+  input.addEventListener("input", () => { aiUi.text = input.value; });
+  // Enter отправляет вопрос, Shift+Enter — перенос строки (при наборе по-китайски/японски Enter не трогаем)
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); askAi(aiUi.text); }
+  });
+  return h("section", { class: "adm-card ai-card", "aria-label": "Спросить ИИ о работе стана" },
+    h("h2", { text: "Спросить ИИ о работе стана" }),
+    st.configured === false ? h("p", { class: "adm-banner", role: "status", text: "ИИ-консультант не настроен на сервере" }) : null,
+    h("div", { class: "ai-log", role: "log", "aria-live": "polite" },
+      aiUi.log.map((m) => h("div", { class: "ai-msg ai-" + m.role },
+        h("span", { class: "ai-who", text: m.role === "user" ? "Вы" : "ИИ" }),
+        h("p", { class: "ai-text", text: m.content })))),
+    st.configured === false ? null : h("div", { class: "ai-examples", role: "group", "aria-label": "Примеры вопросов" },
+      AI_EXAMPLES.map((q) => h("button", { type: "button", class: "btn btn-flat adm-chip", disabled: aiUi.busy, onclick: () => askAi(q) }, q))),
+    aiUi.error ? h("p", { class: "error-text", role: "alert", text: aiUi.error }) : null,
+    st.configured === false ? null : input,
+    st.configured === false ? null : h("div", { class: "ai-actions" },
+      h("button", { type: "button", class: "btn primary", disabled: aiUi.busy, onclick: () => askAi(aiUi.text) }, aiUi.busy ? "Думаю…" : "Спросить"),
+      h("button", { type: "button", class: "btn btn-flat", disabled: aiUi.busy, onclick: () => { aiUi.log = []; aiUi.error = ""; aiUi.text = ""; render(); } }, "Новый разговор")));
+}
+// Отдельный экран ассистента: та же карточка, что раньше жила в «Администраторе»
+function renderAi(main) {
+  if (!canAdmin) return go("auto");
+  loadAiStatus();
+  const card = aiCard();
+  fill(main, backBtn("На главный экран", () => go("auto")), question("Спросить ассистента"),
+    card || h("p", { class: "muted", text: "Ассистент сейчас недоступен." }));
+  if (ui.aiFocus) {
+    ui.aiFocus = false;
+    const input = main.querySelector(".ai-input");
+    if (input) input.focus();
+  }
 }
 function renderAdmin(main) {
   if (!canAdmin) return go("auto");
@@ -1244,6 +1430,7 @@ function renderAdmin(main) {
   };
   const head = [backBtn("Вернуться", leave), question("Администратор")];
   if (!ui.admin) loadAdmin();
+  loadAiStatus();
   const a = ui.admin;
   if (a.loading) return fill(main, ...head, h("p", { class: "muted", text: "Загружаем настройки…" }));
   if (a.loadError) {
@@ -1302,6 +1489,66 @@ function renderAdmin(main) {
       s.contacts.splice(s.contacts.indexOf(c), 1); touch(); render();
     } }, "Убрать"));
 
+
+  // --- Рассылка на почту
+  const mailTouch = () => { a.mailDirty = true; touch(); };
+  const addSends = (r, preset) => {
+    for (const [time, what, days] of preset) {
+      if (r.sends.length >= 10) break;
+      if (!r.sends.some((x) => x.time === time && x.what === what)) r.sends.push({ time, what, days: [...days] });
+    }
+    mailTouch(); render();
+  };
+  const sendRow = (r, x) => h("div", { class: "adm-send" },
+    h("div", { class: "adm-send-main" },
+      field("В", (() => {
+        const el = h("input", { type: "time", step: "60", required: true, "aria-label": "Время отправки, московское" });
+        el.value = x.time;
+        el.addEventListener("input", () => { x.time = el.value; mailTouch(); });
+        return el;
+      })()),
+      field("Что слать", sel(x.what, "Что слать", Object.entries(MAIL_WHAT_TITLE), (v) => { x.what = v; mailTouch(); }), "adm-grow")),
+    h("div", { class: "adm-days", role: "group", "aria-label": "Дни недели" },
+      MAIL_DAYS.map(([n, label]) => h("button", {
+        type: "button", class: "adm-day" + (x.days.includes(n) ? " is-on" : ""), "aria-pressed": x.days.includes(n) ? "true" : "false",
+        onclick: () => { x.days = x.days.includes(n) ? x.days.filter((d) => d !== n) : [...x.days, n].sort((p, q) => p - q); mailTouch(); render(); },
+      }, label))),
+    h("button", { type: "button", class: "btn btn-flat adm-del", "aria-label": "Убрать отправку", onclick: () => {
+      r.sends.splice(r.sends.indexOf(x), 1); mailTouch(); render();
+    } }, "Убрать"));
+  const recipientCard = (r) => {
+    const name = txt(r.name, { maxlength: "80", placeholder: "Например: Иванов И. И.", autocapitalize: "words" }, (v) => { r.name = v; mailTouch(); });
+    const email = txt(r.email, { type: "email", inputmode: "email", maxlength: "120", placeholder: "master@example.ru", autocapitalize: "none", spellcheck: "false" }, (v) => { r.email = v; mailTouch(); });
+    const on = h("button", { type: "button", class: "adm-switch" + (r.enabled ? " is-on" : ""), role: "switch", "aria-checked": r.enabled ? "true" : "false",
+      onclick: () => { r.enabled = !r.enabled; mailTouch(); render(); } }, h("span", { class: "adm-switch-knob" }), h("span", { text: r.enabled ? "Включён" : "Выключен" }));
+    const t = r._test;
+    return h("div", { class: "adm-mail-card" + (r.enabled ? "" : " is-off") },
+      h("div", { class: "adm-row adm-mail-head" }, field("Имя", name, "adm-grow"), field("Адрес почты", email, "adm-grow"), on),
+      h("div", { class: "adm-sends" },
+        r.sends.length ? r.sends.map((x) => sendRow(r, x)) : h("p", { class: "muted", text: "Отправок нет: этому получателю ничего не придёт." }),
+        r.sends.length < 10 ? h("button", { type: "button", class: "btn adm-add", onclick: () => { r.sends.push({ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }); mailTouch(); render(); } }, "Добавить отправку") : null),
+      h("div", { class: "adm-quick", role: "group", "aria-label": "Быстрый выбор" },
+        MAIL_QUICK.map(([title, preset]) => h("button", { type: "button", class: "btn btn-flat adm-chip", onclick: () => addSends(r, preset) }, title))),
+      h("div", { class: "adm-mail-foot" },
+        h("button", { type: "button", class: "btn adm-add", disabled: !!(t && t.busy), onclick: () => sendMailTest(r) }, t && t.busy ? "Отправляем…" : "Отправить пробное письмо"),
+        r._confirmDel
+          ? h("div", { class: "adm-confirm", role: "alert" }, h("span", { text: "Удалить получателя?" }),
+            h("button", { type: "button", class: "btn adm-del", onclick: () => { a.mail.recipients.splice(a.mail.recipients.indexOf(r), 1); mailTouch(); render(); } }, "Да, удалить"),
+            h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = false; render(); } }, "Отмена"))
+          : h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = true; render(); } }, "Удалить получателя")),
+      t && !t.busy && t.text ? h("p", { class: t.ok ? "adm-test-ok" : "error-text", role: "status", text: t.text }) : null);
+  };
+  const mailSection = a.mail ? h("section", { class: "adm-card", "aria-label": "Рассылка на почту" },
+    h("h2", { text: "Рассылка на почту" }),
+    a.smtpConfigured === false ? h("p", { class: "adm-banner", role: "status", text: "Отправка почты не настроена на сервере. Список можно править, но письма не уйдут." }) : null,
+    a.envFallback && !a.mail.recipients.length ? h("p", { class: "muted adm-note", text: `Пока список пуст, письма о смене уходят на адреса из настроек сервера (${a.envFallback}).` }) : null,
+    h("p", { class: "muted adm-note", text: "Время — московское. Письмо о смене приходит после её окончания: дневная заканчивается в 20:00, ночная в 08:00" }),
+    a.mail.recipients.length ? a.mail.recipients.map(recipientCard) : h("p", { class: "muted", text: "Получателей нет." }),
+    a.mail.recipients.length < 30 ? h("button", { type: "button", class: "btn adm-add", onclick: () => {
+      a.mail.recipients.push({ id: null, name: "", email: "", enabled: true, sends: [{ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }] });
+      mailTouch(); render();
+    } }, "Добавить получателя") : null) : (a.mailError ? h("p", { class: "error-text", text: a.mailError }) : null);
+
   fill(main, ...head,
     h("p", { class: "muted", text: "Изменения вступают в силу после «Сохранить» — сразу на всех планшетах." }),
     h("section", { class: "adm-card", "aria-label": "Время смен" },
@@ -1316,6 +1563,7 @@ function renderAdmin(main) {
       h("p", { class: "muted adm-note", text: "Первая кнопка на экране «Связаться» сама звонит мастеру, который принял смену, — по его телефону выше. Здесь — остальные номера." }),
       s.contacts.length ? s.contacts.map(contactRow) : h("p", { class: "muted", text: "Номеров нет." }),
       s.contacts.length < 12 ? h("button", { class: "btn adm-add", onclick: () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); } }, "Добавить номер") : null),
+    mailSection,
     a.error ? h("div", { class: "adm-errors", role: "alert" }, a.error.map((t) => h("p", { class: "error-text", text: t }))) : null,
     h("div", { class: "adm-actions" },
       h("button", { class: "btn primary", disabled: a.saving, onclick: saveAdmin }, a.saving ? "Сохраняем…" : "Сохранить"),
@@ -1509,41 +1757,36 @@ import("./report-ui.js").then((m) => {
   softRender();
 }).catch(() => { /* кнопки отчёта не будет */ });
 
-// Пульт стана: две одинаковые кнопки, как на станке. Горит та, что совпадает с состоянием стана
-function millPanel({ running, info, subtitle, hint, onGo, onStop }) {
-  const btn = (kind, on, label, onclick) => h("button", {
-    class: `mill-btn mill-${kind}${on ? " is-on" : ""}`,
-    "aria-pressed": on ? "true" : "false",
-    "aria-label": "СТАН " + label,
-    onclick: on ? () => showToast(running ? "Стан уже работает" : "Стан уже стоит") : onclick,
-  }, h("span", { class: "mill-lamp", "aria-hidden": "true" }),
-    h("span", { class: "mill-label" }, h("span", { text: "СТАН" }), h("span", { text: label })));
-  return h("div", { class: "mill-console" },
-    h("div", { class: "mill-status " + (running ? "is-run" : "is-stop") },
-      h("div", { class: "mill-state" }, icon("pulse"),
-        h("div", null, h("div", { class: "mill-state-title" }, running ? "Стан работает · " : "Стан стоит · ", info),
-          subtitle ? h("p", { class: "mill-subtitle", text: subtitle }) : null)),
-      reportMenu(),
-      h("div", { class: "mill-clock" }, icon("clock"),
-        h("div", null, h("span", { "data-msk": "1", text: fmtClock(nowMs()) + " МСК" }),
-          h("p", { class: "mill-subtitle", text: fmtDateLong(nowMs()) })))),
-    h("div", { class: "mill-panel" },
-      btn("go", running, "РАБОТАЕТ", onGo),
-      btn("stop", !running, "ОСТАНОВЛЕН", onStop),
-      hint ? h("p", { class: "mill-hint" }, icon("info"), h("span", { text: hint })) : null));
+// Пульт стана (дизайн-система, вариант A): панель состояния с таймером и одна кнопка —
+// единственное действие, доступное сейчас. Стан работает — «Стан встал», стоит — «Стан пошёл»
+function millPanel({ running, since, subtitle, hint, onGo, onStop }) {
+  const start = Number.isFinite(since) ? since : nowMs();
+  return h("div", { class: "pult" },
+    h("section", { class: "ps-state", "data-state": running ? "run" : "stop", "aria-live": "polite" },
+      h("div", { class: "pult-state__top" },
+        h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
+        reportMenu()),
+      h("h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
+      h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
+      subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null),
+    h("button", { class: "ps-action ps-action--" + (running ? "stop" : "run"), type: "button", "data-act": running ? "stop" : "run",
+      onclick: running ? onStop : onGo },
+      h("span", { class: "ps-action__icon" }, icon(running ? "stopSq" : "play")),
+      h("span", { class: "ps-action__text" },
+        h("span", { class: "ps-action__label", text: running ? "Стан встал" : "Стан пошёл" }),
+        hint ? h("span", { class: "ps-action__hint", text: hint }) : null)));
 }
 
 // Главный экран: стан работает
 function renderRun(main, view) {
-  const dts = shiftDowntimes(view);
   // С последнего пуска, даже если он был в прошлую смену; до первой записи о стане ничего не известно
   const lastStart = Math.min(nowMs(), runningSince(view));
   fill(main, withScale(view,
     millPanel({
       running: true,
-      info: h("span", { class: "mill-info", dataset: { since: String(lastStart), fmt: "durs" } }, fmtDurSec((nowMs() - lastStart) / 1000)),
-      subtitle: Number.isFinite(lastStart) ? `с ${fmtClock(lastStart)}` : null,
-      hint: "Нажмите красную кнопку, как только стан остановился",
+      since: lastStart,
+      subtitle: Number.isFinite(lastStart) ? `Пущен в ${fmtClock(lastStart)}` : null,
+      hint: "Нажмите сразу при остановке — время поставит система",
       onStop: () => {
         const downtimeId = crypto.randomUUID();
         send("stop", { downtimeId });
@@ -1600,7 +1843,7 @@ function zoneMark(zone) {
 }
 // Кольцо «работа и простой»: доли зон теми же цветами, что шкала суток
 function zoneDonut(st) {
-  const names = { work: "Работа", plan: "Плановый", unplanned: "Внеплановый", failure: "Авария" };
+  const names = { work: "Работа", plan: "Плановый простой", unplanned: "Внеплановый простой", failure: "Аварийный простой" };
   const rows = Object.keys(names).map((zone) => {
     const row = (st.byZone || []).find((item) => item.zone === zone);
     return { name: names[zone], minutes: row ? row.minutes : 0, cls: "z-" + zone };
@@ -1744,15 +1987,14 @@ function renderHandoverCard(open) {
 function renderStop(main, view) {
   const open = view.open;
   const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
-  const elapsed = nowMs() - since;
   const cur = open.reason;
 
   const left = h("div", null,
     millPanel({
       running: false,
-      info: h("span", { class: "mill-info" }, h("span", { class: "mill-timer", dataset: { since: String(since) } }, fmtTimer(elapsed))),
-      subtitle: `стоит с ${fmtSince(since, view.shift)}`,
-      hint: "Нажмите зелёную кнопку, когда стан заработал. Время пуска запомним сразу.",
+      since,
+      subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
+      hint: "Время пуска поставит система",
       onGo: () => {
         if (reusableRestart(ui.rw, view, nowMs()) && !ui.rw.thenClose) {
           return go(ui.wz?.mode === "restart" ? "reason" : ui.rw.route ? "restartAction" : "restartConfirm");
@@ -1861,28 +2103,36 @@ function forgottenTimeFields(view, draft, field, restart, next) {
       } }, label))), error, submit];
 }
 
+// У плитки черновика больше одного пункта — значит, шаг «Что именно?» был
+function tileMulti(draft) {
+  return reasonItems((refs.tiles || []).find((t) => t.id === draft.group)).length > 1;
+}
 function renderForgotStop(main, view) {
   const fw = ui.fw;
   if (!fw) return go("closeCheck");
   const back = () => {
     if (fw.step === 1) { go("closeCheck"); ui.resume = "forgotStop"; persistClient(); }
-    else { fw.step = (fw.step === 5 && fw.unknown) || fw.step === 4 ? 2 : fw.step - 1; render(); }
+    else { fw.step = fw.step === 5 && fw.unknown ? 2 : fw.step === 4 && !tileMulti(fw) ? 2 : fw.step - 1; render(); }
   };
-  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору группы", 4: "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
+  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору причины", 4: tileMulti(fw) ? "К выбору пункта" : "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
   const top = () => [backBtn(backLabels[fw.step], back),
     h("p", { class: "muted", text: "Забыли отметить остановку" }),
-    stepLine(fw.unknown && fw.step === 5 ? 3 : fw.step > 3 ? fw.step - 1 : fw.step, fw.unknown ? 3 : 4)];
+    fw.unknown ? stepLine(fw.step === 5 ? 3 : fw.step, 3) : fw.step >= 4 && !tileMulti(fw) ? stepLine(fw.step - 1, 4) : stepLine(fw.step, 5)];
   const next = () => { fw.step++; render(); };
   if (fw.step === 1) {
     fill(main, ...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, next));
     return;
   }
-  if (fw.step === 3) fw.step = 4; // шага «Что именно?» больше нет
   if (fw.reason) fw.reason = core.reasonKey(fw.reason);
   if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
+  if (fw.step === 3 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 2;
   if (fw.step === 2) {
     fill(main, ...top(), question("Почему стоит?"),
-      reasonGroups(fw, () => { fw.step = 4; render(); }));
+      reasonGroups(fw, (single) => { fw.step = single ? 4 : 3; render(); }));
+    return;
+  }
+  if (fw.step === 3) {
+    fill(main, ...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 4; render(); }));
     return;
   }
   if (fw.step === 4) {
@@ -2017,18 +2267,32 @@ function chooseReasonItem(draft, tile, item) {
   }
   ui.focusNote = true;
 }
+// Плитка → next(true), если пункт выбран сразу (он один); иначе next(false) — нужен шаг «Что именно?»
 function reasonGroups(draft, next) {
   return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
-    h("button", { class: "tile reason-group reason-zone-" + tile.zone + (draft.group === tile.id ? " sel" : ""),
+    h("button", { class: "tile reason-group reason-zone-" + tile.zone,
       onclick: () => {
         draft.group = tile.id;
         draft.unknown = false;
         const items = reasonItems(tile);
-        if (items.length === 1) chooseReasonItem(draft, tile, items[0]);
-        next();
+        const single = items.length === 1;
+        if (single) chooseReasonItem(draft, tile, items[0]);
+        next(single);
       } },
     h("span", { class: "reason-group-title", text: tile.title }),
     h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
+}
+// Шаг «Что именно?»: пункты плитки, полоска и подпись — по зоне пункта
+const ITEM_ZONE_LABEL = { plan: "плановый простой", unplanned: "внеплановый простой", failure: "аварийный простой" };
+function reasonChoices(draft, next) {
+  const tile = (refs.tiles || []).find((item) => item.id === draft.group);
+  return h("div", { class: "tiles reason-groups reason-items" }, reasonItems(tile).map((item) => {
+    const zone = zoneOf(core.reasonKey(item.code), refs);
+    return h("button", { class: "tile reason-group reason-zone-" + zone,
+      onclick: () => { chooseReasonItem(draft, tile, item); next(); } },
+    h("span", { class: "reason-group-title", text: item.label }),
+    h("span", { class: "reason-group-subtitle", text: ITEM_ZONE_LABEL[zone] || "" }));
+  }));
 }
 function focusReasonNote(ta) {
   if (!ui.focusNote) return;
@@ -2045,9 +2309,9 @@ function renderReasonWizard(main, view) {
   if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
   const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
   const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? 2 + offset : 2;
-  // При пуске шага «своими словами» нет: после выбора причины — сразу «Что сделали»
-  if (restarting && wz.step !== 1) wz.step = 1;
+  const total = restarting ? (wz.step === 1 || tileMulti(wz) ? 3 : 2) + offset : 3;
+  // При пуске шага «своими словами» нет: плитка → «Что именно?» → «Что сделали»
+  if (restarting && wz.step === 3) wz.step = 2;
   const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
@@ -2060,14 +2324,18 @@ function renderReasonWizard(main, view) {
       () => restartHasReason ? go("restartConfirm") : ui.rw.thenClose ? go("restartTime") : (ui.resume = "reason", go("auto"))],
   }[wz.mode];
 
+  if (wz.reason) wz.reason = core.reasonKey(wz.reason);
+  if (wz.step === 3 && !reasonRef(wz.reason)) wz.step = 1;
+  if (wz.step === 2 && !(refs.tiles || []).some((t) => t.id === wz.group)) wz.step = 1;
+
   if (wz.step === 1) {
     fill(main,
       backBtn(...back1),
       stepLine(1 + offset, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, () => {
-        if (restarting) return finishReasonWizard(wz.note || "");
-        wz.step = 3; render();
+      reasonGroups(wz, (single) => {
+        if (single && restarting) return finishReasonWizard(wz.note || "");
+        wz.step = single ? 3 : 2; render();
       }),
       !restarting && wz.mode === "past" ? h("button", {
         class: "btn btn-flat reason-later",
@@ -2080,9 +2348,17 @@ function renderReasonWizard(main, view) {
     return;
   }
 
-  if (wz.step === 2) wz.step = 3; // шага «Что именно?» больше нет
-  if (wz.reason) wz.reason = core.reasonKey(wz.reason);
-  if (wz.step >= 2 && !reasonRef(wz.reason)) wz.step = 1;
+  if (wz.step === 2) {
+    fill(main,
+      backBtn("К выбору причины", () => { wz.step = 1; render(); }),
+      stepLine(2 + offset, total),
+      question("Что именно?"),
+      reasonChoices(wz, () => {
+        if (restarting) return finishReasonWizard(wz.note || "");
+        wz.step = 3; render();
+      }));
+    return;
+  }
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
@@ -2105,8 +2381,9 @@ function renderReasonWizard(main, view) {
     finishReasonWizard(withNote ? ta.value : "");
   };
   fill(main,
-    backBtn("К выбору причины", () => { wz.step = 1; render(); }),
-    stepLine(2 + offset, total),
+    backBtn(reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? "К выбору пункта" : "К выбору причины",
+      () => { wz.step = reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? 2 : 1; render(); }),
+    stepLine(tileMulti(wz) ? 3 : 2, tileMulti(wz) ? 3 : 2),
     question(must ? "Что случилось? Опишите своими словами" : "Расскажите своими словами"),
     h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
     ta,
@@ -2205,12 +2482,12 @@ function renderRestartAction(main, view) {
     finishRestart(ta.value);
   } }, "Сохранить пуск");
   ta.addEventListener("input", () => { rw.action = ta.value; });
-  const total = 2 + (rw.thenClose ? 1 : 0);
+  const total = (rw.route === "reason" && ui.wz && tileMulti(ui.wz) ? 3 : 2) + (rw.thenClose ? 1 : 0);
   // Что по этому простою уже сделали прошлые смены (последние три записи)
   const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
   fill(main,
-    backBtn(rw.route === "reason" ? "К выбору причины" : "К причине", () => {
-      if (rw.route === "reason") { ui.wz.step = 1; go("reason"); }
+    backBtn(rw.route === "reason" ? (tileMulti(ui.wz) ? "К выбору пункта" : "К выбору причины") : "К причине", () => {
+      if (rw.route === "reason") { ui.wz.step = tileMulti(ui.wz) ? 2 : 1; go("reason"); }
       else go("restartConfirm");
     }),
     stepLine(total, total),
@@ -2229,7 +2506,8 @@ function renderRestartAction(main, view) {
 }
 // Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
 function reasonNeedsBillet(reason) {
-  return reason && ["unplanned", "failure"].includes(zoneOf(core.reasonKey(reason), refs));
+  const r = reason && reasonRef(core.reasonKey(reason));
+  return !!(r && r.askBillet);
 }
 function restartBilletSegment(rw, view) {
   const all = [...(serverState?.open?.segments || []), ...view.segments, view.open].filter((s) => s && s.downtimeId === rw.downtimeId);
@@ -2323,10 +2601,11 @@ function renderManual(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
   const back = () => {
-    if (mw.step > 1) { mw.step = mw.step === 5 ? 3 : mw.step - 1; render(); }
+    if (mw.step > 1) { mw.step = mw.step === 5 && !tileMulti(mw) ? 3 : mw.step - 1; render(); }
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
-  const top = () => [backBtn(mw.step > 1 ? "К предыдущему вопросу" : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), stepLine(mw.step > 4 ? mw.step - 1 : mw.step, 6)];
+  const backLabel = mw.step === 4 ? "К выбору причины" : mw.step === 5 && tileMulti(mw) ? "К выбору пункта" : "К предыдущему вопросу";
+  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
   const next = () => { mw.step++; mw.error = ""; render(); };
   if (mw.step <= 2) {
     const start = mw.step === 1;
@@ -2372,11 +2651,15 @@ function renderManual(main, view) {
       error, submit);
     return;
   }
-  if (mw.step === 4) mw.step = 5; // шага «Что именно?» больше нет
   if (mw.reason) mw.reason = core.reasonKey(mw.reason);
   if (mw.step >= 5 && mw.step <= 6 && !reasonRef(mw.reason)) mw.step = 3;
+  if (mw.step === 4 && !(refs.tiles || []).some((t) => t.id === mw.group)) mw.step = 3;
   if (mw.step === 3) {
-    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, () => { mw.step = 5; mw.error = ""; render(); }));
+    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, (single) => { mw.step = single ? 5 : 4; mw.error = ""; render(); }));
+    return;
+  }
+  if (mw.step === 4) {
+    fill(main, ...top(), question("Что именно?"), reasonChoices(mw, () => { mw.step = 5; mw.error = ""; render(); }));
     return;
   }
   const action = mw.step === 6;
@@ -2420,7 +2703,7 @@ function renderManualCheck(main, view) {
   const error = manualError(view, mw);
   fill(main,
     backBtn("К выполненным работам", () => { mw.step = 6; go("manual"); }),
-    stepLine(6, 6), question("Всё верно?"),
+    stepLine(7, 7), question("Всё верно?"),
     h("div", { class: "card" },
       h("div", { class: "card-title", text: `${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}` }),
       h("div", { class: "card-line", text: reasonLabel(mw.reason) }),

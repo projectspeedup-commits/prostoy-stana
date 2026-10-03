@@ -80,3 +80,35 @@
 @media (prefers-reduced-motion: no-preference) {
   .rep-btn, .rep-chip { transition: border-color 120ms ease-out; }
 }
+
+/* Монитор от 1024 px с мышью: полоса состояния крупнее — читается с расстояния. Телефоны и планшеты (в т. ч. альбомные, касание) не затронуты.
+   Стоит после правок высоты в timeline.css, поэтому перекрывает и их; длинная надпись переносится, часы не сжимаются */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  .mill-status { padding-block: 22px; gap: 24px; }
+  .mill-state { gap: 20px; }
+  .mill-state-title { font-size: clamp(28px, 4.2cqi, 44px); line-height: 1.15; overflow-wrap: anywhere; }
+  .mill-status .mill-subtitle { margin-top: 6px; font-size: clamp(16px, 1.9cqi, 20px); }
+  .mill-clock { gap: 16px; font-size: clamp(28px, 4.2cqi, 44px); line-height: 1.15; }
+  .rep-btn { height: 44px; padding: 0 16px; font-size: 16px; }
+  .rep-btn .ico { width: 22px; height: 22px; }
+}
+@container (min-width: 481px) {
+  @media (min-width: 1024px) and (hover: hover) and (pointer: fine) { .mill-clock { padding-left: 28px; } }
+}
+/* Значки крупные только в широкой полосе; в узкой (правая колонка на 1100–1300 px) остаются прежними, чтобы надпись не рвалась */
+@container (min-width: 701px) {
+  @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+    .mill-state > .ico, .mill-clock > .ico { display: block; flex: 0 0 auto; width: 48px; height: 48px; }
+  }
+}
+/* Невысокий монитор: подзаголовки и значки, как и раньше, скрыты, а полоса остаётся плотной, чтобы клавиши пульта не мельчали */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) and (max-height: 760px) {
+  .mill-status { padding-block: 12px; }
+  .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
+}
+/* Окно невысокое, но не крошечное: полоса чуть плотнее, чтобы клавиши пульта не потеряли высоту */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) and (max-height: 950px) {
+  .mill-status { padding-block: 8px; }
+  .mill-state-title, .mill-clock { font-size: clamp(28px, min(4.2cqi, 4vh), 44px); line-height: 1.1; }
+  .mill-status .mill-subtitle { margin-top: 0; font-size: 16px; line-height: 1.2; }
+}
