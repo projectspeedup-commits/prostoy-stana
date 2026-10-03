@@ -16,7 +16,9 @@ fi
 
 # Собираем сайт заново: страница рабочего без страницы пробы связи и ядро
 find "$WORK" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-cp app/public/{index.html,app.js,queue.js,app.css,theme.js,charts.js,timeline.js,timeline.css,mock.js,sw.js,icon.svg,manifest.webmanifest} "$WORK/"
+cp app/public/{index.html,app.js,queue.js,tokens.css,app.css,pult.css,theme.js,charts.js,timeline.js,timeline.css,mock.js,sw.js,icon.svg,manifest.webmanifest} "$WORK/"
+mkdir -p "$WORK/fonts"
+cp app/public/fonts/* "$WORK/fonts/"
 mkdir -p "$WORK/core"
 cp app/public/{report-ui.js,report.css} "$WORK/"
 cp app/core/{core.js,refs.js,stats.js,zones.js,settings.js,report-period.js,report.js,xlsx.js} "$WORK/core/"
