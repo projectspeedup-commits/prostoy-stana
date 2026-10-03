@@ -352,7 +352,7 @@ async function loadRefs() {
       refs = d.refs;
       refsVersion = d.refsVersion || null;
       canAdmin = d.canAdmin !== false;
-      if (!canAdmin && ui.screen === "admin") ui.screen = "auto";
+      if (!canAdmin && (ui.screen === "admin" || ui.screen === "ai")) ui.screen = "auto";
       writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
       setOnline(true);
       render();
@@ -855,6 +855,22 @@ function renderTopbar() {
     admin.hidden = !key || !canAdmin;
     admin.classList.toggle("is-on", ui.screen === "admin");
   }
+  // «Спросить ассистента»: только ключу владельца и только если ИИ есть на сервере (статус ещё не пришёл — кнопки нет)
+  const ask = $("ai-ask");
+  if (ask) {
+    if (!ask.dataset.bound) {
+      ask.dataset.bound = "1";
+      ask.addEventListener("click", () => {
+        if (!key || !refs || !canAdmin) return;
+        ui.aiFocus = true;
+        window.scrollTo(0, 0);
+        go("ai");
+      });
+    }
+    if (key && refs && canAdmin) loadAiStatus();
+    ask.hidden = !key || !refs || !canAdmin || !aiUi.status || Boolean(aiUi.status.unavailable);
+    ask.classList.toggle("is-on", ui.screen === "ai");
+  }
 }
 
 function renderRejects() {
@@ -1117,6 +1133,7 @@ function renderScreen() {
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
     case "admin": return renderAdmin(main, view);
+    case "ai": return renderAi(main);
     case "stats": return renderStats(main, view);
     case "detail": return renderDetail(main, view);
     case "repair": return renderRepair(main, view);
@@ -1311,7 +1328,7 @@ function loadAiStatus() {
       if (err && err.status === 401) badKey();
       aiUi.status = { unavailable: true }; // старый сервер без ИИ: карточку не показываем
     })
-    .finally(() => { if (ui.screen === "admin") render(); });
+    .finally(() => { if (ui.screen === "ai") render(); else renderTopbar(); });
 }
 async function askAi(question) {
   question = String(question || "").trim();
@@ -1332,6 +1349,7 @@ async function askAi(question) {
     aiUi.error = (err && err.data && err.data.message) || "Нет связи с сервером. Повторите, когда связь появится.";
   }
   aiUi.busy = false;
+  if (ui.screen === "ai") ui.aiFocus = true;
   render();
 }
 function aiCard() {
@@ -1340,6 +1358,10 @@ function aiCard() {
   const input = h("textarea", { class: "ai-input", maxlength: "1000", rows: "3", "aria-label": "Вопрос о работе стана", placeholder: "Например: почему вчера стоял стан?" });
   input.value = aiUi.text;
   input.addEventListener("input", () => { aiUi.text = input.value; });
+  // Enter отправляет вопрос, Shift+Enter — перенос строки (при наборе по-китайски/японски Enter не трогаем)
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); askAi(aiUi.text); }
+  });
   const usd = (n) => "$" + (Math.round(n * 1000) / 1000);
   return h("section", { class: "adm-card ai-card", "aria-label": "Спросить ИИ о работе стана" },
     h("h2", { text: "Спросить ИИ о работе стана" }),
@@ -1357,6 +1379,19 @@ function aiCard() {
     st.configured === false ? null : h("div", { class: "ai-actions" },
       h("button", { type: "button", class: "btn primary", disabled: aiUi.busy, onclick: () => askAi(aiUi.text) }, aiUi.busy ? "Думаю…" : "Спросить"),
       h("button", { type: "button", class: "btn btn-flat", disabled: aiUi.busy, onclick: () => { aiUi.log = []; aiUi.error = ""; aiUi.text = ""; render(); } }, "Новый разговор")));
+}
+// Отдельный экран ассистента: та же карточка, что раньше жила в «Администраторе»
+function renderAi(main) {
+  if (!canAdmin) return go("auto");
+  loadAiStatus();
+  const card = aiCard();
+  fill(main, backBtn("На главный экран", () => go("auto")), question("Спросить ассистента"),
+    card || h("p", { class: "muted", text: "Ассистент сейчас недоступен." }));
+  if (ui.aiFocus) {
+    ui.aiFocus = false;
+    const input = main.querySelector(".ai-input");
+    if (input) input.focus();
+  }
 }
 function renderAdmin(main) {
   if (!canAdmin) return go("auto");
@@ -1505,7 +1540,6 @@ function renderAdmin(main) {
       s.contacts.length ? s.contacts.map(contactRow) : h("p", { class: "muted", text: "Номеров нет." }),
       s.contacts.length < 12 ? h("button", { class: "btn adm-add", onclick: () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); } }, "Добавить номер") : null),
     mailSection,
-    aiCard(),
     a.error ? h("div", { class: "adm-errors", role: "alert" }, a.error.map((t) => h("p", { class: "error-text", text: t }))) : null,
     h("div", { class: "adm-actions" },
       h("button", { class: "btn primary", disabled: a.saving, onclick: saveAdmin }, a.saving ? "Сохраняем…" : "Сохранить"),

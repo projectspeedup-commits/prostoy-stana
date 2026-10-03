@@ -12,7 +12,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   fs.mkdirSync(root, { recursive: true });
   const profile = fs.mkdtempSync(path.join(root, 'chrome-qa-'));
   const now = Date.parse('2026-10-01T20:00:00Z');
-  const app = createApp({ dataDir: ':memory:', deviceKeys: 'a:k1,b:k2', now: () => new Date(now) });
+  const app = createApp({ dataDir: ':memory:', deviceKeys: 'a:k1,b:k2', now: () => new Date(now), aiConfig: { apiKey: 'sk-test', model: 'test', baseUrl: 'https://ai.example.test', dailyUsd: 1, priceIn: 0.3, priceOut: 1.2 } });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const origin = `http://127.0.0.1:${app.server.address().port}`;
   const post = async (events) => {
@@ -104,6 +104,17 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   await evaluate(`document.querySelector('#demo').click()`);
   assert.equal(await evaluate(`document.querySelector('#admin').getAttribute('aria-label')`), 'Администратор');
   assert.equal(await evaluate(`document.querySelector('#admin').title`), 'Администратор');
+  // «Спросить ассистента»: ключ владельца видит кнопку, она открывает отдельный экран с карточкой ИИ и ставит фокус в поле
+  await wait(`document.querySelector('#ai-ask') && !document.querySelector('#ai-ask').hidden`);
+  assert.equal(await evaluate(`document.querySelector('#ai-ask').getAttribute('aria-label')`), 'Спросить ассистента');
+  await evaluate(`document.querySelector('#ai-ask').click()`);
+  await wait(`document.querySelector('#main .ai-card .ai-input')`);
+  assert.equal(await evaluate(`document.activeElement === document.querySelector('.ai-input')`), true);
+  assert.equal(await evaluate(`document.querySelector('#ai-ask').classList.contains('is-on')`), true);
+  assert.match(await evaluate(`document.querySelector('#main h1').textContent`), /Спросить ассистента/);
+  assert.equal(await evaluate(`document.querySelector('#admin').querySelector('.pill-text') !== null && !document.querySelector('#main .adm-card:not(.ai-card)')`), true);
+  await evaluate(`document.querySelector('#demo').click()`);
+  await wait(`!document.querySelector('.ai-card')`);
   for (const [theme, pressed, label] of [['light', 'false', 'тёмную'], ['dark', 'true', 'светлую']]) {
     if (await evaluate(`document.documentElement.dataset.theme`) !== theme) await evaluate(`document.querySelector('#theme').click()`);
     assert.equal(await evaluate(`document.querySelector('#theme').getAttribute('aria-pressed')`), pressed);
@@ -127,7 +138,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
       await sleep(60);
       if (width === 320 && state === 'running') {
         const ax = await send('Accessibility.getFullAXTree');
-        for (const name of ['Администратор', 'Связаться', 'На главный экран', 'Переключить на светлую тему']) {
+        for (const name of ['Администратор', 'Спросить ассистента', 'Связаться', 'На главный экран', 'Переключить на светлую тему']) {
           assert.ok(ax.nodes.some((n) => n.role?.value === 'button' && n.name?.value === name), `Доступное имя: ${name}`);
         }
       }
@@ -328,6 +339,15 @@ test('UI: выбор ночной смены, квитанции, темы, ша
   assert.equal(await peerEval(`document.querySelectorAll('#rejects .reject').length`),2);
   assert.equal(await evaluate(`document.querySelectorAll('#rejects .reject').length`),2);
   await send('Target.closeTarget',{targetId:second.targetId}); peer.close();
+  // Ключ без права администратора: кнопки «Спросить ассистента» нет совсем
+  const guest = createApp({ dataDir: ':memory:', deviceKeys: 'a:k1,b:k2', adminDevices: ['a'], now: () => new Date(now) });
+  await new Promise((r) => guest.server.listen(0, '127.0.0.1', r));
+  try {
+    await send('Page.navigate', { url: `http://127.0.0.1:${guest.server.address().port}/#key=k2` });
+    await wait(`Object.keys(localStorage).some(k => /refs/i.test(k) && localStorage.getItem(k).includes('"canAdmin":false'))`);
+    await sleep(500);
+    assert.equal(await evaluate(`document.querySelector('#ai-ask').hidden && document.querySelector('#admin').hidden`), true);
+  } finally { await guest.close(); }
   fs.writeFileSync(path.join(root,'Раунд 2 пульт и связь.json'),JSON.stringify(layouts,null,2));
   // Ошибки HTTP во время намеренного офлайна ожидаемы; исключения JS и нарушения CSP запрещены.
   for (let i=errors.length-1;i>=0;i--) if (/ERR_INTERNET_DISCONNECTED|Failed to fetch/i.test(errors[i])) errors.splice(i,1);
