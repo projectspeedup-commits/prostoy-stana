@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createApp, aiConfigFromEnv } from "../../app/server/index.js";
+import { formatDuration, withDurationTexts } from "../../app/server/ai-tools.js";
 import { createAi, SYSTEM_INSTRUCTION, REFUSAL } from "../../app/server/ai.js";
 import { computeStats, periodRange } from "../../app/core/stats.js";
 
@@ -136,6 +137,8 @@ test("ИИ: get_period_stats за сутки совпадает с computeStats 
   assert.equal(got.downtime_minutes, stats.downMin);
   assert.equal(got.work_minutes, stats.workMin);
   assert.equal(got.stops, stats.stops);
+  assert.equal(got.downtime_text, formatDuration(stats.downMin));
+  assert.equal(got.work_text, formatDuration(stats.workMin));
   // сутки 01.10 против прямого вызова ядра
   const p2 = scripted([toolReply("get_period_stats", { from_day: "2026-10-01", to_day: "2026-10-01" }), textReply("ок")]);
   const s2 = await start(t, { aiConfig: CFG, aiFetch: p2.impl });
@@ -296,4 +299,29 @@ test("ИИ: STAN_AI_THINKING=low включает рассуждения", async
   assert.equal(aiConfigFromEnv({}).thinking, "off");
   assert.equal(aiConfigFromEnv({ STAN_AI_THINKING: "low" }).thinking, "low");
   assert.equal(aiConfigFromEnv({ STAN_AI_THINKING: "мусор" }).thinking, "off");
+});
+
+test("ИИ: форматирование длительности — д, ч, мин, нулевые части опущены", () => {
+  assert.equal(formatDuration(2071), "1 д 10 ч 31 мин");
+  assert.equal(formatDuration(314), "5 ч 14 мин");
+  assert.equal(formatDuration(45), "45 мин");
+  assert.equal(formatDuration(0), "0 мин");
+  assert.equal(formatDuration(1440), "1 д");
+  assert.equal(formatDuration(2885), "2 д 5 мин");
+  assert.equal(formatDuration(2910), "2 д 30 мин");
+});
+
+test("ИИ: рядом с полями минут добавляются текстовые, числа сохраняются", () => {
+  const out = withDurationTexts({ downtime_minutes: 2910, stopped_minutes: null, longest_stop: { minutes: 314, reason: "x" }, zones: [{ minutes: 45 }], stops: 3 });
+  assert.equal(out.downtime_minutes, 2910);
+  assert.equal(out.downtime_text, "2 д 30 мин");
+  assert.ok(!("stopped_text" in out));
+  assert.equal(out.longest_stop.duration, "5 ч 14 мин");
+  assert.equal(out.zones[0].duration, "45 мин");
+  assert.ok(!("stops_text" in out));
+});
+
+test("ИИ: инструкция содержит правило формата длительностей", () => {
+  assert.match(SYSTEM_INSTRUCTION, /N д N ч N мин/);
+  assert.match(SYSTEM_INSTRUCTION, /\*_text/);
 });

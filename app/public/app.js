@@ -1340,7 +1340,6 @@ async function askAi(question) {
   try {
     const d = await api("/api/admin/ai/ask", { method: "POST", body: JSON.stringify({ question, history }) });
     aiUi.log.push({ role: "assistant", content: String(d.answer || "") });
-    if (aiUi.status && !aiUi.status.unavailable && Number.isFinite(d.costUsd)) aiUi.status.spentTodayUsd = Math.round(((aiUi.status.spentTodayUsd || 0) + d.costUsd) * 1e6) / 1e6;
   } catch (err) {
     if (err && err.status === 401) badKey();
     // Вопрос без ответа убираем из ленты и истории и возвращаем в поле — его можно отправить ещё раз
@@ -1362,12 +1361,9 @@ function aiCard() {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); askAi(aiUi.text); }
   });
-  const usd = (n) => "$" + (Math.round(n * 1000) / 1000);
   return h("section", { class: "adm-card ai-card", "aria-label": "Спросить ИИ о работе стана" },
     h("h2", { text: "Спросить ИИ о работе стана" }),
-    st.configured === false
-      ? h("p", { class: "adm-banner", role: "status", text: "ИИ-консультант не настроен на сервере" })
-      : h("p", { class: "muted adm-note", text: `Потрачено сегодня: ${usd(st.spentTodayUsd || 0)} из $${st.dailyUsd}` }),
+    st.configured === false ? h("p", { class: "adm-banner", role: "status", text: "ИИ-консультант не настроен на сервере" }) : null,
     h("div", { class: "ai-log", role: "log", "aria-live": "polite" },
       aiUi.log.map((m) => h("div", { class: "ai-msg ai-" + m.role },
         h("span", { class: "ai-who", text: m.role === "user" ? "Вы" : "ИИ" }),

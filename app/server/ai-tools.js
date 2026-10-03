@@ -13,6 +13,37 @@ const MODE_TITLE = { planned: "плановый", unplanned: "внепланов
 const NOTE_LIMIT = 200;
 const TOP_REASONS = 12;
 
+/** Минуты → «1 д 10 ч 31 мин»; нулевые части опускаются, 0 → «0 мин». Сутки = 24 ч. */
+export function formatDuration(totalMinutes) {
+  const total = Math.max(0, Math.round(Number(totalMinutes) || 0));
+  const d = Math.floor(total / 1440);
+  const h = Math.floor((total % 1440) / 60);
+  const m = total % 60;
+  const parts = [];
+  if (d) parts.push(`${d} д`);
+  if (h) parts.push(`${h} ч`);
+  if (m) parts.push(`${m} мин`);
+  return parts.length ? parts.join(" ") : "0 мин";
+}
+
+/**
+ * Рядом с каждым числовым полем минут (`minutes`, `*_minutes`) добавляет текстовое:
+ * `minutes` -> `duration`, `x_minutes` -> `x_text`. Числа остаются для сравнений.
+ */
+export function withDurationTexts(value) {
+  if (Array.isArray(value)) return value.map(withDurationTexts);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, v] of Object.entries(value)) {
+    out[key] = withDurationTexts(v);
+    if (typeof v === "number" && Number.isFinite(v)) {
+      if (key === "minutes") out.duration = formatDuration(v);
+      else if (key.endsWith("_minutes")) out[key.slice(0, -"_minutes".length) + "_text"] = formatDuration(v);
+    }
+  }
+  return out;
+}
+
 /** Описания инструментов в формате OpenAI function calling. */
 export const TOOL_DEFINITIONS = [
   {
@@ -181,7 +212,7 @@ export function createAiTools({ readEvents, readRefs, eventStore, clock }) {
     const fn = Object.hasOwn(handlers, name) ? handlers[name] : null;
     if (!fn) return { error: `Неизвестный инструмент: ${name}` };
     try {
-      return fn(args && typeof args === "object" && !Array.isArray(args) ? args : {});
+      return withDurationTexts(fn(args && typeof args === "object" && !Array.isArray(args) ? args : {}));
     } catch {
       return { error: "Не удалось посчитать: внутренняя ошибка." };
     }
