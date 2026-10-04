@@ -1026,7 +1026,7 @@ function renderRejects() {
     ...rejected.map((g) => { const r = g.record; return h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: conflictMessage(g) }),
-      savedAnswers(g),
+      conflictAnswers(g),
       psButton("secondary", "Открыть сохранённую запись", () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
         ui.rejectsOpen = false;
@@ -1052,9 +1052,10 @@ function conflictMessage(g) {
   return g.record.event.type === "start" && target?.endMs != null
     ? `Стан уже пущен в ${fmtClock(target.endMs)} с другого устройства. Ваши ответы ждут решения.` : humanError(g.record.error);
 }
-function savedAnswers(g) {
+function savedAnswers(g, caption = null) {
   const f = g.fields;
   return h("div", { class: "ps-saved" },
+    caption ? h("strong", { text: caption }) : null,
     f.from ? h("p", { text: `Остановка: ${fmtDate(core.toMs(f.from))} ${fmtClock(core.toMs(f.from))}` }) : null,
     h("p", { text: `Причина: ${reasonLabel(f.reason) || "Не указана"}` }),
     h("p", { text: `Что случилось: ${f.note || "Не указано"}` }),
@@ -1062,16 +1063,40 @@ function savedAnswers(g) {
     h("p", { text: `Что сделали: ${f.action || "Не указано"}` }),
     h("p", { text: `Брак: ${f.billet == null ? "Не указан" : fmtTons(f.billet)}` }));
 }
+// Ответы, которые уже записаны на сервере с другого устройства (когда наша запись не прошла из-за занятых полей)
+function takenFields(g) {
+  if (g.record.error !== "fields_taken") return null;
+  const last = conflictTarget(g)?.segments?.at(-1);
+  if (!last) return null;
+  const f = { reason: last.reason, note: last.note, action: last.action, billet: last.billet };
+  return Object.values(f).some((v) => !core.emptyField(v)) ? f : null;
+}
+function otherAnswers(g) {
+  const f = takenFields(g);
+  if (!f) return null;
+  return h("div", { class: "ps-saved ps-saved--other" },
+    h("strong", { text: "Уже записано с другого устройства" }),
+    h("p", { text: `Причина: ${reasonLabel(f.reason) || "Не указана"}` }),
+    h("p", { text: `Что случилось: ${core.emptyField(f.note) ? "Не указано" : f.note}` }),
+    h("p", { text: `Что сделали: ${core.emptyField(f.action) ? "Не указано" : f.action}` }),
+    h("p", { text: `Брак: ${f.billet == null ? "Не указан" : fmtTons(f.billet)}` }));
+}
+// Свои ответы и ответы другого устройства рядом. Без чужих ответов — прежний вид
+function conflictAnswers(g) {
+  const other = otherAnswers(g);
+  return other ? [other, savedAnswers(g, "Ваши ответы")] : savedAnswers(g);
+}
 function transferButton(g) {
   const target = conflictTarget(g);
-  if (!target || (!target.endMs && g.record.event.type !== "stop")) return null;
+  if (!target || (!target.endMs && !["stop", "reason", "split", "fix"].includes(g.record.event.type))) return null;
   const last = target.segments.at(-1);
   const fields = transferFields(g.fields, last);
   const names = { reason: "Причина", note: "Что случилось", action: "Что сделали", billet: "Брак" };
   const busy = Object.keys(names).filter((k) => !core.emptyField(last[k]));
   return h("div", { class: "transfer" },
     busy.map((k) => h("p", { class: "ps-field__hint", text: `${names[k]} уже записано: ${k === "reason" ? reasonLabel(last[k]) : k === "billet" ? fmtTons(last[k]) : last[k]}. Это поле сохраним.` })),
-    psButton("secondary", g.record.event.type === "stop"
+    psButton("secondary", g.record.error === "fields_taken" ? "Перенести только пустые поля"
+      : g.record.event.type === "stop"
       ? `Перенести мою причину, брак и «что сделали» в простой ${fmtClock(target.startMs)}–${target.endMs ? fmtClock(target.endMs) : "сейчас"}`
       : "Добавить мою причину, брак и «что сделали» к этому простою", () => {
       const fresh = conflictTarget(g).segments.at(-1);
@@ -1082,7 +1107,9 @@ function transferButton(g) {
       receipt.groupId = g.key;
       receipt.transfers = g.records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.id);
       persistQueue(); flush(); render();
-    }, { lg: false, disabled: !Object.keys(fields).length }));
+    }, { lg: false, disabled: !Object.keys(fields).length }),
+    g.record.error === "fields_taken" && !Object.keys(fields).length
+      ? h("p", { class: "ps-field__hint", text: "Свободных полей нет, переносить нечего. Ответы другого устройства останутся." }) : null);
 }
 // Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
 // На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
@@ -3500,12 +3527,13 @@ function renderRepair(main, view) {
     h("span", { class: "ps-edit__label", text: label }), h("span", { class: "ps-edit__value", text: value || "Не указано" }));
   const choice = (field, label, value) => row(label, value, () => { repair.field = field; go("repairField"); });
   const replacement = records.findLast((r) => r.replaces === repair.id && r.status === "pending");
+  const taken = group && takenFields(group);
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
     backBtn("Вернуться, не исправляя", () => go(repair.back === "repair" ? "auto" : repair.back || "auto")),
     screenHead(eventTitle(e), "Исправить запись"),
     h("div", { class: "ps-notice", "data-tone": "stop" }, icon("alert", "ps-ico"),
       h("span", { class: "ps-notice__body", text: group ? conflictMessage(group) : humanError(record?.error) })),
-    group ? savedAnswers(group) : null, group ? transferButton(group) : null,
+    group ? conflictAnswers(group) : null, group ? transferButton(group) : null,
     h("section", { class: "ps-card" },
       h("h2", { class: "ps-card__title", text: "Что исправить" }),
       h("div", { class: "ps-rows" },
@@ -3524,7 +3552,15 @@ function renderRepair(main, view) {
     repair.error ? fieldError(repair.error) : null,
     replacement ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
       h("span", { class: "ps-notice__body", text: "Исправление сохранено на планшете и ждёт ответа сервера." })) : null,
-    psButton("primary", "Отправить исправление", submitRepair, { disabled: !!replacement })));
+    taken ? h("div", { class: "ps-notice", "data-tone": "stop" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: repair.confirmReplace
+        ? "Ответы другого устройства будут стёрты и заменены вашими. Это нельзя отменить."
+        : "Если отправить свои ответы, ответы другого устройства пропадут." })) : null,
+    taken ? psButton("secondary", repair.confirmReplace ? "Да, заменить ответы устройства" : "Заменить ответы устройства",
+      () => { if (repair.confirmReplace) { repair.confirmReplace = false; submitRepair(); } else { repair.confirmReplace = true; render(); } },
+      { disabled: !!replacement })
+      : psButton("primary", "Отправить исправление", submitRepair, { disabled: !!replacement }),
+    taken ? psButton("ghost", "Убрать мою запись", () => dismissRejected([repair.id]), { lg: false }) : null));
 }
 function renderRepairField(main) {
   const repair = ui.repair;
