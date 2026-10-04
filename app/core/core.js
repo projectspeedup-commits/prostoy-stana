@@ -175,8 +175,10 @@ export function eventTimeError(events, event, nowMs) {
     if (!built.open || id !== built.open.downtimeId) return "not_open";
     const last = built.segments.filter((s) => s.downtimeId === id).at(-1);
     if (last && at < last.startMs) return "bad_time";
-  } else if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) {
-    return "overlap";
+  } else {
+    // Ручной простой с занятым номером (в том числе номером открытого простоя) слил бы две записи в одну
+    if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
+    if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) return "overlap";
   }
   return "";
 }
@@ -500,6 +502,8 @@ export function eventInputError(event) {
     for (const field of ["reason", "node", "note", "action", "downtimeId"]) {
       if (event[field] != null && typeof event[field] !== "string") throw new Error();
     }
+    // Пустой номер простоя — не «нет номера»: простой с таким ID нельзя исправить через fix
+    if (typeof event.downtimeId === "string" && !event.downtimeId.trim()) throw new Error();
     for (const field of ["crewId", "personId"]) {
       if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
     }
