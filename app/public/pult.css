@@ -522,6 +522,12 @@ main:has(.ps-flow--chat) { max-width: 880px; }
 .ps-savebar .ps-btn--ghost:hover { background: transparent; text-decoration: underline; }
 .ps-savebar .ps-btn--primary { background: var(--surface); color: var(--ink); }
 .ps-savebar .ps-btn:focus-visible { outline-color: var(--ink-inverse); }
+/* Нижнее меню: sticky внутри блока не может подняться выше верха блока, и высокая панель оказывалась под меню (320×568).
+   До 1024 px панель закреплена у окна над меню (+ safe-area); место под неё — в конце страницы, чтобы не закрывать поля. */
+@media (max-width: 1023px) {
+  .ps-savebar { position: fixed; left: 12px; right: 12px; bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + var(--space-3)); }
+  main:has(.ps-savebar:not([hidden])) { padding-bottom: calc(220px + env(safe-area-inset-bottom)); }
+}
 @media (min-width: 1024px) { .ps-savebar { bottom: var(--space-4); } }
 @media (max-width: 599px) { .ps-savebar .ps-btn { flex: 1 1 120px; } }
 
