@@ -101,7 +101,7 @@ test('SW: install делает skipWaiting, даже если файл из сп
 });
 
 test('SW: activate удаляет все кэши, кроме текущего, и забирает страницы (clients.claim)', async () => {
-  const sw = loadSw({ cacheNames: ['stan-v70', 'stan-v75', 'stan-v76', 'other'] });
+  const sw = loadSw({ cacheNames: ['stan-v70', 'stan-v75', 'stan-v76', 'stan-v77', 'other'] });
   await run(sw.listeners.activate);
   assert.deepEqual(sw.deleted.sort(), ['other', 'stan-v70', 'stan-v75', 'stan-v76']);
   assert.equal(sw.log.claim, 1);
