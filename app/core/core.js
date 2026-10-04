@@ -166,6 +166,8 @@ export function eventTimeError(events, event, nowMs) {
       if (at <= start) return "overlap";
       return "already_stopped";
     }
+    // Повторное использование идентификатора закрытого простоя слило бы две остановки в одну
+    if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
     if (built.segments.some((s) => !s.open && s.endMs > at) ||
         events.some((e) => e.type === "start" && toMs(e.at) > at)) return "overlap";
   } else if (event.type === "start") {

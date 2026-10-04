@@ -65,7 +65,7 @@ export function settleRecords(records, state) {
   for (const r of records) {
     r.rootId = roots.get(r.event.id);
     if (savedRoots.has(r.rootId)) r.rootAccepted = true;
-    if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
+    if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && r.error !== 'duplicate_downtime' && known.has(r.event.downtimeId ?? r.event.id)))) {
       r.status = 'replaced';
       r.confirmedAt ||= records.findLast((next) => next.replaces === r.event.id)?.event.at || r.event.at;
       count++;

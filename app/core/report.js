@@ -147,13 +147,13 @@ function handoverRows(events, refs, schedule, fromMs, toMsEff) {
     if (t < fromMs || t > toMsEff) continue;
     const name = personName(event, refs);
     if (event.type === "shift_open") {
-      // Повторный приём тем же человеком без сдачи между ними — та же запись
-      if (open && !open.close && (open.open.name === name || !name)) continue;
       const sh = shiftOf(t, schedule);
+      // Повторный приём тем же человеком без сдачи между ними в той же смене — та же запись
+      if (open && !open.close && open.day === sh.day && open.shiftNo === sh.shiftNo && (open.open.name === name || !name)) continue;
       open = { day: sh.day, shiftNo: sh.shiftNo, open: { name, t }, close: null };
       rows.push(open);
     } else {
-      const close = { name, t, note: clean(event.note) };
+      const close = { name, t, note: clean(event.note), action: clean(event.action) };
       if (open && !open.close && t <= shiftOf(open.open.t, schedule).endMs + 2 * 3_600_000) {
         open.close = { ...close, name: close.name ?? open.open.name };
       } else {
@@ -190,9 +190,12 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
   for (const seg of built.segments) {
     const startMs = Math.max(seg.startMs, fromMs);
     const endMsClip = Math.min(seg.endMs, toEff);
-    if (endMsClip <= startMs) continue;
-    for (const piece of splitByShifts({ startMs, endMs: endMsClip }, schedule)) {
-      const shift = shiftOf(piece.startMs, schedule);
+    // Отрезок нулевой длительности без брака в журнал не попадает; с браком — остаётся, чтобы брак не терялся
+    const zero = endMsClip <= startMs;
+    if (zero && !(endMsClip === seg.endMs && startMs === seg.endMs && billetOf.get(seg) > 0)) continue;
+    for (const piece of zero ? [{ startMs: endMsClip, endMs: endMsClip }] : splitByShifts({ startMs, endMs: endMsClip }, schedule)) {
+      // Смена нулевого отрезка — как в core.billetSegments: та, где он завершился
+      const shift = shiftOf(zero ? piece.startMs - 1 : piece.startMs, schedule);
       const stop = stops.get(seg.downtimeId);
       const ongoing = seg.open === true && piece.endMs >= nowMs;
       const marks = [];
@@ -467,6 +470,11 @@ function journalSheet(data, ctx, masters) {
   };
 }
 
+/** Замечание при сдаче: автоматическая пометка и текст мастера «что сделали» — в одной ячейке, с переносом строки. */
+function closeText(close) {
+  return [close.note, close.action ? `Что сделали: ${close.action}` : ""].filter((part) => part).join("\n");
+}
+
 function handoverSheet(handovers, ctx) {
   const { refs } = ctx;
   const tz = refs.settings.schedule.tzOffsetMinutes || 0;
@@ -478,7 +486,7 @@ function handoverSheet(handovers, ctx) {
     rows.push([
       dayCell(h.day), text(`Смена ${h.shiftNo}`, { h: "center" }),
       text(h.open ? h.open.name || "Не указан" : ""), dateTime(h.open?.t ?? null, tz),
-      text(h.close ? h.close.name || "Не указан" : ""), dateTime(h.close?.t ?? null, tz), text(h.close ? h.close.note : ""),
+      text(h.close ? h.close.name || "Не указан" : ""), dateTime(h.close?.t ?? null, tz), text(h.close ? closeText(h.close) : ""),
     ]);
   }
   if (!handovers.length) {

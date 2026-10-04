@@ -119,3 +119,14 @@ test("состояние хранит время пуска прошлой см�
   assert.equal(s.state().segments.length, 0);
   assert.equal(s.state().runningSinceMs, Date.parse("2026-01-01T19:00:00Z"));
 });
+
+test("stop с уже использованным downtimeId закрытого простоя отклоняется как duplicate_downtime", (t) => {
+  const s = fixture(t);
+  s.save(event("a1", "stop", "08:00", "same"), event("a2", "start", "08:05", "same"));
+  assert.deepEqual(s.save(event("b1", "stop", "09:00", "same")), { saved: [], rejected: [{ id: "b1", error: "duplicate_downtime" }] });
+  // повтор того же события — идемпотентно
+  assert.deepEqual(s.save(event("a1", "stop", "08:00", "same")), { saved: ["a1"], rejected: [] });
+  assert.equal(s.state().running, true);
+  // новый id — нормально
+  assert.deepEqual(s.save(event("c1", "stop", "10:00", "other")), { saved: ["c1"], rejected: [] });
+});
