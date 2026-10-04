@@ -111,6 +111,9 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
 
     const text = detailsText(cell, fmtClock);
     row.title = text;
+    // Имя ячейки для экранного диктора и клавиатуры: время и статус (подпись внутри — только часы)
+    row.setAttribute("aria-label", text);
+    row.tabIndex = -1;
 
     const label = document.createElement("span");
     label.className = "ds-row__label";
@@ -165,6 +168,22 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
     });
 
     rows.appendChild(row);
+  });
+
+  // Шкала — одна точка табуляции (roving tabindex): Tab входит один раз, ←/→/↑/↓, Home, End двигают по ячейкам.
+  const rowList = [...rows.querySelectorAll(".ds-row")];
+  const setStop = (row) => { for (const r of rowList) r.tabIndex = r === row ? 0 : -1; };
+  setStop(rowList.find((r) => r.classList.contains("ds-row--now")) || rowList[0]);
+  rows.addEventListener("focusin", (e) => { if (rowList.includes(e.target)) setStop(e.target); });
+  rows.addEventListener("keydown", (e) => {
+    const at = rowList.indexOf(document.activeElement);
+    if (at < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+    const to = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: rowList.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    const next = rowList[Math.min(rowList.length - 1, Math.max(0, to))];
+    setStop(next);
+    next.focus();
   });
 
   root.appendChild(rows);

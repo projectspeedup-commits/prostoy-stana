@@ -100,12 +100,15 @@ main:has(.with-scale) { max-width: var(--content-max); margin: 0 auto; }
 .appnav .pill:hover { background: var(--surface-2); color: var(--ink); }
 .appnav .pill[aria-current="page"] { background: var(--ink); color: var(--ink-inverse); }
 body { padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom)); }
+/* Автопрокрутка к элементу в фокусе (Tab) останавливается выше нижнего меню, а не под ним */
+html { scroll-padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + var(--space-3)); }
 .toast { bottom: calc(var(--tabbar-height) + 16px + env(safe-area-inset-bottom)); }
 @media (min-width: 1024px) {
   .appnav { top: 0; bottom: 0; right: auto; width: var(--rail-width); grid-auto-flow: row; grid-auto-rows: min-content; grid-auto-columns: auto;
     align-content: start; gap: var(--space-1); padding: calc(76px + env(safe-area-inset-top)) 4px var(--space-3);
     border-top: 0; border-right: 1px solid var(--line); }
   body { padding-bottom: 0; padding-left: var(--rail-width); }
+  html { scroll-padding-bottom: var(--space-3); }
   .toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
   /* Подпись под значком: «Показатели» не помещается в 80 px крупным шрифтом */
   .appnav .pill { font-size: 13px; padding-inline: 0; }

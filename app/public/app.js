@@ -1944,7 +1944,8 @@ function scaleFor(view) {
 }
 // Главный экран: шкала слева (на узком экране — под кнопками), справа всё остальное
 function withScale(view, ...kids) {
-  return h("div", { class: "with-scale" }, scaleFor(view), h("div", { class: "with-scale__main" }, ...kids));
+  // Шкала в DOM после пульта: Tab доходит до «Стан встал» раньше шкалы; на экране она и так внизу (order: 2)
+  return h("div", { class: "with-scale" }, h("div", { class: "with-scale__main" }, ...kids), scaleFor(view));
 }
 
 // «Отчёт в Excel» подключается отдельно: если файл не загрузится, пульт работает как раньше
