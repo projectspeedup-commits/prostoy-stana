@@ -41,6 +41,9 @@ function detailsText(cell, fmtClock) {
   return range + ": " + parts.join(", ");
 }
 
+// Память шкалы между перерисовками: интервалы по началу ячейки (мс)
+const memo = { stop: null, sel: null };
+
 export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon }) {
   const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
 
@@ -114,6 +117,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
     // Имя ячейки для экранного диктора и клавиатуры: время и статус (подпись внутри — только часы)
     row.setAttribute("aria-label", text);
     row.tabIndex = -1;
+    row.dataset.start = String(cell.startMs);
 
     const label = document.createElement("span");
     label.className = "ds-row__label";
@@ -156,12 +160,14 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
       if (selected === row) {
         row.classList.remove("ds-row--sel");
         selected = null;
+        memo.sel = null;
         details.hidden = true;
         details.textContent = "";
         return;
       }
       if (selected) selected.classList.remove("ds-row--sel");
       selected = row;
+      memo.sel = row.dataset.start;
       row.classList.add("ds-row--sel");
       details.textContent = text;
       details.hidden = false;
@@ -173,8 +179,17 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
   // Шкала — одна точка табуляции (roving tabindex): Tab входит один раз, ←/→/↑/↓, Home, End двигают по ячейкам.
   const rowList = [...rows.querySelectorAll(".ds-row")];
   const setStop = (row) => { for (const r of rowList) r.tabIndex = r === row ? 0 : -1; };
-  setStop(rowList.find((r) => r.classList.contains("ds-row--now")) || rowList[0]);
-  rows.addEventListener("focusin", (e) => { if (rowList.includes(e.target)) setStop(e.target); });
+  // Шкала перерисовывается по таймеру: точка табуляции и открытая ячейка остаются на прежнем интервале
+  const byStart = (start) => (start ? rowList.find((r) => r.dataset.start === start) : null);
+  setStop(byStart(memo.stop) || rowList.find((r) => r.classList.contains("ds-row--now")) || rowList[0]);
+  const keep = byStart(memo.sel);
+  if (keep) {
+    selected = keep;
+    keep.classList.add("ds-row--sel");
+    details.textContent = keep.title;
+    details.hidden = false;
+  } else memo.sel = null;
+  rows.addEventListener("focusin", (e) => { if (rowList.includes(e.target)) { setStop(e.target); memo.stop = e.target.dataset.start; } });
   rows.addEventListener("keydown", (e) => {
     const at = rowList.indexOf(document.activeElement);
     if (at < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -183,6 +198,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
     e.preventDefault();
     const next = rowList[Math.min(rowList.length - 1, Math.max(0, to))];
     setStop(next);
+    memo.stop = next.dataset.start;
     next.focus();
   });
 

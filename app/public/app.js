@@ -86,8 +86,11 @@ const restored = readJSON(SESSION_KEY, {});
 let serverState = restored.state || null;
 let stateAt = restored.stateAt || null;
 let queueStoredSeparately = restored.queueSeparated === true || !Array.isArray(restored.queue);
-let queue = queueStoredSeparately ? loadQueue() : restored.queue;
-let records = Array.isArray(restored.records) ? restored.records : [];
+// Повреждённые элементы старой сессии (null, запись без event.id) отбрасываем при чтении: исправные остаются
+const goodEvent = (e) => !!e && typeof e.id === "string" && typeof e.type === "string";
+const goodRecord = (r) => !!r && typeof r === "object" && goodEvent(r.event);
+let queue = queueStoredSeparately ? loadQueue() : restored.queue.filter(goodEvent);
+let records = Array.isArray(restored.records) ? restored.records.filter(goodRecord) : [];
 for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
   const receipt = restored.pendingReplacements?.find((r) => r.id === event.id);
   records.push({ ...receipt, event, status: "pending" });
@@ -145,7 +148,7 @@ function mergeStored() {
   const diskQueue = loadQueue();
   const missing = diskQueue.filter((e) => !records.some((r) => r.event.id === e.id))
     .map((event) => ({ ...saved.pendingReplacements?.find((r) => r.id === event.id), event, status: "pending" }));
-  records = mergeRecords(saved.records || [], missing, records);
+  records = mergeRecords((Array.isArray(saved.records) ? saved.records : []).filter(goodRecord), missing, records);
   settleRejected();
   queue = mergeQueue(records, diskQueue, queue);
 }
@@ -1166,16 +1169,17 @@ function receiptFor(downtimeId) {
 }
 
 function reasonRef(code) {
-  return code && refs.reasons ? refs.reasons[code] : undefined;
+  return code && refs && refs.reasons ? refs.reasons[code] : undefined;
 }
 function reasonLabel(code) {
+  if (!refs) return code || ""; // справочник ещё не загружен: показываем код, экран перерисуется после /api/refs
   const r = reasonRef(code);
   // «Иная причина» — с группой: «Иная механическая причина»
   if (r && r.other) return r.title || r.short || "Иная причина";
   return r ? r.short || r.title || "Причина без названия" : code ? "Уточните причину" : "";
 }
 function personName(id) {
-  const p = (refs.people || []).find((x) => x.id === id);
+  const p = ((refs && refs.people) || []).find((x) => x.id === id);
   return p ? p.name : "—";
 }
 // ФИО мастера: введённое при приёме смены, иначе из списка
@@ -1183,7 +1187,7 @@ function personLabel(id, name) {
   return typeof name === "string" && name.trim() ? name.trim() : personName(id);
 }
 function crewTitle(id) {
-  const c = (refs.crews || []).find((x) => x.id === id);
+  const c = ((refs && refs.crews) || []).find((x) => x.id === id);
   return c ? c.title : id != null && id !== "" ? `Смена ${id}` : "—";
 }
 // ФИО полностью: три слова и больше, без инициалов с точками
@@ -1772,7 +1776,28 @@ function softRender() {
     renderTopbar();
     return;
   }
+  const main = $("main");
+  const sig = a && a !== document.body && main.contains(a) ? focusSignature(a, main) : null;
   render();
+  // render() пересобирает дочерние элементы main: клавиатурный фокус вернуть на тот же по смыслу элемент
+  if (sig && !a.isConnected && (!document.activeElement || document.activeElement === document.body)) {
+    const all = [...main.querySelectorAll(sig.tag)];
+    const target = all.filter((e) => focusKey(e) === sig.strict)[sig.nthStrict] || all.filter((e) => focusKey(e, true) === sig.loose)[sig.nthLoose];
+    if (target) target.focus({ preventScroll: true });
+  }
+}
+// Стабильный признак элемента: тег, id, data-атрибуты, роль, подпись и текст; nth — номер среди одинаковых
+function focusKey(el, loose = false) {
+  if (el.classList.contains("ds-row")) return JSON.stringify(["ds-row", el.dataset.start]);
+  const data = Object.keys(el.dataset).sort().map((k) => k + "=" + el.dataset[k]);
+  const base = [el.tagName, el.id, el.getAttribute("role") || "", el.className, data];
+  // loose — без подписи и текста: у кнопок с живым временем текст меняется между обновлениями
+  return JSON.stringify(loose ? base : [...base, el.getAttribute("aria-label") || "", (el.textContent || "").trim().slice(0, 80)]);
+}
+function focusSignature(el, main) {
+  const all = [...main.querySelectorAll(el.tagName)];
+  const nthOf = (loose) => all.filter((e) => focusKey(e, loose) === focusKey(el, loose)).indexOf(el);
+  return { tag: el.tagName, strict: focusKey(el), loose: focusKey(el, true), nthStrict: nthOf(false), nthLoose: nthOf(true) };
 }
 
 function renderKey(main) {
