@@ -90,8 +90,8 @@ async function run(listener) {
   await p;
 }
 
-test('SW: версия кэша stan-v76', () => {
-  assert.match(SW_SOURCE, /const CACHE = "stan-v76"/);
+test('SW: версия кэша stan-v77', () => {
+  assert.match(SW_SOURCE, /const CACHE = "stan-v77"/);
 });
 
 test('SW: install делает skipWaiting, даже если файл из списка не скачался', async () => {
@@ -103,7 +103,7 @@ test('SW: install делает skipWaiting, даже если файл из сп
 test('SW: activate удаляет все кэши, кроме текущего, и забирает страницы (clients.claim)', async () => {
   const sw = loadSw({ cacheNames: ['stan-v70', 'stan-v75', 'stan-v76', 'other'] });
   await run(sw.listeners.activate);
-  assert.deepEqual(sw.deleted.sort(), ['other', 'stan-v70', 'stan-v75']);
+  assert.deepEqual(sw.deleted.sort(), ['other', 'stan-v70', 'stan-v75', 'stan-v76']);
   assert.equal(sw.log.claim, 1);
 });
 
