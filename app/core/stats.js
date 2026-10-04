@@ -250,8 +250,14 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     const cls = classify(row.segment, refs, refs.settings);
     const reason = hasText(row.segment.reason) ? row.segment.reason : null;
     const key = JSON.stringify([reason, cls.group, cls.mode]);
-    const reasonRow = reasonRows.get(key);
-    if (reasonRow) reasonRow.billet += row.billet;
+    let reasonRow = reasonRows.get(key);
+    if (!reasonRow) {
+      // Простой нулевой длительности: видимых отрезков нет, но брак принадлежит его причине (0 мин, 0 остановок)
+      const ref = reason ? refs.reasons[reason] : null;
+      reasonRow = { reason, title: reason === null ? NO_REASON_TITLE : ref?.title || reason, group: cls.group, mode: cls.mode, ms: 0, billet: 0, ids: new Set() };
+      reasonRows.set(key, reasonRow);
+    }
+    reasonRow.billet += row.billet;
   }
   let billetStops = 0;
   let noBillet = 0;

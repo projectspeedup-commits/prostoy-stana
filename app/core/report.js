@@ -236,7 +236,7 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
     return [zone, apportionMs(msList, target)];
   }));
   const firstShift = new Map(); // остановка → ключ смены, где она появилась в периоде первой
-  for (const p of parts) if (!firstShift.has(p.downtimeId)) firstShift.set(p.downtimeId, `${p.day}|${p.shiftNo}`);
+  for (const p of parts) if (p.ms > 0 && !firstShift.has(p.downtimeId)) firstShift.set(p.downtimeId, `${p.day}|${p.shiftNo}`);
   const shiftRows = [];
   slots.forEach((slot, i) => {
     if (accounted[i] <= 0) return;
@@ -361,9 +361,10 @@ function summarySheet(data, ctx) {
     const key = r.reason ?? "";
     merged.set(key, { reason: r.reason ?? null, minutes: (merged.get(key)?.minutes ?? 0) + r.minutes });
   }
+  // Нулевая часть (она в журнале ради брака) остановкой не считается — как в stats.js
   const reasons = [...merged.values()].map((r) => ({
-    ...r, stops: new Set(parts.filter((p) => p.reason === r.reason).map((p) => p.downtimeId)).size,
-  })).sort((a, b) => b.minutes - a.minutes || compareText(reasonTitle(a.reason, refs), reasonTitle(b.reason, refs)));
+    ...r, stops: new Set(parts.filter((p) => p.ms > 0 && p.reason === r.reason).map((p) => p.downtimeId)).size,
+  })).filter((r) => r.minutes > 0 || r.stops > 0).sort((a, b) => b.minutes - a.minutes || compareText(reasonTitle(a.reason, refs), reasonTitle(b.reason, refs)));
   let sumMin = 0;
   let sumStops = 0;
   for (const r of reasons) {
