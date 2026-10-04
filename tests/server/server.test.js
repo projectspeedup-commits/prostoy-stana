@@ -169,3 +169,20 @@ test("probe-summary считает долю и самый длинный пер�
 test("сервер без ключей не создаётся", () => {
   assert.throws(() => createApp({ dataDir: ":memory:", deviceKeys: [] }), /ключ/);
 });
+
+test("qa7: 1 МиБ на трёх маршрутах — 30 подряд 413 без обрыва соединения", async () => {
+  const s = await start({ deviceKeys: [{ name: "owner", key: KEY }], rateLimit: 100000 });
+  try {
+    const big = "x".repeat(1024 * 1024);
+    for (const [path, method] of [["/api/events", "POST"], ["/api/admin/ai/ask", "POST"], ["/api/mail/test", "POST"]]) {
+      for (let i = 0; i < 30; i++) {
+        const r = await fetch(`${s.url}${path}`, { method, headers: { ...HEAD, Connection: "close" }, body: big });
+        assert.equal(r.status, 413, `${path} #${i}`);
+        assert.equal(r.headers.get("connection"), "close");
+        await r.text();
+      }
+    }
+  } finally {
+    await s.a.close();
+  }
+});

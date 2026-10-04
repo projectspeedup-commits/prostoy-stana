@@ -119,7 +119,8 @@ test("отчёт: сводка совпадает с «Показателями�
     const journal = wb.sheets[2].rows.slice(3).filter((r) => r && typeof r[0]?.value === "number");
     assert.equal(journal.length, 3);
     assert.equal(journal.at(-1)[12].value, "ещё идёт; причина не указана");
-    assert.equal(minutesOf(journal.at(-1)[6]), 31, "с 14:30:00 до 15:00:30 — 30 мин 30 с, как на экране — 31");
+    assert.equal(minutesOf(journal.at(-1)[6]), 30, "с 14:30:00 до 15:00:30 — 30 мин 30 с; остаток округления ушёл частям с большим остатком");
+    assert.equal(journal.reduce((sum, r) => sum + minutesOf(r[6]), 0), stats.downMin, "сумма журнала = «Простой» из /api/stats");
   } finally { await app.close(); }
 });
 

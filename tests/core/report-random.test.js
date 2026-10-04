@@ -132,12 +132,13 @@ for (let seed = 1; seed <= 60; seed++) {
     parts.forEach((p, i) => {
       assert.ok(p.startMs >= fromMs && p.endMs <= toMsEff && p.endMs <= now && p.endMs > p.startMs);
       if (i) assert.ok(parts[i - 1].endMs <= p.startMs, "стан один: части простоев не пересекаются");
-      assert.equal(p.minutes, Math.round((p.endMs - p.startMs) / MIN), "минуты части — как на экране");
+      assert.ok(Math.abs(p.minutes - (p.endMs - p.startMs) / MIN) < 1, "минуты части — вниз или вверх от точной длительности");
       const sh = shiftOf(p.startMs, schedule);
       assert.ok(p.endMs <= sh.endMs && p.startMs >= sh.startMs, "часть внутри одной смены");
       assert.equal(p.day, sh.day);
       assert.equal(p.shiftNo, sh.shiftNo);
     });
+    assert.equal(parts.reduce((s, p) => s + p.minutes, 0), stats.downMin, "сумма минут журнала = «Простой» периода");
     const ongoing = parts.filter((p) => p.ongoing);
     assert.ok(ongoing.length <= 1);
     if (ongoing.length) assert.equal(ongoing[0], parts.at(-1));

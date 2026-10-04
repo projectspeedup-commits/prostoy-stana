@@ -432,7 +432,7 @@ test("пустая сводка по причинам: «Простоев за �
   assert.equal(summaryCell(sheet, "Доля работы").value, 1);
 });
 
-test("сумма журнала округляется по строкам: расхождение с «Простоем» объясняется в сводке", () => {
+test("минуты журнала раздаются методом наибольших остатков: сумма журнала равна «Простою»", () => {
   const E = eventMaker();
   const d = "2026-10-01";
   const events = [E("shift_open", d, "08:00:00", { crewId: "1", personId: "p1", personName: "Иванов Иван Иванович" })];
@@ -442,10 +442,32 @@ test("сумма журнала округляется по строкам: ра
   });
   const { wb } = build(events, { fromDay: d, toDay: d, nowMs: T(d, "12:00:00") });
   assert.equal(minutesOf(summaryCell(wb.sheets[0], "Простой")), 5, "три по 1 мин 30 с = 4,5 мин → 5");
-  assert.deepEqual(journal(wb).map((r) => r.minutes), [2, 2, 2], "каждая часть округлена, как на экране");
+  const minutes = journal(wb).map((r) => r.minutes);
+  assert.deepEqual(minutes, [2, 2, 1], "по 1 мин 30 с: 5 минут на три части, +1 достаётся первым при равных остатках");
+  assert.equal(minutes.reduce((a, b) => a + b, 0), 5, "сумма журнала = «Простой» в сводке");
   assert.equal(shiftTable(wb).total.unplanned, 5, "таблица смен сходится со сводкой");
-  const note = textsOf(wb).find((t) => t.startsWith("Длительность каждой части простоя в журнале округлена"));
-  assert.ok(note && note.includes("(6 минут)") && note.includes("(5 минут)"), String(note));
+  const note = textsOf(wb).find((t) => t.startsWith("Минуты в журнале простоев подогнаны"));
+  assert.ok(note && note.includes("«Простою» за период"), String(note));
+});
+
+test("журнал за несколько суток: сумма равна «Простою» периода, у однодневного отчёта — «Простою» суток", () => {
+  const E = eventMaker();
+  const events = [E("shift_open", "2026-10-01", "08:00:00", { crewId: "1", personId: "p1", personName: "Иванов Иван Иванович" })];
+  for (const d of ["2026-10-01", "2026-10-02"]) {
+    ["09:00:00", "10:00:00", "11:00:00"].forEach((from, i) => {
+      const [h] = from.split(":");
+      events.push(E("stop", d, from, { downtimeId: d + i, reason: "burezhka" }), E("start", d, `${h}:01:30`, { downtimeId: d + i }));
+    });
+  }
+  const nowMs = T("2026-10-02", "12:00:00");
+  const sumOf = (wb) => journal(wb).reduce((a, r) => a + r.minutes, 0);
+  const both = build(events, { fromDay: "2026-10-01", toDay: "2026-10-02", nowMs }).wb;
+  assert.equal(minutesOf(summaryCell(both.sheets[0], "Простой")), 9, "9 минут точно");
+  assert.equal(sumOf(both), 9);
+  for (const d of ["2026-10-01", "2026-10-02"]) {
+    const one = build(events, { fromDay: d, toDay: d, nowMs }).wb;
+    assert.equal(sumOf(one), minutesOf(summaryCell(one.sheets[0], "Простой")), d);
+  }
 });
 
 test("метод наибольшего остатка: сумма равна цели, каждое число — вниз или вверх от точного", () => {

@@ -25,6 +25,8 @@ export { aiConfigFromEnv };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(HERE, "..", "public");
 const MAX_BODY = 64 * 1024;
+const DRAIN_LIMIT = 8 * 1024 * 1024; // сколько лишнего дочитываем после 413, дальше — отвечаем и закрываем
+const DRAIN_MS = 5000;
 const RATE_LIMIT = 60; // запросов в минуту с одного ключа (по умолчанию; боевой запуск задаёт свой)
 const RATE_LIMIT_SHARED = 600; // боевой: общей ссылкой с одним ключом пользуются многие устройства
 const ALIVE_GAP_MINUTES = 3; // разрыв живости больше этого — простой сервера
@@ -178,20 +180,35 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     res.end(JSON.stringify(body));
   }
 
+  // Слишком большое тело не копим, но дочитываем до конца (в разумных пределах): ответ 413 при ещё
+  // пишущем клиенте и закрытие сокета с непрочитанными данными дают RST, и клиент вместо статуса
+  // видит «fetch failed». Дочитали — отвечаем; не дочитывается за предел — отвечаем всё равно.
   function readBody(req) {
     return new Promise((resolve, reject) => {
       let size = 0;
+      let over = false;
+      let timer = null;
       const chunks = [];
+      const tooLarge = () => {
+        clearTimeout(timer);
+        reject(Object.assign(new Error("too_large"), { code: "too_large" }));
+      };
       req.on("data", (c) => {
         size += c.length;
+        if (over) {
+          if (size > DRAIN_LIMIT) { req.pause(); tooLarge(); }
+          return;
+        }
         if (size > MAX_BODY) {
-          reject(Object.assign(new Error("too_large"), { code: "too_large" }));
+          over = true;
+          chunks.length = 0;
+          timer = setTimeout(() => { req.pause(); tooLarge(); }, DRAIN_MS);
           return;
         }
         chunks.push(c);
       });
-      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      req.on("error", reject);
+      req.on("end", () => { if (over) tooLarge(); else resolve(Buffer.concat(chunks).toString("utf8")); });
+      req.on("error", (e) => { clearTimeout(timer); reject(e); });
     });
   }
 

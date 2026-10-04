@@ -215,8 +215,12 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
   }
   parts.sort((a, b) => a.startMs - b.startMs || compareText(String(a.downtimeId), String(b.downtimeId)) || a.index - b.index);
 
-  // Минуты части — как в списке простоев на экране: каждая часть округляется сама
-  for (const p of parts) p.minutes = Math.round(p.ms / MINUTE);
+  // Минуты частей журнала: сначала сутки (сумма равна «Простою» за период), внутри суток — части (сумма равна суткам; у однодневного отчёта это и есть «Простой»).
+  // Остаток округления раздаётся методом наибольших остатков, поэтому у части минуты могут отличаться на 1 от её точной длительности
+  const dayKeys = [...new Set(parts.map((p) => p.day))];
+  const dayParts = dayKeys.map((day) => parts.filter((p) => p.day === day));
+  const dayMin = apportionMs(dayParts.map((own) => own.reduce((sum, p) => sum + p.ms, 0)), stats.downMin);
+  dayParts.forEach((own, i) => apportionMs(own.map((p) => p.ms), dayMin[i]).forEach((m, j) => { own[j].minutes = m; }));
 
   // Смены периода по расписанию и учтённое время в каждой
   const slots = [];
@@ -385,9 +389,8 @@ function summarySheet(data, ctx) {
   rows.push([]);
   const notes = [];
   if (reasons.length && sumMin !== stats.downMin) notes.push("Время по причинам округлено по каждой строке, поэтому сумма строк может отличаться от итога на 1–2 минуты.");
-  const journalMin = parts.reduce((sum, p) => sum + p.minutes, 0);
-  if (journalMin !== stats.downMin) {
-    notes.push(`Длительность каждой части простоя в журнале округлена до минуты, как на экране, поэтому сумма журнала (${hm(journalMin)}) может немного отличаться от «Простоя» в сводке (${hm(stats.downMin)}), посчитанного по точному времени.`);
+  if (parts.some((p) => p.minutes !== Math.round(p.ms / MINUTE))) {
+    notes.push("Минуты в журнале простоев подогнаны так, чтобы их сумма равнялась «Простою» за период в сводке: у отдельной части они могут отличаться от точной длительности на 1 минуту.");
   }
   if (sumStops > stats.stops) notes.push("Остановка, у которой менялась причина, учтена в каждой своей причине, поэтому сумма остановок по строкам больше итога.");
   notes.push("Тип простоя определяется причиной: плановый, внеплановый или авария. Остановка без причины считается внеплановой, как на экране «Показатели стана».");
