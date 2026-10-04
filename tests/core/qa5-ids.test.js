@@ -42,3 +42,14 @@ test("пустой или пробельный downtimeId — bad_request у в�
   assert.equal(eventInputError({ id: "e", type: "stop", at, downtimeId: null }), "");
   assert.equal(eventInputError({ id: "e", type: "stop", at, downtimeId: "ok" }), "");
 });
+
+test("reason и downtimeId: до 120 знаков проходит, длиннее — bad_request", () => {
+  const at = iso("2026-10-04T14:00:00Z");
+  const uuid = "123e4567-e89b-12d3-a456-426614174000";
+  for (const field of ["reason", "downtimeId"]) {
+    assert.equal(eventInputError({ id: "e", type: "stop", at, [field]: "a".repeat(120) }), "", `${field} 120`);
+    assert.equal(eventInputError({ id: "e", type: "stop", at, [field]: "a".repeat(121) }), "bad_request", `${field} 121`);
+    assert.equal(eventInputError({ id: "e", type: "stop", at, [field]: "a".repeat(20000) }), "bad_request", `${field} 20000`);
+  }
+  assert.equal(eventInputError({ id: "e", type: "stop", at, reason: "plan_maintenance", downtimeId: uuid }), "");
+});

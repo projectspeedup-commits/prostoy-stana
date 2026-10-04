@@ -31,7 +31,7 @@ test("настройки: по умолчанию Яндекс 465/SSL, MAIL_FRO
   assert.equal(c.secure, true);
   assert.equal(c.from, "me@yandex.ru");
   assert.deepEqual(c.to, ["a@x.ru", "b@x.ru"]);
-  assert.equal(c.publicUrl, "https://stan.tmpz-engineering.ru/");
+  assert.equal(c.publicUrl, "");
   const d = mailConfigFromEnv({ SMTP_USER: "me@yandex.ru", SMTP_PASS: "p", MAIL_TO: "a@x.ru", MAIL_FROM: "stan@x.ru", SMTP_PORT: "", PUBLIC_URL: "https://p/" });
   assert.equal(d.from, "stan@x.ru");
   assert.equal(d.port, 465);
@@ -126,7 +126,7 @@ test("письмо: ночная смена с идущим простоем, т
   assert.ok(d.html.includes("ждём &lt;запчасть&gt;"));
   assert.match(d.text, /Мастер: Петров Пётр Петрович/);
   assert.match(d.text, /ещё идёт/);
-  assert.ok(!d.text.includes("https://stan.tmpz-engineering.ru/") && !d.html.includes("Открыть пульт"), "ссылки на пульт в письме нет");
+  assert.ok(!d.text.includes("https://stan.example.ru/") && !d.html.includes("Открыть пульт"), "ссылки на пульт в письме нет");
 });
 
 test("письмо: вложение — настоящий Excel-отчёт только за эту смену", () => {

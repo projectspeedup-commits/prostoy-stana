@@ -98,7 +98,7 @@ test('UI: исправления раскладки на 320–1600 px в обе
       // Пульт: нижнее меню и панель «Отчёт в Excel»
       await click('#demo'); await ready('.pult');
       await audit('пульт', width);
-      const nav = await evaluate(`(() => { const n = document.querySelector('#nav'); return { scroll: n.scrollWidth <= n.clientWidth + 1, labels: [...n.querySelectorAll('.pill:not(#admin):not(#ai-ask) .pill-text')].filter((s) => s.offsetParent && s.scrollWidth > s.clientWidth + 1).length }; })()`);
+      const nav = await evaluate(`(() => { const n = document.querySelector('#nav'); return { scroll: n.scrollWidth <= n.clientWidth + 1, labels: [...n.querySelectorAll('.pill:not(#admin):not(#ai-ask) .pill-text')].filter((s) => s.offsetParent && s.clientWidth > 2 && s.scrollWidth > s.clientWidth + 1).length }; })()`);
       eq(nav.scroll, true, `меню ${width}: прокрутка`);
       eq(nav.labels, 0, `меню ${width}: подпись обрезана`);
       await shot(`пульт-${tag}`);

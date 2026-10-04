@@ -1,8 +1,6 @@
 // Отправка писем по SMTP (по умолчанию Яндекс: smtp.yandex.ru:465, SSL) и настройки из окружения.
 // nodemailer подключается лениво: при выключенной рассылке пакет не нужен.
 
-const DEFAULT_URL = "https://stan.tmpz-engineering.ru/";
-
 /**
  * Настройки из окружения. SMTP настроен (enabled), если заданы SMTP_USER и SMTP_PASS.
  * MAIL_TO — запасной список получателей, когда в настройках владельца их нет.
@@ -22,7 +20,7 @@ export function mailConfigFromEnv(env = process.env) {
     pass,
     from: clean(env.MAIL_FROM) || user,
     to,
-    publicUrl: clean(env.PUBLIC_URL) || DEFAULT_URL,
+    publicUrl: clean(env.PUBLIC_URL),
   };
 }
 

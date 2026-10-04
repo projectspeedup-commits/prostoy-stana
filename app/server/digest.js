@@ -55,7 +55,7 @@ function dm(ms, tz) {
  * (см. periodFor в core/mail-schedule.js). Для совместимости можно передать shift (объект из shiftOf).
  * events — события из базы, refs — справочники, nowMs — «сейчас» (мс UTC), publicUrl — ссылка на пульт.
  */
-export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "https://stan.tmpz-engineering.ru/" }) {
+export function buildDigest({ events, refs, nowMs, shift, period, publicUrl = "" }) {
   const schedule = refs.settings.schedule;
   const tz = schedule.tzOffsetMinutes || 0;
   if (!period) period = { kind: "shift", fromMs: shift.startMs, toMs: shift.endMs, fromDay: shift.day, toDay: shift.day, shift };

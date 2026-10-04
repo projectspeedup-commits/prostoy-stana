@@ -155,11 +155,11 @@ html { scroll-padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bo
 @media (max-width: 599px) { .appnav { gap: 0; padding-inline: 0; } .appnav .pill { padding-inline: 0; letter-spacing: -0.01em; } }
 /* 320 px: шесть пунктов с подписью 13 px и зоной не меньше 44 px вместе дают 324 px — подпись чуть плотнее, без обрезки */
 @media (max-width: 359.98px) { .appnav .pill .pill-text { letter-spacing: -0.04em; } }
-/* Узкая панель (320 px с полосой прокрутки даёт ~305 px на шесть пунктов): значки по 44 px, подпись — только у текущего раздела.
+/* Узкая панель: ниже 335 px подписи уже слипаются (зазор <1 px на 320), поэтому порог 334 px. (320 px с полосой прокрутки даёт ~305 px на шесть пунктов): значки по 44 px, подпись — только у текущего раздела.
    Остальные подписи остаются в aria-label и title, зона нажатия не меньше 44 px, шрифт 13 px */
 @media (max-width: 599px) {
   .appnav { container-type: inline-size; }
-  @container (max-width: 318px) {
+  @container (max-width: 334px) {
     .appnav .pill:not([aria-current="page"]) { flex: 0 0 44px; }
     .appnav .pill:not([aria-current="page"]) .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   }

@@ -507,6 +507,7 @@ export function eventInputError(event) {
     for (const field of ["crewId", "personId"]) {
       if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
     }
+    for (const field of ["reason", "downtimeId"]) if (typeof event[field] === "string" && event[field].length > 120) throw new Error();
     if (typeof event.note === "string" && event.note.length > 500) throw new Error();
     if (typeof event.action === "string" && event.action.length > 500) throw new Error();
     if (event.onlyEmpty !== undefined && typeof event.onlyEmpty !== "boolean") throw new Error();

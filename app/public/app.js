@@ -448,6 +448,7 @@ function buildView() {
       reason: last && last.reason !== undefined ? last.reason : null,
       note: last && last.note !== undefined ? last.note : null,
       action: last && last.action !== undefined ? last.action : null,
+      billet: last && last.billet !== undefined ? last.billet : null,
       index: last ? last.index : 0,
       handovers: Array.isArray(s.open.handovers) ? s.open.handovers.slice() : [],
     };
@@ -2325,13 +2326,16 @@ function shiftKpis(view) {
     h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), label),
     h("span", { class: "ps-kpi__value", text: fmtHM(min) }));
   const billet = Math.round(shiftDowntimes(view).reduce((n, d) => n + (Number(d.billet) || 0), 0) * 1000) / 1000;
+  // Брак открытой части в смену не попадает (считается в смене завершения части) — объясняем рабочему
+  const openBillet = Number(view.open?.billet) || 0;
   return [
     h("div", { class: "ps-kpis" },
       tile("work", "Работа", shiftWorkMin(view, downMin)), tile("plan", "Плановый", zones.plan),
       tile("unplanned", "Внеплановый", zones.unplanned), tile("failure", "Аварийный", zones.failure)),
     h("div", { class: "ps-kpi", "data-kind": "billet", "data-zero": billet ? null : "" },
       h("span", { class: "ps-kpi__label", text: "Брак за смену" }),
-      h("span", { class: "ps-kpi__value", text: fmtTons(billet) }))];
+      h("span", { class: "ps-kpi__value", text: fmtTons(billet) })),
+    openBillet > 0 ? h("p", { class: "ps-field__hint", "data-kind": "billet-open", text: `Брак открытого простоя (${fmtTons(openBillet)}) учтётся после пуска` }) : null];
 }
 
 // Пункт проверки: считает система, мастер его не отмечает; у todo — кнопка перехода к исправлению
@@ -3443,7 +3447,7 @@ function renderCloseConfirm(main, view) {
     view.open ? checkItem(false, `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}: простой перейдёт следующей смене, пуск отмечать не нужно`)
       : checkItem(true, Number.isFinite(since) ? `Все остановки закрыты — стан работает с ${fmtSince(since, view.shift)}` : "Все остановки закрыты"),
     checkItem(!noReasonCount, noReasonCount ? count({ length: noReasonCount }, "без причины") : "У каждого простоя есть причина", noReasonCount ? fixReason : null),
-    checkItem(!noAction.length, noAction.length ? count(noAction, "без «что сделали»") : "Везде указано, что сделали", noAction.length ? fix(noAction) : null),
+    checkItem(!noAction.length, noAction.length ? count(noAction, "без «что сделали»") : view.open ? "У завершённых простоев указано, что сделали (идущий простой не проверяется)" : "Везде указано, что сделали", noAction.length ? fix(noAction) : null),
     checkItem(!extra.length, extra.length
       ? `Дополнить: ${[noBillet.length ? `брак (${noBillet.length})` : "", noOther.length ? `описание иной причины (${noOther.length})` : ""].filter(Boolean).join(", ")}`
       : "Брак и описания указаны", extra.length ? fix(extra) : null),

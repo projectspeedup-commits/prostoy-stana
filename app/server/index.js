@@ -425,7 +425,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
   const server = http.createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; form-action 'self'");
     try {
       const url = new URL(req.url, "http://localhost");
       const pathname = url.pathname;
