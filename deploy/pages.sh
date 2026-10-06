@@ -21,7 +21,7 @@ mkdir -p "$WORK/fonts"
 cp app/public/fonts/* "$WORK/fonts/"
 mkdir -p "$WORK/core"
 cp app/public/{report-ui.js,report.css} "$WORK/"
-cp app/core/{core.js,refs.js,stats.js,zones.js,settings.js,report-period.js,report.js,xlsx.js} "$WORK/core/"
+cp app/core/{core.js,refs.js,stats.js,zones.js,settings.js,mail-settings.js,report-period.js,report.js,xlsx.js} "$WORK/core/"
 touch "$WORK/.nojekyll"
 
 cd "$WORK"
