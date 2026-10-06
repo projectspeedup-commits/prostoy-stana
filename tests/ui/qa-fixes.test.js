@@ -45,7 +45,7 @@ test('UI: правки по второй проверке — высота пу�
   const click = async (sel) => { await sleep(450); await evaluate(`document.querySelector(${JSON.stringify(sel)}).click()`); };
   const clickText = async (sel, txt) => {
     await sleep(450);
-    await evaluate(`[...document.querySelectorAll(${JSON.stringify(sel)})].find((b) => b.textContent.includes(${JSON.stringify(txt)})).click()`);
+    await evaluate(`(() => { const all = [...document.querySelectorAll(${JSON.stringify(sel)})]; (all.find((b) => b.textContent.trim() === ${JSON.stringify(txt)}) || all.find((b) => b.textContent.includes(${JSON.stringify(txt)}))).click(); })()`);
     await sleep(80);
   };
   const setTheme = async (theme) => {

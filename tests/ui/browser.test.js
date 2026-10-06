@@ -62,7 +62,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
     for (let i = 0; i < 100; i++) { if (await evaluate(expression)) return; await sleep(100); }
     throw new Error(`Ожидание: ${expression}; экран: ${await evaluate('document.body.innerText.slice(0,1500)')}`);
   };
-  const click = (text) => evaluate(`(() => { const b = [...document.querySelectorAll('#main button')].find(b => b.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('Нет кнопки'); b.click(); })()`);
+  const click = (text) => evaluate(`(() => { const all = [...document.querySelectorAll('#main button')]; const b = all.find(b => b.textContent.trim() === ${JSON.stringify(text)}) || all.find(b => b.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('Нет кнопки'); b.click(); })()`);
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `Date.now = () => ${now};` });
   await send('Page.navigate', { url: origin + '/#key=k1' });
@@ -131,9 +131,10 @@ test('UI: выбор ночной смены, квитанции, темы, ша
       // Второй планшет уже остановил стан, первый ещё видит прежний снимок.
       await post([{ id: 'remote-stop', type: 'stop', at: new Date(now - 60000).toISOString() }]);
       await evaluate(`document.querySelector('.ps-action--stop').click()`);
-      await wait(`!document.querySelector('.pult')`);
+      // Стоп одним нажатием: окна причины нет, экран остаётся пультом «Стан стоит»
       await wait(`document.querySelector('#toast').textContent.includes('Стан уже остановлен с 22:59')`);
-      assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).draft.wz?.downtimeId`), 'remote-stop');
+      assert.equal(await evaluate(`document.querySelector('#main').textContent.includes('Почему стоит?')`), false);
+      assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.some(r => r.status === 'adopted' && r.adoptedDowntimeId === 'remote-stop')`), true);
       assert.equal(await evaluate(`JSON.parse(localStorage.getItem('stan.session.v1')).records.some(r=>r.status==='rejected')`), false);
       await evaluate(`document.querySelector('#demo').click()`);
       await wait(`document.querySelector('.ps-state[data-state="stop"]')`);
@@ -143,7 +144,7 @@ test('UI: выбор ночной смены, квитанции, темы, ша
       await sleep(60);
       if (width === 320 && state === 'running') {
         const ax = await send('Accessibility.getFullAXTree');
-        for (const name of ['Администратор', 'Спросить ассистента', 'Связаться', 'Пульт', 'Простои за смену', 'Показатели стана', 'Переключить на светлую тему']) {
+        for (const name of ['Администратор', 'Спросить ассистента', 'Связаться', 'Пульт', 'Разбор простоев', 'Показатели стана', 'Переключить на светлую тему']) {
           assert.ok(ax.nodes.some((n) => n.role?.value === 'button' && n.name?.value === name), `Доступное имя: ${name}`);
         }
       }

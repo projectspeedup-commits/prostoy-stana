@@ -37,6 +37,8 @@ async function scenario(t, bAnswers) {
   // А теряет связь и записывает остановку с причиной
   await send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await click('Стан встал');
+  // Стоп одним нажатием; причину планшет А указывает кнопкой «Указать причину сейчас»
+  await click('Указать причину сейчас');
   await click('Поломка, замена');
   await click('Другое');
   await fill('#wz-note', 'QA Ответ планшета А');

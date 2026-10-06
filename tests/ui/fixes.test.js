@@ -48,7 +48,7 @@ test('UI: исправления раскладки на 320–1600 px в обе
   const click = async (sel) => { await sleep(450); await evaluate(`document.querySelector(${JSON.stringify(sel)}).click()`); };
   const clickText = async (sel, text) => {
     await sleep(450);
-    await evaluate(`[...document.querySelectorAll(${JSON.stringify(sel)})].find((b) => b.textContent.includes(${JSON.stringify(text)})).click()`);
+    await evaluate(`(() => { const all = [...document.querySelectorAll(${JSON.stringify(sel)})]; (all.find((b) => b.textContent.trim() === ${JSON.stringify(text)}) || all.find((b) => b.textContent.includes(${JSON.stringify(text)}))).click(); })()`);
     await sleep(80);
   };
   const setTheme = async (theme) => {

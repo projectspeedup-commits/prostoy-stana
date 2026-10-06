@@ -131,7 +131,7 @@ export async function startChrome({ profileRoot = os.tmpdir(), extraArgs = [] } 
     /** Нажатие по центру первого элемента селектора, в тексте которого есть подстрока. */
     async clickText(selector, text) {
       await new Promise((resolve) => setTimeout(resolve, 450)); // та же человеческая пауза, что у clickElement
-      const box = await api.evaluate(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(selector)})].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!e) return null; e.scrollIntoView({block:'nearest'}); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      const box = await api.evaluate(`(() => { const all = [...document.querySelectorAll(${JSON.stringify(selector)})]; const e = all.find((x) => x.textContent.trim() === ${JSON.stringify(text)}) || all.find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!e) return null; e.scrollIntoView({block:'nearest'}); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
       if (!box) throw new Error("Нет элемента " + selector + " с текстом «" + text + "»");
       await api.mouse(box.x, box.y);
     },

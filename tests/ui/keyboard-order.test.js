@@ -86,10 +86,10 @@ test('UI: порядок Tab, шкала суток одной точкой та
   await chrome.clickElement('.ds-row:nth-of-type(20)');
   assert.ok(await evaluate(`!document.querySelector('.day-scale__details').hidden`), 'клик по ячейке открывает сведения');
 
-  // ---- 1c. Пульт «Стан стоит»: плитки причин и «Стан пошёл» раньше шкалы ----
+  // ---- 1c. Пульт «Стан стоит»: «Стан пошёл» и «Указать причину сейчас» раньше шкалы ----
   await post([{ id: 'st', type: 'stop', at: z('19:30') }]);
   await chrome.reload();
-  await ready(`document.querySelectorAll('.ps-reason').length > 0`, 'плитки причин');
+  await ready(`document.querySelector('.ps-state[data-state="stop"]')`, 'пульт стоящего стана');
   await sleep(600);
   await resetFocus();
   const seen = [];
@@ -101,11 +101,15 @@ test('UI: порядок Tab, шкала суток одной точкой та
   }
   assert.equal(seen[seen.length - 1], 'scale', 'шкала получает фокус после главного содержимого: ' + seen.join(' | '));
   assert.ok(seen.includes('run'), '«Стан пошёл» получает фокус раньше шкалы: ' + seen.join(' | '));
+  assert.ok(seen.includes('Указать причину сейчас'), '«Указать причину сейчас» получает фокус раньше шкалы: ' + seen.join(' | '));
   assert.ok(seen.length <= 20, 'до шкалы не больше 20 нажатий: ' + seen.length);
 
-  // ---- 3. 320×568: сфокусированная плитка не под нижним меню ----
+  // ---- 3. 320×568: сфокусированная плитка мастера причины не под нижним меню ----
   await chrome.viewport(320, 568, { mobile: true });
   await chrome.reload();
+  await ready(`document.querySelector('.ps-state[data-state="stop"]')`, 'пульт стоящего стана на 320');
+  await sleep(600);
+  await evaluate(`[...document.querySelectorAll('#main button')].find((b) => b.textContent === 'Указать причину сейчас').click(); 0`);
   await ready(`document.querySelectorAll('.ps-reason').length > 0`, 'плитки причин на 320');
   await sleep(700);
   await resetFocus();

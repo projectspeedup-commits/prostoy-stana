@@ -608,6 +608,8 @@ export function eventInputError(event) {
     }
     if (event.type === "fix") {
       // Правка времени: начало — только у первого отрезка простоя
+      // Время правки — строка с датой (как у ручного простоя в запросе клиента)
+      if ((event.from != null && typeof event.from !== "string") || (event.to != null && typeof event.to !== "string")) throw new Error();
       if (event.from != null) {
         toMs(event.from);
         if (event.index !== 0) throw new Error();

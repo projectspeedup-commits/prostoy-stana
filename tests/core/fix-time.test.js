@@ -86,7 +86,8 @@ test("from у отрезка с index > 0 — отказ формы", () => {
   const e = { id: "x1", type: "fix", at: iso("14:50"), downtimeId: "a", index: 1, from: iso("09:25") };
   assert.equal(eventInputError(e), "bad_request");
   assert.equal(eventInputError({ ...e, from: "не дата", index: 0 }), "bad_request");
-  assert.equal(eventInputError({ ...e, from: 5, index: 0 }), "");
+  assert.equal(eventInputError({ ...e, from: 5, index: 0 }), "bad_request", "время правки — только строка");
+  assert.equal(eventInputError({ ...e, to: 5, index: 0 }), "bad_request");
 });
 
 test("конец в будущем и начало старше 40 дней — bad_time", () => {

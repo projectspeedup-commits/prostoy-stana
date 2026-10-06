@@ -84,19 +84,30 @@ test('UI: фоновое обновление не сбрасывает фоку
   await background();
   assert.equal(await evaluate(`document.activeElement.id`), 'probe', 'поле ввода не потеряло фокус');
 
-  // плитка причины на экране «Стан стоит»
+  // кнопка «Указать причину сейчас» на экране «Стан стоит»
   await post([{ id: 'st', type: 'stop', at: z('19:30') }]);
   await chrome.reload();
-  await chrome.waitFor(`document.querySelectorAll('.ps-reason').length > 1`, { what: 'плитки причин' });
+  await chrome.waitFor(`!!document.querySelector('.ps-pick .ps-btn')`, { what: 'кнопка «Указать причину сейчас»' });
   await sleep(600);
   await evaluate(WATCH_STATE);
-  await evaluate(`document.querySelectorAll('.ps-reason')[1].focus()`);
+  await evaluate(`document.querySelector('.ps-pick .ps-btn').focus()`);
   const label = (await where()).txt;
+  assert.equal(label, 'Указать причину сейчас');
   await mark();
   await background();
-  assert.ok(await replaced(), 'узел плитки пересоздан');
-  assert.equal((await where()).txt, label, 'фокус остался на той же плитке причины');
-  assert.equal(await evaluate(`[...document.querySelectorAll('.ps-reason')].indexOf(document.activeElement)`), 1);
+  assert.ok(await replaced(), 'узел кнопки пересоздан');
+  assert.equal((await where()).txt, label, 'фокус остался на той же кнопке');
+
+  // кнопки в подробностях шкалы («Разобрать» / «Отметить простой здесь»): фокус и открытая ячейка переживают обновление
+  await evaluate(`document.querySelectorAll('.ds-row')[24].focus(); document.activeElement.click(); 0`);
+  await chrome.waitFor(`!document.querySelector('.day-scale__details').hidden && !!document.querySelector('.day-scale__details .ds-detail__btn')`, { what: 'кнопки в подробностях ячейки' });
+  await evaluate(`document.querySelector('.day-scale__details .ds-detail__btn').focus(); 0`);
+  const detailLabel = (await where()).txt;
+  await mark();
+  await background();
+  assert.ok(await replaced(), 'узел кнопки в подробностях пересоздан');
+  assert.equal((await where()).txt, detailLabel, 'фокус остался на кнопке в подробностях шкалы');
+  assert.ok(await evaluate(`!document.querySelector('.day-scale__details').hidden`), 'открытая ячейка осталась открытой');
 });
 
 test('UI: панель «Сохранить» целиком над нижним меню на 320–1280 px', { timeout: 240000, skip: !fs.existsSync(CHROME) }, async (t) => {
@@ -105,7 +116,7 @@ test('UI: панель «Сохранить» целиком над нижним
   const click = async (sel) => { await sleep(450); await evaluate(`document.querySelector(${JSON.stringify(sel)}).click()`); };
   const clickText = async (sel, text) => {
     await sleep(450);
-    await evaluate(`[...document.querySelectorAll(${JSON.stringify(sel)})].find((b) => b.textContent.includes(${JSON.stringify(text)})).click()`);
+    await evaluate(`(() => { const all = [...document.querySelectorAll(${JSON.stringify(sel)})]; (all.find((b) => b.textContent.trim() === ${JSON.stringify(text)}) || all.find((b) => b.textContent.includes(${JSON.stringify(text)}))).click(); })()`);
     await sleep(80);
   };
   const problems = [];

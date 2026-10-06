@@ -665,7 +665,6 @@ main:has(.ps-flow--chat) { max-width: 880px; }
 .ps-timefix .ps-btn { justify-self: start; margin-top: var(--space-2); }
 .ps-editor .ps-notice { flex-wrap: wrap; }
 .ps-editor .ps-notice .ps-btn { margin-left: auto; flex: none; }
-.ps-stop-note .ps-actions { margin-top: var(--space-3); }
 .ds-details__list { display: grid; gap: 6px; margin-top: 8px; }
 .ds-detail { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .ds-detail__text { flex: 1 1 140px; font-weight: 600; }

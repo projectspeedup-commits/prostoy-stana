@@ -126,11 +126,16 @@ test('UI: загрузка, нижнее меню, панель Excel, вкла�
   await evaluate(`document.querySelector('.rep-close')?.click(); 0`);
   await post(origin, { id: 'st', type: 'stop', at: z('19:30') });
   await chrome.reload();
+  await ready(`document.querySelector('.ps-state[data-state="stop"]')`, 'пульт стоящего стана');
+  assert.ok(await evaluate('document.documentElement.scrollHeight') <= 800, 'пульт 1280×800 остаётся без прокрутки');
+  assert.equal(await evaluate(`document.querySelectorAll('.ps-reason').length`), 0, 'на пульте стоящего стана плиток причины нет');
+  // Плитки открываются кнопкой «Указать причину сейчас»
+  await sleep(450);
+  await evaluate(`[...document.querySelectorAll('#main button')].find((b) => b.textContent === 'Указать причину сейчас').click(); 0`);
   await ready(`document.querySelectorAll('.ps-reason__sub').length > 0`, 'плитки причин');
   const subs = JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('.ps-reason__sub')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => ({ t: e.textContent, c: e.clientHeight, s: e.scrollHeight, lc: getComputedStyle(e).webkitLineClamp })))`));
   assert.ok(subs.length > 0);
   for (const s of subs) assert.ok(s.s <= s.c + 1 && s.lc === 'none', `пояснение «${s.t}» обрезано: ${s.s} > ${s.c}`);
-  assert.ok(await evaluate('document.documentElement.scrollHeight') <= 800, 'пульт 1280×800 остаётся без прокрутки');
 });
 
 async function post(origin, event) {

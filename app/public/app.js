@@ -583,6 +583,8 @@ function applyEvent(v, e) {
         }
         if (fromMs !== null && v.open.index === 0) { v.open.startMs = fromMs; v.open.since = fromMs; }
       }
+      // Начало простоя из нескольких частей: открытая часть хранит его в since
+      if (fromMs !== null && e.index === 0 && v.open && v.open.downtimeId === e.downtimeId && v.open.index > 0) v.open.since = fromMs;
       break;
     }
     case "shift_open":
@@ -999,7 +1001,7 @@ function renderTopbar() {
     ask.hidden = !key || !refs || !canAdmin || !aiUi.status || Boolean(aiUi.status.unavailable);
     ask.classList.toggle("is-on", ui.screen === "ai");
   }
-  // Навигация: «Простои» и «Показатели», отметка текущего раздела
+  // Навигация: «Разбор» и «Показатели», отметка текущего раздела
   for (const [id, screen] of [["nav-shift", "shift"], ["nav-stats", "stats"]]) {
     const b = $(id);
     if (!b) continue;
@@ -1165,7 +1167,7 @@ function humanError(code, event = null) {
     if (code === "bad_time") return "Проверьте время: пуск не раньше остановки, время не в будущем, начало не старше 40 суток.";
   }
   const messages = {
-    overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в итоге смены.",
+    overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в разборе простоев.",
     bad_time: "Дата должна быть не старше 40 суток, длительность ручного простоя — не больше 7 суток. Пуск не может быть раньше остановки или смены причины. Проверьте время записи.",
     duplicate_downtime: "Номер простоя уже использован для другой остановки. Запись не принята: обновите состояние стана и создайте остановку заново.",
     not_found: "Простой или его отрезок не найден. Ответы ждут исправления остановки.",
@@ -2326,11 +2328,16 @@ function renderStop(main, view) {
     }
     go("reason");
   };
+  // Причины ещё нет — под панелью состояния текст и небольшая кнопка (на месте прежних плиток)
+  const pick = cur ? null : h("section", { class: "ps-pick", "aria-label": "Причина остановки" },
+    h("p", { class: "ps-lead", text: `Стан стоит с ${fmtSince(since, view.shift)}. Причину укажете в разборе смены` }),
+    h("div", { class: "ps-actions" }, psButton("secondary", "Указать причину сейчас", askReason, { lg: false })));
   const left = h("div", null,
     millPanel({
       running: false,
       since,
       subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
+      below: pick,
       hint: "Время пуска поставит система",
       // Одно нажатие: пуск записывается сразу, причина и «что сделали» — в разборе смены
       onGo: () => {
@@ -2354,10 +2361,7 @@ function renderStop(main, view) {
         psButton("secondary", "Изменить", () => go("confirmChange"), { lg: false }))
     );
   } else {
-    card = h("section", { class: "ps-card ps-stop-note" },
-      h("p", { class: "ps-lead", text: `Стан стоит с ${fmtSince(since, view.shift)}. Причину укажете в разборе смены` }),
-      h("div", { class: "ps-actions" },
-        psButton("secondary", "Указать причину сейчас", askReason, { lg: false })));
+    card = null;
   }
 
   fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
@@ -2842,7 +2846,6 @@ function parseLocalTime(value) {
   try { return core.toMs(value + "Z") - (refs.settings.schedule.tzOffsetMinutes ?? 180) * 60000; }
   catch { return NaN; }
 }
-function manualTo(mw) { return mw.to; }
 function manualOverlap(view, from, to) {
   for (const s of view.segments) {
     if (from < (s.open || s.endMs === null ? Infinity : s.endMs) && to > s.startMs) return s;
@@ -3013,7 +3016,7 @@ function openDetail(downtimeId, index = null) {
   $("main").querySelector(".ps-editor")?.scrollIntoView({ block: "start" });
 }
 
-// Простои смены: слева список, справа редактор записи (от 1024 px); на узких экранах
+// Разбор простоев: слева список, справа редактор записи (от 1024 px); на узких экранах
 // список и редактор — два экрана по ui.screen: «shift» (список) и «detail» (запись)
 function renderShift(main, view) { renderDowntimes(main, view, false); }
 function renderDetail(main, view) { renderDowntimes(main, view, true); }
