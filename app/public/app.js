@@ -232,6 +232,16 @@ function updateClock(serverTime) {
   }
 }
 
+// randomUUID есть только на https и localhost; по http в локальной сети — тот же UUID v4 из getRandomValues
+function newId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const x = [...b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+}
+
 // --- Очередь событий ---
 function queueEvent(type, fields = {}) {
   mergeStored();
@@ -241,7 +251,7 @@ function queueEvent(type, fields = {}) {
   const { at, ...rest } = fields;
   const e = {
     ...(who ? { crewId: who.crewId, personId: who.personId, ...(who.personName ? { personName: who.personName } : {}) } : {}),
-    id: crypto.randomUUID(),
+    id: newId(),
     type,
     at: at || new Date(nowMs()).toISOString(),
     device: "web",
@@ -2111,7 +2121,7 @@ function renderRun(main, view) {
       onStop: () => {
         // Одно нажатие: причину не спрашиваем, её указывают в разборе смены
         ui.wz = null;
-        send("stop", { downtimeId: crypto.randomUUID() });
+        send("stop", { downtimeId: newId() });
       },
     }),
     shiftBlock(view)
@@ -2560,7 +2570,7 @@ function forgottenStopError(view, fw) {
 function saveForgottenStop() {
   const fw = ui.fw;
   if (!fw || forgottenStopError(buildView(), fw)) { render(); return; }
-  const downtimeId = crypto.randomUUID();
+  const downtimeId = newId();
   const at = new Date(fw.atMs).toISOString();
   const events = [{ type: "stop", fields: { downtimeId, at } }];
   if (reasonRef(fw.reason)) events.push({ type: "reason", fields: { downtimeId, at, reason: fw.reason, note: (fw.note || "").trim() } });
@@ -2935,7 +2945,7 @@ function renderManualCheck(main, view) {
     mw.saving = false;
     mw.error = manualError(buildView(), mw);
     if (mw.error) { render(); return; }
-    const downtimeId = crypto.randomUUID();
+    const downtimeId = newId();
     ui.mw = null;
     if (thenReason) { ui.card = { downtimeId, index: 0 }; ui.screen = "detail"; }
     else { ui.rec = { downtimeId }; ui.screen = "recorded"; }
