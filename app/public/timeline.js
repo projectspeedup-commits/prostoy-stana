@@ -44,7 +44,8 @@ function detailsText(cell, fmtClock) {
 // Память шкалы между перерисовками: интервалы по началу ячейки (мс)
 const memo = { stop: null, sel: null };
 
-export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon }) {
+// onCell(cell) — необязательный узел для панели подробностей (кнопки «Разобрать», «Отметить простой здесь»)
+export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon, onCell }) {
   const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
 
   const root = document.createElement("section");
@@ -68,6 +69,14 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
   details.hidden = true;
 
   let selected = null;
+  const cellOf = new Map();
+  // Текст ячейки и, если задан onCell, строки простоев с кнопками под ним
+  const paintDetails = (cell, text) => {
+    details.textContent = text;
+    const extra = onCell ? onCell(cell) : null;
+    if (extra) details.append(extra);
+    details.hidden = false;
+  };
 
   cells.forEach((cell) => {
     const clock = fmtClock(cell.startMs);
@@ -118,6 +127,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
     row.setAttribute("aria-label", text);
     row.tabIndex = -1;
     row.dataset.start = String(cell.startMs);
+    cellOf.set(row, cell);
 
     const label = document.createElement("span");
     label.className = "ds-row__label";
@@ -169,8 +179,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
       selected = row;
       memo.sel = row.dataset.start;
       row.classList.add("ds-row--sel");
-      details.textContent = text;
-      details.hidden = false;
+      paintDetails(cell, text);
     });
 
     rows.appendChild(row);
@@ -186,8 +195,7 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
   if (keep) {
     selected = keep;
     keep.classList.add("ds-row--sel");
-    details.textContent = keep.title;
-    details.hidden = false;
+    paintDetails(cellOf.get(keep), keep.title);
   } else memo.sel = null;
   rows.addEventListener("focusin", (e) => { if (rowList.includes(e.target)) { setStop(e.target); memo.stop = e.target.dataset.start; } });
   rows.addEventListener("keydown", (e) => {

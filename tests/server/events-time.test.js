@@ -130,3 +130,30 @@ test("stop с уже использованным downtimeId закрытого 
   // новый id — нормально
   assert.deepEqual(s.save(event("c1", "stop", "10:00", "other")), { saved: ["c1"], rejected: [] });
 });
+
+test("fix с from/to двигает простой, отказывает на наложении и будущем, stop принимается после сдвинутого пуска", (t) => {
+  const s = fixture(t);
+  const fix = (id, time, extra, downtimeId = "d1", index = 0) => ({ id, type: "fix", at: at(time), downtimeId, index, ...extra });
+  s.save(event("s1", "stop", "09:00"), event("r1", "start", "10:00"), event("s2", "stop", "10:30", "d2"), event("r2", "start", "10:50", "d2"));
+  // конец d1 заходит на d2
+  assert.deepEqual(s.save(fix("x1", "11:00", { to: at("10:40") })).rejected, [{ id: "x1", error: "overlap" }]);
+  // конец в будущем (сейчас 12:00)
+  assert.deepEqual(s.save(fix("x2", "11:00", { to: at("13:00") })).rejected, [{ id: "x2", error: "bad_time" }]);
+  // to у отрезка с index > 0 или начало у index > 0 — форма неверна
+  assert.deepEqual(s.save(fix("x3", "11:00", { from: at("08:50") }, "d1", 1)).rejected, [{ id: "x3", error: "bad_request" }]);
+  // верная правка: d1 теперь 08:50–09:40
+  assert.deepEqual(s.save(fix("x4", "11:00", { from: at("08:50"), to: at("09:40") })), { saved: ["x4"], rejected: [] });
+  const d1 = s.state().segments.find((x) => x.downtimeId === "d1");
+  assert.equal(d1.startMs, Date.parse(at("08:50"))); assert.equal(d1.endMs, Date.parse(at("09:40")));
+  // runningSinceMs — конец последнего закрытого отрезка
+  assert.equal(s.state().runningSinceMs, Date.parse(at("10:50")));
+});
+
+test("stop между сдвинутым назад пуском и прежним пуском принимается (раньше был бы overlap)", (t) => {
+  const s = fixture(t);
+  s.save(event("s1", "stop", "09:00"), event("r1", "start", "10:00"));
+  assert.deepEqual(s.save(event("s2", "stop", "09:50", "d2")).rejected, [{ id: "s2", error: "overlap" }]);
+  assert.deepEqual(s.save({ id: "x1", type: "fix", at: at("11:00"), downtimeId: "d1", index: 0, to: at("09:40") }), { saved: ["x1"], rejected: [] });
+  assert.deepEqual(s.save(event("s3", "stop", "09:50", "d3"), event("r3", "start", "10:10", "d3")), { saved: ["s3", "r3"], rejected: [] });
+  assert.equal(s.state().runningSinceMs, Date.parse(at("10:10")));
+});

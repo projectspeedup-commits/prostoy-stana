@@ -116,18 +116,19 @@ let handlingStorage = false;
 const taps = tapGuard();
 
 // Экран и данные мастеров. screen: auto | crew | reason | confirmChange |
-// manual | manualCheck | closeCheck | forgotStop | restartTime | restartConfirm | restartAction |
+// manual | manualCheck | closeCheck | forgotStop | restartTime |
 // recorded | shift | detail | closeConfirm | closed
 const ui = {
   screen: "auto",
   crewId: null,      // выбранная бригада на приёме смены
   crewBack: false,   // приём смены открыт кнопкой «Сменить» — есть куда вернуться
   wz: null,          // мастер причины: {mode, downtimeId, index, step, group, reason, note}
-  mw: null,          // мастер «Забыл отметить простой»: {origin, step, from, durMin, group, reason, note}
-  rw: null,          // мастер пуска: {downtimeId, index, startMs, reason, note, reasonChanged}
-  fw: null,          // забытая остановка при закрытии смены: {step, atMs, group, reason, note}
+  mw: null,          // мастер «Забыл отметить простой»: {origin, step, from, to, openedAt}
+  rw: null,          // «забыли отметить пуск» при сдаче смены: {downtimeId, index, startMs, createdMs, shiftStartMs}
+  fw: null,          // забытая остановка при закрытии смены: {step, atMs, group, reason, note}; причина необязательна
   closeReceipt: null, // события исправленного состояния перед закрытием смены
-  edit: null,        // правка записи в «Простоях смены»: {downtimeId, index, base, note, action, billet}
+  edit: null,        // правка записи в «Разборе простоев»: {downtimeId, index, base, note, action, billet}
+  timeEdit: null,    // правка времени простоя в разборе (в памяти): {downtimeId, base, from, to}
   pickPerson: null,  // мастер, отмеченный на приёме смены
   rec: null,         // экран «Простой записан»: {downtimeId}
   closedInfo: null,  // итоги для экрана «Смена сдана»
@@ -141,6 +142,9 @@ const restoredDraft = migrateLegacyDraft(restored.draft);
 for (const field of DRAFT_FIELDS) {
   if (restoredDraft && Object.hasOwn(restoredDraft, field)) ui[field] = restoredDraft[field];
 }
+// Черновик старой версии: мастера пуска с причиной и «что сделали» больше нет
+if (ui.wz && (ui.wz.mode === "restart" || ui.wz.mode === "past")) ui.wz = null;
+if (["restartConfirm", "restartAction"].includes(ui.screen)) ui.screen = "auto";
 settleRejected();
 function mergeStored() {
   if (!queueStoredSeparately) return;
@@ -469,7 +473,7 @@ function buildView() {
   for (const e of readyEvents(queue, records, true)) applyEvent(v, e);
   // Первое нажатие ещё не дошло до сервера — учёт начался с него
   for (const e of queue) {
-    for (const t of [e.at, e.type === "manual" ? e.from : undefined]) {
+    for (const t of [e.at, e.type === "manual" || e.type === "fix" ? e.from : undefined]) {
       if (t === undefined || t === null) continue;
       try { const ms = core.toMs(t); if (v.dataFromMs === null || ms < v.dataFromMs) v.dataFromMs = ms; } catch { /* битое время пропускаем */ }
     }
@@ -554,20 +558,33 @@ function applyEvent(v, e) {
       }
       break;
     }
-    case "fix":
+    case "fix": {
+      // Время: начало — у первой части простоя, конец — у последней закрытой (как в core.buildDowntimes)
+      const fromMs = e.from != null ? core.toMs(e.from) : null;
+      const toMs = e.to != null ? core.toMs(e.to) : null;
       for (const s of v.segments) {
         if (s.downtimeId === e.downtimeId && s.index === e.index) {
           for (const field of ["reason", "billet", "note", "action"]) {
             if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(s[field]))) s[field] = e[field];
           }
+          if (fromMs !== null && s.index === 0) s.startMs = fromMs;
+          const last = !(v.open && v.open.downtimeId === s.downtimeId) &&
+            !v.segments.some((x) => x.downtimeId === s.downtimeId && x.index > s.index);
+          if (toMs !== null && last && !s.open && s.endMs !== null) {
+            if (v.runningSinceMs === s.endMs) v.runningSinceMs = toMs;
+            s.endMs = toMs;
+          }
+          if (s.endMs !== null && s.endMs !== undefined) s.minutes = Math.max(0, Math.round((s.endMs - s.startMs) / 60000));
         }
       }
       if (v.open && v.open.downtimeId === e.downtimeId && v.open.index === e.index) {
         for (const field of ["reason", "billet", "note", "action"]) {
           if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(v.open[field]))) v.open[field] = e[field];
         }
+        if (fromMs !== null && v.open.index === 0) { v.open.startMs = fromMs; v.open.since = fromMs; }
       }
       break;
+    }
     case "shift_open":
       if (t < v.shift.startMs || t >= v.shift.endMs) break;
       v.crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
@@ -617,6 +634,11 @@ function shiftBillet(segs, shift) {
   return core.sumBillet(segs
     .filter((s) => s.endMs > shift.startMs && s.endMs <= shift.endMs)
     .map((s) => core.segmentBillet(s)));
+}
+
+// Простои смены, где нет причины (закрытые и идущий): их разбирают по порядку времени
+function noReasonList(view) {
+  return shiftDowntimes(view).filter((d) => d.segs.some((s) => !reasonRef(s.reason)));
 }
 
 // Простои текущей смены, сгруппированные по downtimeId (один простой — одна строка)
@@ -1054,7 +1076,7 @@ function conflictTarget(g) {
 function conflictMessage(g) {
   const target = conflictTarget(g);
   return g.record.event.type === "start" && target?.endMs != null
-    ? `Стан уже пущен в ${fmtClock(target.endMs)} с другого устройства. Ваши ответы ждут решения.` : humanError(g.record.error);
+    ? `Стан уже пущен в ${fmtClock(target.endMs)} с другого устройства. Ваши ответы ждут решения.` : humanError(g.record.error, g.record.event);
 }
 function savedAnswers(g, caption = null) {
   const f = g.fields;
@@ -1136,7 +1158,12 @@ function dismissRejected(ids, confirmed = false) {
   render();
 }
 
-function humanError(code) {
+function humanError(code, event = null) {
+  // Правка времени из разбора: причину отказа называем прямо
+  if (event && event.type === "fix" && (event.from != null || event.to != null)) {
+    if (code === "overlap") return "Пересекается с другим простоем. Проверьте начало и конец и сохраните время снова.";
+    if (code === "bad_time") return "Проверьте время: пуск не раньше остановки, время не в будущем, начало не старше 40 суток.";
+  }
   const messages = {
     overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в итоге смены.",
     bad_time: "Дата должна быть не старше 40 суток, длительность ручного простоя — не больше 7 суток. Пуск не может быть раньше остановки или смены причины. Проверьте время записи.",
@@ -1219,15 +1246,14 @@ function resetStopDrafts() {
   ui.rw = ui.wz = ui.fw = null;
   ui.resume = null;
 }
+// Черновик времени пуска для сценария «забыли отметить пуск» при сдаче смены
 function newRestart(view) {
   return { downtimeId: view.open.downtimeId, index: view.open.index,
-    startMs: nowMs(), createdMs: nowMs(), shiftStartMs: view.shift.startMs,
-    reason: view.open.reason, note: view.open.note, action: view.open.action ?? "",
-    reasonChanged: false, hadReason: !!view.open.reason };
+    startMs: nowMs(), createdMs: nowMs(), shiftStartMs: view.shift.startMs };
 }
 
 function isDraftScreen(screen) {
-  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "restartConfirm", "restartAction", "repair", "repairField"].includes(screen);
+  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "repair", "repairField"].includes(screen);
 }
 function cancelDraft() {
   ui.wz = ui.mw = ui.rw = ui.fw = ui.repair = ui.resume = null;
@@ -1241,7 +1267,7 @@ function syncStopContext() {
     const context = `${current.shift.startMs}|${current.crew?.at || ""}|${current.closed}|${current.open?.downtimeId || ""}`;
     if (ui.stopContext && ui.stopContext !== context) {
       resetStopDrafts();
-      if (["reason", "confirmChange", "restartTime", "restartAction", "restartConfirm", "forgotStop"].includes(ui.screen) && !ui.repair) ui.screen = "auto";
+      if (["reason", "confirmChange", "restartTime", "forgotStop"].includes(ui.screen) && !ui.repair) ui.screen = "auto";
     }
     ui.stopContext = context;
   }
@@ -1288,8 +1314,6 @@ function renderScreen() {
     case "closeCheck": return renderCloseCheck(main, view);
     case "forgotStop": return renderForgotStop(main, view);
     case "restartTime": return renderRestartTime(main, view);
-    case "restartConfirm": return renderRestartConfirm(main, view);
-    case "restartAction": return renderRestartAction(main, view);
     case "recorded": return renderRecorded(main, view);
     case "shift": return renderShift(main, view);
     case "closeConfirm": return renderCloseConfirm(main, view);
@@ -1984,17 +2008,54 @@ function scaleFor(view) {
       t = sh.endMs;
     }
     const endOf = (s) => (s.open || s.endMs == null ? now : s.endMs);
-    const earlier = (serverState?.day?.segments || [])
+    const dayRaw = serverState?.day?.segments || [];
+    const earlier = dayRaw
       .filter((s) => s.startMs < shiftFrom)
-      .map((s) => ({ startMs: s.startMs, endMs: Math.min(endOf(s), shiftFrom), reason: s.reason ?? null }));
-    const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
-    if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
+      .map((s) => ({ downtimeId: s.downtimeId, startMs: s.startMs, endMs: Math.min(endOf(s), shiftFrom), reason: s.reason ?? null }));
+    const current = view.segments.map((s) => ({ downtimeId: s.downtimeId, startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
+    if (view.open) current.push({ downtimeId: view.open.downtimeId, startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
     const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
-    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, shifts: dayShifts, fmtClock, fmtDate: () => fmtDate(fromMs), icon });
+    const info = scaleDowntimes(view, dayRaw);
+    const mine = new Set(shiftDowntimes(view).map((d) => d.downtimeId));
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, shifts: dayShifts, fmtClock, fmtDate: () => fmtDate(fromMs), icon,
+      onCell: (cell) => cellDetails(view, info, mine, cell) });
   } catch (e) {
     console.error("Шкала суток:", e);
     return null;
   }
+}
+// Простои суток для подробностей шкалы: номер → начало, конец (null — идёт), причина последней части
+function scaleDowntimes(view, dayRaw) {
+  const info = new Map();
+  const add = (s, open) => {
+    if (!s.downtimeId) return;
+    const cur = info.get(s.downtimeId) || { startMs: Infinity, endMs: -Infinity, open: false, reason: null, index: -1 };
+    cur.startMs = Math.min(cur.startMs, s.startMs);
+    if (open || s.open || s.endMs == null) cur.open = true; else cur.endMs = Math.max(cur.endMs, s.endMs);
+    if ((s.index ?? 0) >= cur.index) { cur.index = s.index ?? 0; cur.reason = s.reason ?? null; }
+    info.set(s.downtimeId, cur);
+  };
+  for (const s of dayRaw) add(s, false);
+  for (const s of view.segments) add(s, false);
+  if (view.open) add({ downtimeId: view.open.downtimeId, startMs: view.open.since ?? view.open.startMs, index: view.open.index, reason: view.open.reason }, true);
+  return info;
+}
+// Подробности получаса: простои, которые его пересекают, и кнопки «Разобрать» / «Отметить простой здесь»
+function cellDetails(view, info, mine, cell) {
+  const items = [];
+  for (const id of cell.downtimes || []) {
+    const d = info.get(id);
+    if (!d) continue;
+    items.push(h("div", { class: "ds-detail" },
+      h("span", { class: "ds-detail__text", text: `${fmtClock(d.startMs)}–${d.open ? "сейчас" : fmtClock(d.endMs)} · ${reasonLabel(d.reason) || "Без причины"}` }),
+      mine.has(id) ? h("button", { type: "button", class: "ps-btn ps-btn--secondary ds-detail__btn", onclick: () => openDetail(id) }, "Разобрать") : null));
+  }
+  // Был ход работы, а простоя нет: забытую остановку можно отметить задним числом
+  if (!cell.future && (cell.ms?.work || 0) > 0 && cell.startMs >= view.shift.startMs) {
+    items.push(h("div", { class: "ds-detail" },
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ds-detail__btn", onclick: () => startManualWizard("scale", cell.startMs) }, "Отметить простой здесь")));
+  }
+  return items.length ? h("div", { class: "ds-details__list" }, items) : null;
 }
 // Главный экран: шкала слева (на узком экране — под кнопками), справа всё остальное
 function withScale(view, ...kids) {
@@ -2044,13 +2105,11 @@ function renderRun(main, view) {
       running: true,
       since: lastStart,
       subtitle: Number.isFinite(lastStart) ? `Пущен в ${fmtClock(lastStart)}` : null,
-      hint: "Нажмите сразу при остановке — время поставит система",
+      hint: "Нажмите сразу при остановке — время поставит система, причину укажете позже",
       onStop: () => {
-        const downtimeId = crypto.randomUUID();
-        send("stop", { downtimeId });
-        // Сразу предлагаем причину, но можно и позже
-        ui.wz = { mode: "current", downtimeId, step: 1, group: null, reason: null, note: "" };
-        go("reason");
+        // Одно нажатие: причину не спрашиваем, её указывают в разборе смены
+        ui.wz = null;
+        send("stop", { downtimeId: crypto.randomUUID() });
       },
     }),
     shiftBlock(view)
@@ -2198,6 +2257,8 @@ function shiftBlock(view) {
   try {
     missing = [...new Map(handoverGaps(view).filter((s) => s.missing.includes("что сделали")).map((s) => [s.downtimeId, s])).values()];
   } catch { /* то же */ }
+  let unreasoned = [];
+  try { unreasoned = noReasonList(view); } catch { /* то же */ }
   const { startMs, endMs } = view.shift;
   const pct = Math.max(0, Math.min(100, ((nowMs() - startMs) / (endMs - startMs)) * 100));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
@@ -2217,6 +2278,9 @@ function shiftBlock(view) {
       missing.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
         h("span", { class: "ps-notice__body", text: `${missing.length} ${plural(missing.length, "простой", "простоя", "простоев")} без «что сделали»` }),
         h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => openDetail(missing[0].downtimeId, missing[0].index) }, "Заполнить")) : null,
+      unreasoned.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+        h("span", { class: "ps-notice__body", text: `Без причины: ${unreasoned.length}` }),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => go("shift") }, "Разобрать")) : null,
       ui.resume ? h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--block", onclick: () => go(ui.resume) }, "Продолжить заполнение: ответы предыдущего шага сохранены") : null,
       h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg ps-btn--block", onclick: () => { ui.closeReceipt = null; go("closeCheck"); } },
         icon("clip", "ps-ico"), "Сдать смену")));
@@ -2256,31 +2320,25 @@ function renderStop(main, view) {
   const open = view.open;
   const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
   const cur = open.reason;
-
-  // Причины ещё нет — плитки сразу под панелью состояния; нажатие открывает тот же мастер на втором шаге
-  const pick = cur ? null : h("section", { class: "ps-pick", "aria-label": "Причина остановки" },
-    h("div", { class: "ps-overline", text: "Почему стоит?" }),
-    reasonGroups(() => {
-      if (!(ui.wz && ui.wz.mode === "current" && ui.wz.downtimeId === open.downtimeId)) {
-        ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
-      }
-      return ui.wz;
-    }, (single) => { ui.wz.step = single ? 3 : 2; go("reason"); }));
+  const askReason = () => {
+    if (!(ui.wz && ui.wz.mode === "current" && ui.wz.downtimeId === open.downtimeId)) {
+      ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
+    }
+    go("reason");
+  };
   const left = h("div", null,
     millPanel({
       running: false,
       since,
       subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
-      below: pick,
       hint: "Время пуска поставит система",
+      // Одно нажатие: пуск записывается сразу, причина и «что сделали» — в разборе смены
       onGo: () => {
-        if (reusableRestart(ui.rw, view, nowMs()) && !ui.rw.thenClose) {
-          return go(ui.wz?.mode === "restart" ? "reason" : ui.rw.route ? "restartAction" : "restartConfirm");
-        }
         ui.wz = null;
-        ui.rw = newRestart(view);
-        if (open.reason) go("restartConfirm");
-        else startRestartReasonWizard();
+        ui.rw = null;
+        send("start", { downtimeId: open.downtimeId });
+        showToast("Записано. Причину и что сделали — в разборе смены");
+        go("auto");
       },
     })
   );
@@ -2296,7 +2354,10 @@ function renderStop(main, view) {
         psButton("secondary", "Изменить", () => go("confirmChange"), { lg: false }))
     );
   } else {
-    card = null;
+    card = h("section", { class: "ps-card ps-stop-note" },
+      h("p", { class: "ps-lead", text: `Стан стоит с ${fmtSince(since, view.shift)}. Причину укажете в разборе смены` }),
+      h("div", { class: "ps-actions" },
+        psButton("secondary", "Указать причину сейчас", askReason, { lg: false })));
   }
 
   fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
@@ -2367,7 +2428,6 @@ function renderCloseCheck(main, view) {
         if (!!current.open !== !!open) { render(); return; }
         if (current.open) {
           if (!reusableRestart(ui.rw, current, nowMs())) { ui.wz = null; ui.rw = newRestart(current); }
-          ui.rw.thenClose = true;
           go("restartTime");
         } else {
           ui.fw ||= { step: 1, atMs: nowMs(), group: null, reason: null, note: "" };
@@ -2388,11 +2448,11 @@ function forgottenTimeError(view, ms, restart = false) {
 }
 
 // Общий шаг московского времени. Неверный ввод также сохраняется в черновике.
-function forgottenTimeFields(view, draft, field, restart, next) {
+function forgottenTimeFields(view, draft, field, restart, next, label = "Далее") {
   const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": restart ? "Время пуска, Москва" : "Время остановки, Москва" });
   input.value = draft.timeValue ?? localTimeValue(draft[field]);
   const error = fieldError();
-  const submit = psButton("primary", "Далее", () => {
+  const submit = psButton("primary", label, () => {
     const msg = forgottenTimeError(buildView(), draft[field], restart);
     if (msg) { error.textContent = msg; error.hidden = false; return; }
     next();
@@ -2434,36 +2494,36 @@ function renderForgotStop(main, view) {
   if (!fw) return go("closeCheck");
   const back = () => {
     if (fw.step === 1) { go("closeCheck"); ui.resume = "forgotStop"; persistClient(); }
-    else { fw.step = fw.step === 5 && fw.unknown ? 2 : fw.step === 4 && !tileMulti(fw) ? 2 : fw.step - 1; render(); }
+    else { fw.step = fw.step === 5 && !tileMulti(fw) ? 3 : fw.step - 1; render(); }
   };
-  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору причины", 4: tileMulti(fw) ? "К выбору пункта" : "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
-  const top = () => [backBtn(backLabels[fw.step], back),
+  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К проверке", 4: "К выбору причины", 5: tileMulti(fw) ? "К выбору пункта" : "К выбору причины" };
+  const top = () => [backBtn(backLabels[fw.step] || backLabels[1], back),
     h("div", { class: "ps-overline", text: "Забыли отметить остановку" }),
-    fw.unknown ? stepLine(fw.step === 5 ? 3 : fw.step, 3) : fw.step >= 4 && !tileMulti(fw) ? stepLine(fw.step - 1, 4) : stepLine(fw.step, 5)];
-  const next = () => { fw.step++; render(); };
+    fw.step <= 2 ? stepLine(fw.step, 2) : null];
+  const toCheck = () => { fw.step = 2; render(); };
   const flow = (...kids) => fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, ...kids));
   if (fw.step === 1) {
-    flow(...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, next));
+    flow(...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, toCheck));
     return;
   }
   if (fw.reason) fw.reason = core.reasonKey(fw.reason);
-  if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
-  if (fw.step === 3 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 2;
-  if (fw.step === 2) {
-    flow(...top(), question("Почему стоит?"),
-      reasonGroups(fw, (single) => { fw.step = single ? 4 : 3; render(); }));
-    return;
-  }
+  if (fw.step === 5 && !reasonRef(fw.reason)) fw.step = 3;
+  if (fw.step === 4 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 3;
   if (fw.step === 3) {
-    flow(...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 4; render(); }));
+    flow(...top(), question("Почему стоит?"),
+      reasonGroups(fw, (single) => { fw.step = single ? 5 : 4; render(); }));
     return;
   }
   if (fw.step === 4) {
+    flow(...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 5; render(); }));
+    return;
+  }
+  if (fw.step === 5) {
     const ta = h("textarea", { class: "ps-input", rows: "4", maxlength: String(NOTE_MAX),
       placeholder: noteHint(fw.reason) });
     ta.value = fw.note || "";
     const error = fieldError("Опишите своими словами, что случилось.");
-    const submit = psButton("primary", "Далее", next);
+    const submit = psButton("primary", "Далее", toCheck);
     let touched = !!ta.value;
     const update = () => {
       fw.note = ta.value;
@@ -2478,17 +2538,20 @@ function renderForgotStop(main, view) {
     focusReasonNote(ta);
     return;
   }
+  const hasReason = !!reasonRef(fw.reason);
   const error = forgottenStopError(view, fw);
-  flow(...top(), question("Всё верно?"),
+  flow(...top(), question("Проверьте"),
     summaryCard(`Стан стоит с ${fmtDate(fw.atMs)} ${fmtClock(fw.atMs)}`, [
-      ["Причина", fw.unknown ? "не указана" : reasonLabel(fw.reason)],
-      !fw.unknown && fw.note?.trim() ? ["Что случилось", fw.note.trim()] : null]),
+      ["Причина", hasReason ? reasonLabel(fw.reason) : "не указана, укажете в разборе смены"],
+      hasReason && fw.note?.trim() ? ["Что случилось", fw.note.trim()] : null]),
     error ? fieldError(error) : null,
-    psButton("primary", "Сохранить", saveForgottenStop, { disabled: !!error }));
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", "Сохранить", saveForgottenStop, { disabled: !!error }),
+      psButton("secondary", hasReason ? "Изменить причину" : "Указать причину сейчас", () => { fw.step = 3; render(); })));
 }
 function forgottenStopError(view, fw) {
-  return forgottenTimeError(view, fw.atMs) || (!fw.unknown && !reasonRef(fw.reason) ? "Выберите причину простоя."
-    : !fw.unknown && needsNote(fw.reason) && !validAction(fw.note) ? "Опишите своими словами, что случилось." : "");
+  return forgottenTimeError(view, fw.atMs) ||
+    (reasonRef(fw.reason) && needsNote(fw.reason) && !validAction(fw.note) ? "Опишите своими словами, что случилось." : "");
 }
 function saveForgottenStop() {
   const fw = ui.fw;
@@ -2496,7 +2559,7 @@ function saveForgottenStop() {
   const downtimeId = crypto.randomUUID();
   const at = new Date(fw.atMs).toISOString();
   const events = [{ type: "stop", fields: { downtimeId, at } }];
-  if (!fw.unknown) events.push({ type: "reason", fields: { downtimeId, at, reason: fw.reason, note: fw.note.trim() } });
+  if (reasonRef(fw.reason)) events.push({ type: "reason", fields: { downtimeId, at, reason: fw.reason, note: (fw.note || "").trim() } });
   ui.fw = null;
   ui.resume = null;
   ui.screen = "closeConfirm";
@@ -2508,49 +2571,26 @@ function saveForgottenStop() {
 function renderRestartTime(main, view) {
   const rw = ui.rw;
   if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  const total = rw.route === "reason" || !rw.reason ? 4 : 3;
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
     backBtn("К проверке состояния стана", () => { go("closeCheck"); ui.resume = "restartTime"; persistClient(); }),
-    h("div", { class: "ps-overline", text: "Забыли отметить пуск" }), stepLine(1, total), question("Когда стан пошёл?"),
-    ...forgottenTimeFields(view, rw, "startMs", true, () => {
-      if (!restartMatches(buildView(), rw)) { render(); return; }
-      rw.timeConfirmed = true;
-      if (rw.route === "reason" && ui.wz?.mode === "restart") { ui.wz.step = 1; go("reason"); }
-      else if (rw.reason) go("restartConfirm");
-      else startRestartReasonWizard();
-    })));
+    h("div", { class: "ps-overline", text: "Забыли отметить пуск" }), question("Когда стан пошёл?"),
+    ...forgottenTimeFields(view, rw, "startMs", true, saveForgottenStart, "Сохранить пуск")));
 }
-
-function restartBack() {
-  if (ui.rw?.thenClose) return backBtn("К времени пуска", () => go("restartTime"));
-  return backBtn("К простою", () => { ui.resume = ui.screen; go("auto"); });
-}
-
-function startRestartReasonWizard() {
+// Пуск задним числом: только время, без причины и «что сделали»; затем — к сдаче смены
+function saveForgottenStart() {
   const rw = ui.rw;
-  rw.route = "reason";
-  if (ui.wz?.mode === "restart" && ui.wz.downtimeId === rw.downtimeId && ui.wz.index === rw.index) ui.wz.step = 1;
-  else ui.wz = { mode: "restart", downtimeId: rw.downtimeId, index: rw.index, step: 1,
-    group: reasonGroup(rw.reason), reason: rw.reason, note: rw.note || "" };
-  go("reason");
-}
-
-function renderRestartConfirm(main, view) {
-  const rw = ui.rw;
-  if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  if (rw.reason) rw.reason = core.reasonKey(rw.reason);
-  if (!reasonRef(rw.reason)) return startRestartReasonWizard();
-  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
-    restartBack(),
-    stepLine(rw.thenClose ? 2 : 1, rw.thenClose ? 3 : 2),
-    question("Причина простоя верна?"),
-    h("div", { class: "ps-picked" }, h("span", { class: "ps-swatch", "data-zone": zoneOf(core.reasonKey(rw.reason), refs), "aria-hidden": "true" }), h("span", { text: reasonLabel(rw.reason) })),
-    h("div", { class: "ps-actions ps-actions--col" },
-      psButton("primary", "Да, верно", () => {
-        // При пуске причину своими словами не спрашиваем (решение владельца 01.10.2026)
-        rw.route = "confirm"; go("restartAction");
-      }),
-      psButton("secondary", "Изменить", startRestartReasonWizard))));
+  if (!rw) return;
+  const view = buildView();
+  if (!restartMatches(view, rw)) { render(); return; }
+  const msg = forgottenTimeError(view, rw.startMs, true);
+  if (msg) { showToast(msg); return; }
+  const at = new Date(rw.startMs).toISOString();
+  ui.rw = null;
+  ui.wz = null;
+  ui.screen = "closeConfirm";
+  const sent = sendBatch([{ type: "start", fields: { downtimeId: rw.downtimeId, at } }]);
+  ui.closeReceipt = sent.map((e) => e.id);
+  render();
 }
 
 // Вопрос перед сменой причины на ходу
@@ -2600,7 +2640,6 @@ function reasonGroups(draft, next) {
         onclick: () => {
           const d = current();
           d.group = tile.id;
-          d.unknown = false;
           const items = reasonItems(tile);
           const single = items.length === 1;
           if (single) chooseReasonItem(d, tile, items[0]);
@@ -2631,28 +2670,20 @@ function focusReasonNote(ta) {
   ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
-// Мастер выбора причины: группа → причина → своими словами
+// Мастер выбора причины: группа → причина → своими словами (на пульте, в разборе, при исправлении записи)
 function renderReasonWizard(main, view) {
   const wz = ui.wz;
   if (!wz) return go("auto");
-  const restarting = wz.mode === "restart";
-  if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
-  const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
-  const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? (wz.step === 1 || tileMulti(wz) ? 3 : 2) + offset : 3;
-  // При пуске шага «своими словами» нет: плитка → «Что именно?» → «Что сделали»
-  if (restarting && wz.step === 3) wz.step = 2;
-  const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
+  const past = wz.mode === "shiftfix";
+  const total = 3;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
     refix: ["Вернуться к простою", () => go("auto")],
     split: ["Вернуться к простою", () => go("auto")],
-    past: ["На главный экран", () => go("auto")],
     shiftfix: ["К записи простоя", () => go("detail")],
     repair: ["К сохранённой записи", () => go("repair")],
-    restart: [restartHasReason ? "К подтверждению причины" : ui.rw?.thenClose ? "К времени пуска" : "К простою",
-      () => restartHasReason ? go("restartConfirm") : ui.rw.thenClose ? go("restartTime") : (ui.resume = "reason", go("auto"))],
   }[wz.mode];
+  if (!back1) { ui.wz = null; return go("auto"); }
 
   if (wz.reason) wz.reason = core.reasonKey(wz.reason);
   if (wz.step === 3 && !reasonRef(wz.reason)) wz.step = 1;
@@ -2665,20 +2696,9 @@ function renderReasonWizard(main, view) {
       backBtn(...back1),
       stopped ? statePanel({ running: false, since: view.open.since ?? view.open.startMs,
         subtitle: `Стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}`, compact: true }) : null,
-      stepLine(1 + offset, total),
+      stepLine(1, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, (single) => {
-        if (single && restarting) return finishReasonWizard(wz.note || "");
-        wz.step = single ? 3 : 2; render();
-      }),
-      !restarting && wz.mode === "past" ? h("button", {
-        type: "button",
-        class: "ps-btn ps-btn--ghost ps-btn--block",
-        onclick: () => {
-          if (wz.mode === "past") go("recorded");
-          else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
-        },
-      }, "Укажу позже") : null
+      reasonGroups(wz, (single) => { wz.step = single ? 3 : 2; render(); })
     ));
     return;
   }
@@ -2686,12 +2706,9 @@ function renderReasonWizard(main, view) {
   if (wz.step === 2) {
     fill(main, h("div", { class: "ps-flow" },
       backBtn("К выбору причины", () => { wz.step = 1; render(); }),
-      stepLine(2 + offset, total),
+      stepLine(2, total),
       question("Что именно?"),
-      reasonChoices(wz, () => {
-        if (restarting) return finishReasonWizard(wz.note || "");
-        wz.step = 3; render();
-      })));
+      reasonChoices(wz, () => { wz.step = 3; render(); })));
     return;
   }
 
@@ -2730,7 +2747,7 @@ function renderReasonWizard(main, view) {
       must ? needText : null,
       h("span", { class: "ps-field__hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" })),
     h("div", { class: "ps-actions" },
-      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => done(true) }, restarting ? "Далее" : "Сохранить"),
+      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => done(true) }, "Сохранить"),
       must ? null : h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => done(false) }, "Без описания"))
   ));
   focusReasonNote(ta);
@@ -2743,7 +2760,7 @@ function finishReasonWizard(rawNote) {
   }
   const note = String(rawNote || "").trim();
   if (!reasonRef(wz.reason)) { wz.step = 1; render(); return; }
-  if (wz.mode !== "restart" && needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
+  if (needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
   const noteField = { note };
   if (wz.mode === "repair") {
     ui.repair.event.reason = wz.reason;
@@ -2754,22 +2771,17 @@ function finishReasonWizard(rawNote) {
   if (wz.mode === "shiftfix" && !cardData(buildView())) {
     showToast("Запись изменилась. Ответы остаются в черновике; проверьте итог смены."); return;
   }
-  if (wz.mode === "restart") {
-    ui.rw.reason = wz.reason;
-    ui.rw.note = note;
-    ui.rw.reasonChanged = true;
-    go("restartAction");
-  } else if (wz.mode === "split") {
+  if (wz.mode === "split") {
     send("split", { downtimeId: wz.downtimeId, reason: wz.reason, ...noteField });
     showToast(receiptStatus(receiptFor(wz.downtimeId)));
     go("auto");
-  } else if (wz.mode === "past") {
-    send("fix", { downtimeId: wz.downtimeId, index: wz.index, reason: wz.reason, ...noteField });
-    go("recorded");
   } else if (wz.mode === "shiftfix") {
+    // Простой был без причины: если без причины больше никого нет — назад в разбор, иначе остаёмся в записи
+    const before = cardData(buildView());
+    const wasEmpty = !!before && !reasonRef(before.s.reason);
     send("fix", { downtimeId: wz.downtimeId, index: wz.index, reason: wz.reason, ...noteField });
     ui.wz = null;
-    go("detail");
+    go(wasEmpty && !noReasonList(buildView()).length ? "shift" : "detail");
   } else {
     // current и refix: событие reason для текущего отрезка
     send("reason", { downtimeId: wz.downtimeId, reason: wz.reason, ...noteField });
@@ -2792,136 +2804,17 @@ function renderStaleRestart(main) {
     psButton("primary", "Вернуться к стану", () => { ui.resume = ui.screen; go("auto"); })));
 }
 
-function actionText(value) {
-  const text = typeof value === "string" ? value.trim() : "";
-  return validAction(text) ? text : "";
-}
-
-// Быстрые варианты «что сделали» — из подсказки справочника к причине: «Например: заменили ножи, подтянули муфту»
-function quickActions(code) {
-  const hint = reasonRef(code) && reasonRef(code).actionHint;
-  if (!hint) return [];
-  return hint.replace(/^[^:]*:\s*/, "").split(",").map((t) => t.trim()).filter((t) => t.length >= 3)
-    .map((t) => t.charAt(0).toUpperCase() + t.slice(1)).slice(0, 4);
-}
-const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
 // Брак чипами; другое значение вводится в поле (текст с запятой, 0–1000)
 const BILLET_CHIPS = ["0", "0,5", "1", "1,5", "2"];
 const sameTons = (a, b) => {
   const x = String(a ?? "").trim().replace(",", ".");
   return x !== "" && Number(x) === Number(b.replace(",", "."));
 };
-
-function renderRestartAction(main, view) {
-  const rw = ui.rw;
-  if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  const reasonNow = rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open.reason;
-  const ta = h("textarea", {
-    class: "ps-input",
-    id: "restart-action",
-    rows: "3",
-    maxlength: String(NOTE_MAX),
-    placeholder: actionHint(reasonNow),
-    "aria-label": "Что сделали, чтобы запустить стан",
-  });
-  ta.value = rw.action ?? view.open.action ?? "";
-  // «Заполню потом» — тот же пуск без текста «что сделали»; мастер увидит простой с пометкой
-  const later = h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg" }, "Заполню потом");
-  // Быстрые варианты дописывают фразу в поле; повторное нажатие убирает её
-  const quick = quickActions(reasonNow);
-  const quickChips = quick.map((text) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
-    onclick: () => {
-      const cur = ta.value;
-      const hit = [text, lowerFirst(text)].find((v) => cur.includes(v));
-      if (hit) {
-        const rest = cur.replace(hit, "").replace(/\s*,\s*,/g, ",").replace(/^[\s,;.]+|[\s,;]+$/g, "").replace(/\s{2,}/g, " ");
-        ta.value = rest.charAt(0).toUpperCase() + rest.slice(1);
-      } else {
-        ta.value = cur.trim() ? cur.trim().replace(/[.,;]+$/, "") + ", " + lowerFirst(text) : text;
-      }
-      syncAction();
-    } }, text));
-  const syncAction = () => {
-    rw.action = ta.value;
-    quickChips.forEach((chip, i) => chip.setAttribute("aria-pressed", String([quick[i], lowerFirst(quick[i])].some((v) => ta.value.includes(v)))));
-    later.hidden = !!ta.value.trim();
-  };
-  ta.addEventListener("input", syncAction);
-  // После бурёжки и аварии — обязательно, сколько заготовки испорчено (владелец, 01.10.2026)
-  const needBillet = restartNeedsBillet(rw, view);
-  // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
-  const billet = needBillet ? h("input", { id: "restart-billet", class: "ps-input", type: "text", maxlength: "8",
-    inputmode: "decimal", autocomplete: "off", placeholder: "Своё значение, тонн", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
-  const billetError = needBillet ? h("p", { class: "ps-field__error", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
-  let billetBox = null;
-  if (needBillet) {
-    billet.value = rw.billet ?? "";
-    billetError.hidden = true;
-    let other = String(rw.billet ?? "").trim() !== "" && !BILLET_CHIPS.some((v) => sameTons(rw.billet, v));
-    const otherChip = h("button", { type: "button", class: "ps-chip", "aria-pressed": "false" }, "Другое");
-    const billetChips = BILLET_CHIPS.map((v) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
-      onclick: () => { other = false; billet.value = ""; rw.billet = v; billetError.hidden = true; syncBillet(); } }, v));
-    const syncBillet = () => {
-      billetChips.forEach((chip, i) => chip.setAttribute("aria-pressed", String(!other && sameTons(rw.billet, BILLET_CHIPS[i]))));
-      otherChip.setAttribute("aria-pressed", String(other));
-      billet.hidden = !other;
-    };
-    otherChip.addEventListener("click", () => { other = true; rw.billet = billet.value; billetError.hidden = true; syncBillet(); billet.focus(); });
-    billet.addEventListener("input", () => { rw.billet = billet.value; billetError.hidden = true; });
-    syncBillet();
-    billetBox = h("div", { class: "ps-field", role: "group", "aria-labelledby": "restart-billet-label" },
-      h("span", { class: "ps-field__label", id: "restart-billet-label", text: "Сколько заготовки испорчено, тн" }),
-      h("div", { class: "ps-chips" }, billetChips, otherChip),
-      billet, billetError,
-      h("span", { class: "ps-field__hint", text: "Если брака нет — 0" }));
-  }
-  const save = (rawAction) => {
-    if (needBillet && !validBillet(rw.billet)) {
-      billetError.hidden = false; if (!billet.hidden) billet.focus(); return;
-    }
-    finishRestart(rawAction);
-  };
-  const submit = h("button", { type: "button", class: "ps-btn ps-btn--run ps-btn--lg", onclick: () => save(ta.value) }, "Сохранить пуск");
-  later.addEventListener("click", () => save(""));
-  syncAction();
-  const total = (rw.route === "reason" && ui.wz && tileMulti(ui.wz) ? 3 : 2) + (rw.thenClose ? 1 : 0);
-  // Что по этому простою уже сделали прошлые смены (последние три записи)
-  const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
-  fill(main, h("div", { class: "ps-flow" },
-    backBtn(rw.route === "reason" ? (tileMulti(ui.wz) ? "К выбору пункта" : "К выбору причины") : "К причине", () => {
-      if (rw.route === "reason") { ui.wz.step = tileMulti(ui.wz) ? 2 : 1; go("reason"); }
-      else go("restartConfirm");
-    }),
-    stepLine(total, total),
-    h("section", { class: "ps-card ps-restart", "aria-label": "Что сделали" },
-      h("div", null,
-        question("Что сделали, чтобы запустить стан?"),
-        h("p", { class: "ps-field__hint", text: `Время пуска: ${fmtSince(rw.startMs, view.shift)} МСК${rw.thenClose ? "" : " — по первому нажатию"}` })),
-      earlier.length ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
-        h("div", { class: "ps-notice__body" },
-          h("span", { text: "Раньше по этому простою:" }),
-          earlier.map((text) => h("span", { class: "ps-notice__line", text: `«${text}»` })))) : null,
-      h("div", { class: "ps-field", role: "group", "aria-labelledby": "restart-action-label" },
-        h("span", { class: "ps-field__label", id: "restart-action-label", text: "Что сделали" }),
-        quickChips.length ? h("div", { class: "ps-chips" }, quickChips) : null,
-        ta,
-        h("span", { class: "ps-field__hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" })),
-      billetBox,
-      h("div", { class: "ps-actions" }, submit, later),
-      h("p", { class: "ps-field__hint", text: "Не заполните сейчас — мастер увидит простой с пометкой «не указано, что сделали»." }))
-  ));
-}
 // Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
 function reasonNeedsBillet(reason) {
   const r = reason && reasonRef(core.reasonKey(reason));
   return !!(r && r.askBillet);
 }
-function restartBilletSegment(rw, view) {
-  const all = [...(serverState?.open?.segments || []), ...view.segments, view.open].filter((s) => s && s.downtimeId === rw.downtimeId);
-  return all.map((s) => s.index === view.open?.index ? { ...s, reason: rw.reason ?? s.reason } : s)
-    .sort((a, b) => a.index - b.index).findLast((s) => reasonNeedsBillet(s.reason));
-}
-function restartNeedsBillet(rw, view) { return !!restartBilletSegment(rw, view); }
 function validBillet(v) {
   const s = String(v ?? "").trim().replace(",", ".");
   if (!s) return false;
@@ -2929,47 +2822,13 @@ function validBillet(v) {
   return Number.isFinite(n) && n >= 0 && n <= 1000;
 }
 
-function finishRestart(rawAction) {
-  const rw = ui.rw;
-  const action = rawAction.trim();
-  if (!rw) return;
-  if (!restartMatches(buildView(), rw)) { render(); return; }
-  if (!reasonRef(rw.reason)) { startRestartReasonWizard(); return; }
-  if (rw.startMs < buildView().open.startMs || rw.startMs > nowMs()) {
-    showToast("Проверьте время пуска и часы планшета"); return;
-  }
-  const at = new Date(rw.startMs).toISOString();
-  const events = [{ type: "start", fields: { downtimeId: rw.downtimeId, ...(action ? { action } : {}), at } }];
-  if (rw.reasonChanged) {
-    events.push({ type: "reason", fields: {
-      downtimeId: rw.downtimeId,
-      reason: rw.reason,
-      note: rw.note || "",
-      at,
-    } });
-  }
-  const openNow = buildView().open;
-  // Брак — к последнему отрезку этого простоя (тот же fix, что правка «Брак» в итоге смены)
-  if (restartNeedsBillet(rw, buildView())) {
-    if (!validBillet(rw.billet)) { render(); return; }
-    // Номер последнего отрезка открытого простоя: после смены причины их несколько
-    const index = restartBilletSegment(rw, buildView()).index;
-    events.push({ type: "fix", fields: { downtimeId: rw.downtimeId, index,
-      billet: Number(String(rw.billet).trim().replace(",", ".")), at } });
-  }
-  ui.rec = { downtimeId: rw.downtimeId, sinceMs: openNow.since ?? openNow.startMs, endMs: rw.startMs };
-  ui.rw = null;
-  ui.wz = null;
-  ui.screen = rw.thenClose ? "closeConfirm" : "recorded";
-  const sent = sendBatch(events);
-  if (rw.thenClose) { ui.closeReceipt = sent.map((e) => e.id); render(); }
-}
-
-// Мастер «Забыл отметить простой»
-function startManualWizard(origin) {
+// Мастер «Забыл отметить простой»: два времени и проверка; причину указывают в разборе смены
+// fromMs — заранее заданное начало (со шкалы суток)
+function startManualWizard(origin, fromMs = null) {
   const openedAt = Math.floor(nowMs() / 60000) * 60000;
-  ui.mw = { origin, step: 1, from: openedAt - 30 * 60000, to: openedAt - 15 * 60000,
-    openedAt, group: null, reason: null, note: "", action: "" };
+  const prefilled = Number.isFinite(fromMs);
+  ui.mw = { origin, step: 1, from: prefilled ? fromMs : openedAt - 30 * 60000,
+    to: prefilled ? Math.max(fromMs + 60000, Math.min(fromMs + 30 * 60000, openedAt)) : openedAt - 15 * 60000, openedAt };
   go("manual");
 }
 
@@ -2997,150 +2856,101 @@ function manualError(view, mw) {
   if (mw.to > nowMs()) return "Конец простоя в будущем. Укажите, когда стан уже заработал.";
   if (mw.from < view.shift.startMs) return "Здесь можно добавить простой этой смены. О более раннем простое сообщите мастеру.";
   const overlap = manualOverlap(view, mw.from, mw.to);
-  if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в итоге смены.`;
-  if (!reasonRef(mw.reason)) return "Выберите причину простоя.";
-  if (needsNote(mw.reason) && !validAction(mw.note)) return "Опишите своими словами, что случилось.";
-  if (reasonNeedsBillet(mw.reason) && !validBillet(mw.billet)) return "Укажите от 0 до 1000 тн.";
+  if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в разборе простоев.`;
   return "";
 }
 
 function renderManual(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
+  if (mw.step > 2) mw.step = 2; // черновик старой версии: причину теперь указывают в разборе
+  const start = mw.step === 1;
   const back = () => {
-    if (mw.step > 1) { mw.step = mw.step === 5 && !tileMulti(mw) ? 3 : mw.step - 1; render(); }
+    if (mw.step > 1) { mw.step--; render(); }
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
-  const backLabel = mw.step === 4 ? "К выбору причины" : mw.step === 5 && tileMulti(mw) ? "К выбору пункта" : "К предыдущему вопросу";
-  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К простоям смены" : "Назад", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
-  const next = () => { mw.step++; mw.error = ""; render(); };
-  const flow = (...kids) => fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, ...kids));
-  if (mw.step <= 2) {
-    const start = mw.step === 1;
-    const field = start ? "from" : "to";
-    const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": start ? "Начало простоя, Москва" : "Конец простоя, Москва" });
-    input.value = localTimeValue(mw[field]);
-    const error = fieldError();
-    const submit = psButton("primary", "Далее", next);
-    // Одна проверка и при открытии шага, и при вводе; мешающий простой называем по времени
-    const timeError = () => {
-      const busy = !Number.isFinite(mw.from) ? null
-        : start ? manualOverlap(view, mw.from, mw.from + 1)
-        : Number.isFinite(mw.to) && mw.to > mw.from ? manualOverlap(view, mw.from, mw.to) : null;
-      return !Number.isFinite(mw[field]) ? "Укажите дату и время."
-        : mw[field] > nowMs() ? "Это время ещё не наступило."
-        : mw.from < view.shift.startMs ? "Укажите время в пределах этой смены."
-        : !start && mw.to <= mw.from ? "Конец должен быть позже начала."
-        : busy ? `В это время уже записан простой ${fmtClock(busy.startMs)}–${busy.endMs ? fmtClock(busy.endMs) : "сейчас"}. Выберите другое время.` : "";
-    };
-    const update = () => {
-      mw[field] = parseLocalTime(input.value);
-      const msg = timeError();
-      error.textContent = msg;
-      error.hidden = !msg;
-      submit.disabled = !!msg;
-    };
-    input.addEventListener("input", update);
-    // Не округляем сохранённое время при перерисовке; только проверяем.
-    const msg0 = timeError();
-    submit.disabled = !!msg0;
-    error.textContent = msg0;
-    error.hidden = !msg0;
-    const choices = start ? [[10, "10 мин назад"], [30, "30 мин назад"], [60, "Час назад"]]
-      : [[5, "Стоял 5 мин"], [15, "Стоял 15 мин"], [30, "Стоял 30 мин"]];
-    const stepper = timeStepper(start ? "Начало простоя" : "Конец простоя", mw[field], (dir) => {
-      mw[field] = (Number.isFinite(mw[field]) ? mw[field] : minuteNow()) + dir * 60000;
-      render();
-    });
-    flow(...top(), question(start ? "Когда стан встал?" : "Когда стан снова пошёл?"),
-      h("section", { class: "ps-card" },
-        h("p", { class: "ps-field__hint", text: "Дата и время по Москве. Добавляем уже закончившийся простой этой смены." }),
-        h("div", { class: "ps-form-row" }, h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Время по Москве" }), stepper), psField("Или дата и время", input)),
-        h("div", { class: "ps-chips", role: "group", "aria-label": "Быстрый выбор" }, choices.map(([min, label]) => h("button", { type: "button", class: "ps-chip", onclick: () => {
-          mw[field] = start ? mw.openedAt - min * 60000 : mw.from + min * 60000;
-          render();
-        } }, label))),
-        start ? null : h("p", { class: "ps-field__hint", text: `Начало: ${fmtDate(mw.from)} в ${fmtClock(mw.from)}. Выбранный конец не меняется, пока вы заполняете запись.` })),
-      error, submit);
-    return;
-  }
-  if (mw.reason) mw.reason = core.reasonKey(mw.reason);
-  if (mw.step >= 5 && mw.step <= 6 && !reasonRef(mw.reason)) mw.step = 3;
-  if (mw.step === 4 && !(refs.tiles || []).some((t) => t.id === mw.group)) mw.step = 3;
-  if (mw.step === 3) {
-    flow(...top(), question("Почему стоял?"), reasonGroups(mw, (single) => { mw.step = single ? 5 : 4; mw.error = ""; render(); }));
-    return;
-  }
-  if (mw.step === 4) {
-    flow(...top(), question("Что именно?"), reasonChoices(mw, () => { mw.step = 5; mw.error = ""; render(); }));
-    return;
-  }
-  const action = mw.step === 6;
-  const billet = action && reasonNeedsBillet(mw.reason) ? h("input", { id: "manual-billet", class: "ps-input", type: "text", inputmode: "decimal" }) : null;
-  const billetError = fieldError("Укажите от 0 до 1000 тн. Если брака нет — 0.", true);
-  if (billet) { billet.value = mw.billet ?? ""; billet.addEventListener("input", () => { mw.billet = billet.value; billetError.hidden = true; }); }
-
-  const field = action ? "action" : "note";
-  const must = !action && needsNote(mw.reason);
-  const ta = h("textarea", { class: "ps-input", rows: "4", maxlength: String(NOTE_MAX),
-    placeholder: action ? actionHint(mw.reason) : noteHint(mw.reason) });
-  ta.value = mw[field] || "";
-  const error = fieldError(action ? "Напишите, что сделали." : "Опишите своими словами, что случилось.");
-  const submit = psButton("primary", "Далее", () => {
-    if (must && !validAction(ta.value)) return;
-    mw[field] = ta.value;
-    if (action && reasonNeedsBillet(mw.reason) && !validBillet(mw.billet)) {
-      billetError.hidden = false; return;
-    }
-    if (action) go("manualCheck"); else next();
-  });
-  const update = () => {
-    mw[field] = ta.value;
-    submit.disabled = must && !validAction(ta.value);
-    error.hidden = !submit.disabled || !touched;
+  const backLabel = mw.step > 1 ? "К началу простоя" : mw.origin === "shift" ? "К разбору простоев" : "Назад";
+  const field = start ? "from" : "to";
+  const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": start ? "Начало простоя, Москва" : "Конец простоя, Москва" });
+  input.value = localTimeValue(mw[field]);
+  const error = fieldError();
+  const submit = psButton("primary", "Далее", () => { if (start) { mw.step = 2; render(); } else { mw.error = ""; go("manualCheck"); } });
+  // Одна проверка и при открытии шага, и при вводе; мешающий простой называем по времени
+  const timeError = () => {
+    const busy = !Number.isFinite(mw.from) ? null
+      : start ? manualOverlap(view, mw.from, mw.from + 1)
+      : Number.isFinite(mw.to) && mw.to > mw.from ? manualOverlap(view, mw.from, mw.to) : null;
+    return !Number.isFinite(mw[field]) ? "Укажите дату и время."
+      : mw[field] > nowMs() ? "Это время ещё не наступило."
+      : mw.from < view.shift.startMs ? "Укажите время в пределах этой смены."
+      : !start && mw.to <= mw.from ? "Конец должен быть позже начала."
+      : busy ? `В это время уже записан простой ${fmtClock(busy.startMs)}–${busy.endMs ? fmtClock(busy.endMs) : "сейчас"}. Выберите другое время.` : "";
   };
-  let touched = !!ta.value;
-  ta.addEventListener("input", () => { touched = true; if (!action) mw.noteEdited = true; update(); });
-  update();
-  flow(...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Расскажите своими словами"),
-    action ? null : h("div", { class: "ps-picked" }, h("span", { class: "ps-swatch", "data-zone": zoneOf(core.reasonKey(mw.reason), refs), "aria-hidden": "true" }), h("span", { text: reasonLabel(mw.reason) })),
-    psField(action ? "Что сделали" : "Что случилось", ta, "Можно надиктовать — кнопка микрофона на клавиатуре"), error,
-    billet ? psField("Брак, тн (0 — если нет)", billet) : null, billetError, submit,
-    !must && !action ? psButton("secondary", "Без описания", () => { mw.note = ""; mw.noteEdited = true; next(); }) : null);
-  if (!action) focusReasonNote(ta);
+  const update = () => {
+    mw[field] = parseLocalTime(input.value);
+    const msg = timeError();
+    error.textContent = msg;
+    error.hidden = !msg;
+    submit.disabled = !!msg;
+  };
+  input.addEventListener("input", update);
+  // Не округляем сохранённое время при перерисовке; только проверяем.
+  const msg0 = timeError();
+  submit.disabled = !!msg0;
+  error.textContent = msg0;
+  error.hidden = !msg0;
+  const choices = start ? [[10, "10 мин назад"], [30, "30 мин назад"], [60, "Час назад"]]
+    : [[5, "Стоял 5 мин"], [15, "Стоял 15 мин"], [30, "Стоял 30 мин"]];
+  const stepper = timeStepper(start ? "Начало простоя" : "Конец простоя", mw[field], (dir) => {
+    mw[field] = (Number.isFinite(mw[field]) ? mw[field] : minuteNow()) + dir * 60000;
+    render();
+  });
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, backBtn(backLabel, back), stepLine(mw.step, 3),
+    question(start ? "Когда стан встал?" : "Когда стан снова пошёл?"),
+    h("section", { class: "ps-card" },
+      h("p", { class: "ps-field__hint", text: "Дата и время по Москве. Добавляем уже закончившийся простой этой смены. Причину укажете в разборе простоев." }),
+      h("div", { class: "ps-form-row" }, h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Время по Москве" }), stepper), psField("Или дата и время", input)),
+      h("div", { class: "ps-chips", role: "group", "aria-label": "Быстрый выбор" }, choices.map(([min, label]) => h("button", { type: "button", class: "ps-chip", onclick: () => {
+        mw[field] = start ? mw.openedAt - min * 60000 : mw.from + min * 60000;
+        render();
+      } }, label))),
+      start ? null : h("p", { class: "ps-field__hint", text: `Начало: ${fmtDate(mw.from)} в ${fmtClock(mw.from)}. Выбранный конец не меняется, пока вы заполняете запись.` })),
+    error, submit));
 }
 
 function renderManualCheck(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
   const error = manualError(view, mw);
+  // Сохранение: после свежего состояния, если есть связь; thenReason — сразу открыть разбор этого простоя
+  const save = async (thenReason) => {
+    mw.saving = true;
+    render();
+    // Проверяем ещё раз после свежего состояния, если связь доступна.
+    if (online) await loadState();
+    if (ui.mw !== mw || ui.screen !== "manualCheck") { mw.saving = false; return; }
+    mw.saving = false;
+    mw.error = manualError(buildView(), mw);
+    if (mw.error) { render(); return; }
+    const downtimeId = crypto.randomUUID();
+    ui.mw = null;
+    if (thenReason) { ui.card = { downtimeId, index: 0 }; ui.screen = "detail"; }
+    else { ui.rec = { downtimeId }; ui.screen = "recorded"; }
+    send("manual", { downtimeId, from: new Date(mw.from).toISOString(), to: new Date(mw.to).toISOString() });
+    if (thenReason) window.scrollTo(0, 0);
+  };
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
-    backBtn("К выполненным работам", () => { mw.step = 6; go("manual"); }),
-    stepLine(7, 7), question("Всё верно?"),
+    backBtn("К времени конца", () => { mw.step = 2; go("manual"); }),
+    stepLine(3, 3), question("Проверьте"),
     summaryCard(`${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}`, [
-      ["Причина", reasonLabel(mw.reason)],
-      ["Что случилось", mw.note || "не указано"],
-      ["Что сделали", mw.action || "не указано"]]),
+      ["Стан встал", `${fmtDate(mw.from)} ${fmtClock(mw.from)}`],
+      ["Стан пошёл", `${fmtDate(mw.to)} ${fmtClock(mw.to)}`],
+      ["Причина", "не указана, укажете в разборе простоев"]]),
     error || mw.error ? fieldError(error || mw.error) : null,
     h("div", { class: "ps-actions ps-actions--col" },
-      psButton("primary", mw.saving ? "Проверяем время…" : "Сохранить простой", async () => {
-        mw.saving = true;
-        render();
-        // Проверяем ещё раз после свежего состояния, если связь доступна.
-        if (online) await loadState();
-        if (ui.mw !== mw || ui.screen !== "manualCheck") { mw.saving = false; return; }
-        mw.saving = false;
-        mw.error = manualError(buildView(), mw);
-        if (mw.error) { render(); return; }
-        const downtimeId = crypto.randomUUID();
-        ui.rec = { downtimeId };
-        ui.screen = "recorded";
-        ui.mw = null;
-        send("manual", { downtimeId, from: new Date(mw.from).toISOString(), to: new Date(mw.to).toISOString(),
-          reason: mw.reason, note: mw.note.trim(), action: mw.action.trim(),
-          ...(reasonNeedsBillet(mw.reason) ? { billet: Number(String(mw.billet).replace(",", ".")) } : {}) });
-      }, { disabled: !!error || mw.saving }),
-      psButton("secondary", "Исправить время", () => { mw.step = 1; go("manual"); }))));
+      psButton("primary", mw.saving ? "Проверяем время…" : "Сохранить простой", () => save(false), { disabled: !!error || mw.saving }),
+      psButton("secondary", "Указать причину сейчас", () => save(true), { disabled: !!error || mw.saving }),
+      psButton("ghost", "Исправить время", () => { mw.step = 1; go("manual"); }))));
 }
 
 // Результат сохраняется вместе с событиями и не исчезает по таймеру.
@@ -3155,6 +2965,7 @@ function renderRecorded(main, view) {
   // Простой начался до этой смены — показываем его целиком и отдельно часть этой смены
   const longRec = Number.isFinite(ui.rec.sinceMs) && Number.isFinite(ui.rec.endMs) && ui.rec.sinceMs < view.shift.startMs;
   const tone = status === "Принято сервером" ? "ok" : status === "Нужно исправить" || status === "На планшете не сохранено" ? "stop" : "info";
+  const lastReason = d?.reason || original.findLast((e) => e.reason)?.reason;
   const title = d && longRec ? `${fmtDate(ui.rec.sinceMs)} ${fmtClock(ui.rec.sinceMs)} – ${fmtDate(ui.rec.endMs)} ${fmtClock(ui.rec.endMs)} · ${fmtDurLong((ui.rec.endMs - ui.rec.sinceMs) / 60000)}`
     : d ? `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` : "Простой";
   fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, question(status),
@@ -3165,11 +2976,13 @@ function renderRecorded(main, view) {
         : "Запись уйдёт сама, когда появится связь. Можно продолжать работу." })),
     summaryCard(title, [
       d && longRec ? ["В эту смену", fmtDurMin(d.minutes)] : null,
-      ["Причина", reasonLabel(d?.reason || original.findLast((e) => e.reason)?.reason)],
+      ["Причина", reasonLabel(lastReason) || "не указана, укажете в разборе"],
       ["Что случилось", note || "не указано"],
       ["Что сделали", action || "не указано"],
       billetLine(d, original)]),
-    psButton("primary", "Готово", () => go("auto"))));
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", "Готово", () => go("auto")),
+      d && !reasonRef(lastReason) ? psButton("secondary", "Указать причину сейчас", () => openDetail(d.downtimeId)) : null)));
 }
 // Брак в карточке «Запись принята»: из учтённого простоя, а пока он не пришёл с сервера — из отправленного fix
 function billetLine(d, original) {
@@ -3267,7 +3080,102 @@ function billetPicker(draft, onChange) {
   return h("div", { class: "ps-chips" }, chips, otherChip, input);
 }
 
-// Редактор записи простоя: причина, что случилось, что сделали, брак. Время ставит система
+// Другие простои для проверки наложения: сутки с сервера, части смены и идущий простой
+function otherSegments(view, id) {
+  const list = [...(serverState?.day?.segments || []), ...view.segments];
+  if (view.open) list.push({ downtimeId: view.open.downtimeId, startMs: view.open.since ?? view.open.startMs, endMs: null, open: true });
+  return list.filter((s) => s.downtimeId !== id);
+}
+// Проверка правки времени до отправки; ядро на сервере проверит то же самое ещё раз.
+// ch: {from?, to?} — только изменённые поля (число мс или NaN)
+function timeFixError(view, d, ch) {
+  const now = nowMs();
+  const hasFrom = ch.from !== undefined, hasTo = ch.to !== undefined;
+  if ((hasFrom && !Number.isFinite(ch.from)) || (hasTo && !Number.isFinite(ch.to))) return "Укажите дату и время.";
+  const from = hasFrom ? ch.from : d.startMs;
+  const to = d.open ? null : hasTo ? ch.to : d.endMs;
+  if (hasFrom && from < now - 40 * 86400000) return "Время старше 40 суток: так давно простой править нельзя.";
+  if ((hasFrom && from > now) || (hasTo && to > now) || (d.open && from >= now)) return "Время в будущем.";
+  if (to !== null && to <= from) return "Пуск раньше остановки.";
+  if (d.segs.length > 1) {
+    if (hasFrom && from >= d.segs[0].endMs) return `Остановка не может быть позже смены причины в ${fmtClock(d.segs[0].endMs)}.`;
+    if (hasTo && to <= d.segs.at(-1).startMs) return `Пуск не может быть раньше смены причины в ${fmtClock(d.segs.at(-1).startMs)}.`;
+  }
+  const end = to ?? now;
+  const clash = otherSegments(view, d.downtimeId).find((o) => from < (o.open || o.endMs == null ? now : o.endMs) && end > o.startMs);
+  if (clash) return `Пересекается с другим простоем ${fmtClock(clash.startMs)}–${clash.open || clash.endMs == null ? "сейчас" : fmtClock(clash.endMs)}.`;
+  return "";
+}
+// Блок «Время»: когда стан встал и когда пошёл. Начало правится у первой части простоя, конец — у последней закрытой
+function renderTimeFix(view, d) {
+  const canFrom = !d.continued && (d.segs[0].index || 0) === 0;
+  const canTo = !d.open;
+  const base = { from: d.startMs, to: d.endMs };
+  let t = ui.timeEdit;
+  if (!t || t.downtimeId !== d.downtimeId) t = ui.timeEdit = { downtimeId: d.downtimeId, base: { ...base }, from: base.from, to: base.to };
+  else for (const f of ["from", "to"]) if (t[f] === t.base[f]) t[f] = t.base[f] = base[f];
+  const changes = () => {
+    const ch = {};
+    if (canFrom && t.from !== t.base.from) ch.from = t.from;
+    if (canTo && t.to !== t.base.to) ch.to = t.to;
+    return ch;
+  };
+  const error = fieldError("", true);
+  const save = psButton("secondary", "Сохранить время", () => {
+    const fresh = cardData(buildView());
+    if (!fresh || fresh.d.downtimeId !== d.downtimeId) {
+      error.textContent = "Запись изменилась. Вернитесь к списку и проверьте её."; error.hidden = false; return;
+    }
+    const ch = changes();
+    const msg = timeFixError(buildView(), fresh.d, ch);
+    if (msg) { error.textContent = msg; error.hidden = false; return; }
+    const id = d.downtimeId;
+    const last = fresh.d.indexLast;
+    const iso = (ms) => new Date(ms).toISOString();
+    const events = [];
+    if (ch.from !== undefined && ch.to !== undefined && last === 0) {
+      events.push({ type: "fix", fields: { downtimeId: id, index: 0, from: iso(ch.from), to: iso(ch.to) } });
+    } else {
+      const f = ch.from !== undefined ? { type: "fix", fields: { downtimeId: id, index: 0, from: iso(ch.from) } } : null;
+      const e = ch.to !== undefined ? { type: "fix", fields: { downtimeId: id, index: last, to: iso(ch.to) } } : null;
+      // Сдвиг позже — сначала конец, раньше — сначала начало: промежуточное состояние остаётся верным
+      events.push(...(ch.from !== undefined && ch.from > fresh.d.startMs ? [e, f] : [f, e]).filter(Boolean));
+    }
+    ui.timeEdit = null;
+    sendBatch(events);
+    showToast("Время сохранено");
+  }, { lg: false });
+  const update = () => {
+    const ch = changes();
+    const touched = ch.from !== undefined || ch.to !== undefined;
+    const msg = touched ? timeFixError(view, d, ch) : "";
+    error.textContent = msg;
+    error.hidden = !msg;
+    save.disabled = !touched || !!msg;
+  };
+  const row = (field, label, enabled, readout) => {
+    if (!enabled) {
+      return h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: label }), h("output", { class: "ps-readout", text: readout }));
+    }
+    const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": `${label}, Москва` });
+    input.value = localTimeValue(t[field]);
+    input.addEventListener("input", () => { t[field] = parseLocalTime(input.value); update(); });
+    const stepper = timeStepper(label, t[field], (dir) => {
+      t[field] = (Number.isFinite(t[field]) ? t[field] : minuteNow()) + dir * 60000;
+      render();
+    });
+    return h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: label }), stepper, input);
+  };
+  update();
+  return h("div", { class: "ps-field ps-timefix", role: "group", "aria-labelledby": "edit-time-label" },
+    h("span", { class: "ps-field__label", id: "edit-time-label", text: "Время" }),
+    h("div", { class: "ps-form-row" },
+      row("from", "Стан встал", canFrom, d.continued ? `${fmtSince(d.startMs, view.shift)} · начался в прошлую смену` : fmtSince(d.startMs, view.shift)),
+      row("to", "Стан пошёл", canTo, "ещё стоит")),
+    error, save);
+}
+
+// Редактор записи простоя: время, причина, что случилось, что сделали, брак
 function renderEditor(view, data) {
   const { d, s } = data;
   ui.card.index = s.index;
@@ -3277,7 +3185,6 @@ function renderEditor(view, data) {
   const openWizard = (t, item) => {
     ui.wz = { mode: "shiftfix", downtimeId: s.downtimeId, index: s.index, step: 1, group: reasonGroup(s.reason), reason: s.reason, note: s.note || "" };
     ui.wz.group = t.id;
-    ui.wz.unknown = false;
     const items = reasonItems(t);
     if (item) { chooseReasonItem(ui.wz, t, item); ui.wz.step = 3; }
     else if (items.length === 1) { chooseReasonItem(ui.wz, t, items[0]); ui.wz.step = 3; }
@@ -3343,16 +3250,19 @@ function renderEditor(view, data) {
     `${fmtClock(part.startMs)}–${part.open ? "сейчас" : fmtClock(part.endMs)} · ${reasonLabel(part.reason) || "Без причины"}`))) : null;
   const items = tile ? reasonItems(tile) : [];
   const receipt = receiptFor(d.downtimeId);
+  // Причина у этого простоя есть, а у других нет — следующий по времени
+  const rest = reasonRef(s.reason) ? noReasonList(view).filter((x) => x.downtimeId !== d.downtimeId) : [];
+  const nextBox = rest.length ? h("div", { class: "ps-notice", "data-tone": "ok" }, icon("tick", "ps-ico"),
+    h("span", { class: "ps-notice__body", text: `Ещё без причины: ${rest.length}` }),
+    psButton("primary", "Следующий без причины →", () => openDetail(rest[0].downtimeId, rest[0].segs.find((x) => !reasonRef(x.reason))?.index ?? null), { lg: false })) : null;
   return h("section", { class: "ps-card ps-editor", "aria-label": "Запись простоя" },
     h("div", { class: "ps-card__head" },
       h("h2", { class: "ps-card__title", text: `Простой ${fmtSince(d.startMs, view.shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
       h("span", { class: "ps-card__aside", text: d.open ? "идёт" : fmtDurMin(d.minutes) })),
     d.open ? h("p", { class: "ps-field__hint", text: "Ещё идёт. Заполнение записи не отмечает пуск." }) : null,
+    nextBox,
     parts,
-    h("div", { class: "ps-form-row" },
-      h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Стан встал" }), h("output", { class: "ps-readout", text: fmtSince(d.startMs, view.shift) })),
-      h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Стан пошёл" }), h("output", { class: "ps-readout", text: d.endMs === null ? "ещё стоит" : fmtClock(d.endMs) })),
-      h("span", { class: "ps-field__hint", text: "Время ставит система." })),
+    renderTimeFix(view, d),
     h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-reason-label" },
       h("span", { class: "ps-field__label", id: "edit-reason-label", text: "Причина" }),
       h("div", { class: "ps-chips" }, (refs.tiles || []).map((t) =>
@@ -3385,10 +3295,10 @@ function renderDowntimes(main, view, editing) {
   const data = editing ? cardData(view) : null;
   if (editing && !data) {
     return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
-      backBtn("К простоям смены", () => go("shift")), question("Записи нет в этой смене"),
+      backBtn("К разбору простоев", () => go("shift")), question("Записи нет в этой смене"),
       h("p", { text: "Возможно, смена уже закончилась или запись изменили. Проверьте итог текущей смены." })));
   }
-  const head = screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Простои смены",
+  const head = screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Разбор простоев",
     h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => startManualWizard("shift") }, icon("plus", "ps-ico"), "Забыли отметить простой"),
     editing ? "ps-head--list" : "");
   const kpis = h("div", { class: "ps-kpis" },
@@ -3398,7 +3308,17 @@ function renderDowntimes(main, view, editing) {
     h("div", { class: "ps-kpi", "data-kind": "down", "data-zero": downMin ? null : "" },
       h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "unplanned", "aria-hidden": "true" }), "Простой"),
       h("span", { class: "ps-kpi__value", text: fmtHM(downMin) })));
+  const noReason = noReasonList(view);
+  const review = h("section", { class: "ps-card ps-review", "aria-label": "Разбор без причины" },
+    noReason.length
+      ? [h("div", { class: "ps-review__count", role: "status", text: `Без причины: ${noReason.length}` }),
+        psButton("primary", "Начать разбор", () => {
+          const first = noReason[0];
+          openDetail(first.downtimeId, first.segs.find((s) => !reasonRef(s.reason))?.index ?? null);
+        }, { lg: false })]
+      : h("div", { class: "ps-notice", "data-tone": "ok", role: "status" }, icon("tick", "ps-ico"), h("span", { class: "ps-notice__body", text: "Все простои разобраны" })));
   const list = h("div", { class: "ps-stack ps-dt-list" },
+    review,
     view.open ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
       h("span", { class: "ps-notice__body", text: "Стан стоит. После сдачи смены простой продолжится у следующей смены. Пуск отмечать не нужно." })) : null,
     gaps.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
@@ -3408,9 +3328,9 @@ function renderDowntimes(main, view, editing) {
       dts.length ? h("div", { class: "ps-rows" }, dts.map((d) => downtimeRow(d, view.shift, !!data && data.d.downtimeId === d.downtimeId)))
         : h("p", { class: "ps-field__hint", text: "Простоев не было." })));
   const side = data ? renderEditor(view, data)
-    : h("section", { class: "ps-card ps-editor-empty" }, h("p", { class: "ps-field__hint", text: "Выберите простой в списке: здесь можно указать причину, что сделали и брак." }));
+    : h("section", { class: "ps-card ps-editor-empty" }, h("p", { class: "ps-field__hint", text: "Выберите простой в списке: здесь можно указать время, причину, что сделали и брак." }));
   fill(main, h("div", { class: "ps-flow" },
-    editing ? backBtn("К простоям смены", () => go("shift"), "ps-back-narrow") : null,
+    editing ? backBtn("К разбору простоев", () => go("shift"), "ps-back-narrow") : null,
     head,
     h("div", { class: "ps-cols ps-cols--list", "data-editing": editing ? "" : null }, list, h("div", { class: "ps-stack ps-dt-editor" }, side)),
     h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block ps-close-link", disabled: view.closed || !view.crew,
@@ -3439,10 +3359,7 @@ function renderCloseConfirm(main, view) {
   // Открытый простой без причины тоже считается: причину можно выбрать, не дожидаясь пуска
   const openNoReason = !!view.open && !reasonRef(view.open.reason);
   const noReasonCount = noReason.length + (openNoReason ? 1 : 0);
-  const fixReason = noReason.length ? fix(noReason) : { label: "Выбрать", onclick: () => {
-    ui.wz = { mode: "current", downtimeId: view.open.downtimeId, step: 1, group: null, reason: null, note: "" };
-    go("reason");
-  } };
+  const fixReason = { label: "Разобрать", onclick: () => go("shift") };
   const checks = h("ul", { class: "ps-checklist" },
     view.open ? checkItem(false, `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}: простой перейдёт следующей смене, пуск отмечать не нужно`)
       : checkItem(true, Number.isFinite(since) ? `Все остановки закрыты — стан работает с ${fmtSince(since, view.shift)}` : "Все остановки закрыты"),
@@ -3563,14 +3480,14 @@ function renderRepair(main, view) {
     backBtn("Вернуться, не исправляя", () => go(repair.back === "repair" ? "auto" : repair.back || "auto")),
     screenHead(eventTitle(e), "Исправить запись"),
     h("div", { class: "ps-notice", "data-tone": "stop" }, icon("alert", "ps-ico"),
-      h("span", { class: "ps-notice__body", text: group ? conflictMessage(group) : humanError(record?.error) })),
+      h("span", { class: "ps-notice__body", text: group ? conflictMessage(group) : humanError(record?.error, record?.event) })),
     group ? conflictAnswers(group) : null, group ? transferButton(group) : null,
     h("section", { class: "ps-card" },
       h("h2", { class: "ps-card__title", text: "Что исправить" }),
       h("div", { class: "ps-rows" },
         choice("at", e.type === "stop" ? "Исправить время остановки" : "Когда отметили", `${fmtDate(core.toMs(e.at))} ${fmtClock(core.toMs(e.at))} · МСК`),
-        e.type === "manual" ? choice("from", "Когда стан встал", `${fmtDate(core.toMs(e.from))} ${fmtClock(core.toMs(e.from))}`) : null,
-        e.type === "manual" ? choice("to", "Когда стан пошёл", `${fmtDate(core.toMs(e.to))} ${fmtClock(core.toMs(e.to))}`) : null,
+        e.type === "manual" || (e.type === "fix" && e.from != null) ? choice("from", "Когда стан встал", `${fmtDate(core.toMs(e.from))} ${fmtClock(core.toMs(e.from))}`) : null,
+        e.type === "manual" || (e.type === "fix" && e.to != null) ? choice("to", "Когда стан пошёл", `${fmtDate(core.toMs(e.to))} ${fmtClock(core.toMs(e.to))}`) : null,
         !["shift_open", "shift_close"].includes(e.type) ? row("Причина", reasonLabel(e.reason ?? group?.fields.reason) || "Не указана", () => {
           ui.wz = { mode: "repair", downtimeId: e.downtimeId, index: e.index, step: 1,
             reason: e.reason, group: reasonGroup(e.reason), note: e.note || "" };
@@ -3644,10 +3561,15 @@ function submitRepair() {
   if (e.type === "fix" && e.action !== undefined && !validAction(e.action)) repair.error = "Напишите, что сделали.";
   if (e.type === "manual") repair.error = manualError({ ...view, shift: core.shiftOf(core.toMs(records.find((r) => r.event.id === repair.id)?.event.from || e.from), refs.settings.schedule) }, { ...e, from: core.toMs(e.from), to: core.toMs(e.to) });
   if (e.type === "start") {
-    const reason = e.reason || view.open?.reason;
-    if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
-    else if (!reasonRef(reason)) repair.error = "Укажите причину.";
+    // Причина при пуске не нужна: её указывают в разборе простоев
+    if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в разборе простоев; сохранённые ответы остаются здесь.";
     else if (core.toMs(e.at) < view.open.startMs) repair.error = "Пуск не может быть раньше остановки.";
+  }
+  if (e.type === "fix" && (e.from != null || e.to != null)) {
+    const f = e.from != null ? core.toMs(e.from) : null;
+    const t = e.to != null ? core.toMs(e.to) : null;
+    if (t !== null && t > nowMs()) repair.error = "Время в будущем. Исправьте его.";
+    else if (f !== null && t !== null && t <= f) repair.error = "Пуск раньше остановки. Исправьте время.";
   }
   if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (needsNote(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
   if (core.toMs(e.at) > nowMs()) repair.error = "Время записи в будущем. Исправьте его.";

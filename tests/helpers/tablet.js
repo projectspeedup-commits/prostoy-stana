@@ -104,13 +104,13 @@ export function makeTablet({ name, key, clock, skew = 0, storage = new Map(), se
   get toasts() { return __toasts; },
   api: (...a) => api(...a),
   flush, loadState, loadRefs, buildView, applyEvent, send, sendBatch, queueEvent, acceptState, settleRejected, dismissRejected,
-  submitRepair, finishReasonWizard, finishRestart, saveForgottenStop, doCloseShift, acceptShift, restartMatches, needCrew,
-  shiftSummary, shiftDowntimes, shiftWorkMin, handoverGaps, manualError, forgottenTimeError, restartNeedsBillet, validBillet,
+  submitRepair, finishReasonWizard, saveForgottenStop, saveForgottenStart, noReasonList, timeFixError, doCloseShift, acceptShift, restartMatches, needCrew,
+  shiftSummary, shiftDowntimes, shiftWorkMin, handoverGaps, manualError, forgottenTimeError, validBillet,
   receiptStatus, receiptFor, renderRejects, render, renderTopbar, go, nowMs, persistClient, shiftCloseEvents, eventTitle, humanError,
-  renderRepair, renderScreen, startRestartReasonWizard, cancelDraft, closeActionDraft, runningSince, newRestart, renderRestartAction, renderStop, renderRun, renderCloseCheck, renderManual,
+  renderRepair, renderScreen, cancelDraft, closeActionDraft, runningSince, newRestart, renderStop, renderRun, renderCloseCheck, renderManual,
   groupFor, transferButton, conflictTarget, loadStats, renderShift, renderStats, renderClosed, resetStopDrafts,
   renderFio, mergeStored, armShiftTimer, renderDetail, renderCloseConfirm, renderCrew, shiftBlock, openDetail, renderHandoverCard, startManualWizard, cardData,
-  needsNote, shiftBillet, fmtHM, fmtDurMin, fmtDurLong, fmtLen, forgottenTimeFields, shiftKpis, shiftZoneMinutes, renderAdmin, renderAi, aiCard, askAi, saveAdmin, adminDraft, loadAdmin, adminProblems, metrics, loadAiStatus, renderRecorded, renderManualCheck, renderForgotStop, renderKey, renderNoRefs, renderLoading, renderRestartTime, renderRestartConfirm, renderConfirmChange, renderStaleRestart, renderRepairField, aiUi,
+  needsNote, shiftBillet, fmtHM, fmtDurMin, fmtDurLong, fmtLen, forgottenTimeFields, shiftKpis, shiftZoneMinutes, renderAdmin, renderAi, aiCard, askAi, saveAdmin, adminDraft, loadAdmin, adminProblems, metrics, loadAiStatus, renderRecorded, renderManualCheck, renderForgotStop, renderKey, renderNoRefs, renderLoading, renderRestartTime, renderConfirmChange, renderStaleRestart, renderRepairField, reasonNeedsBillet, renderTimeFix, otherSegments, scaleDowntimes, cellDetails, scaleFor, aiUi,
 };`;
   // перехват тостов: showToast пишет в элемент #toast; соберём в массив
   code = code.replace("let toastTimer = null;", "let toastTimer = null; const __toasts = [];")
@@ -134,7 +134,9 @@ export async function bootTablet(opts) {
   t.boot = async () => { await h.loadRefs(); await h.loadState(); };
   t.rejectsBox = () => { h.renderRejects(); const box = t.els.get("rejects"); return { hidden: box.hidden, cards: findAll(box, (e) => e.className === "reject").map(text), buttons: findAll(box, (e) => e.tagName === "BUTTON").map(text) }; };
   t.click = (root, label) => {
-    const btn = findAll(root, (e) => e.tagName === "BUTTON" && text(e).includes(label))[0];
+    // Точное совпадение подписи важнее частичного: «Сохранить» не должно нажать «Сохранить время»
+    const buttons = findAll(root, (e) => e.tagName === "BUTTON");
+    const btn = buttons.find((e) => text(e) === label) ?? buttons.find((e) => text(e).includes(label));
     if (!btn) throw new Error("кнопка не найдена: " + label + " | есть: " + findAll(root, (e) => e.tagName === "BUTTON").map(text).join(" ; "));
     for (const f of btn.handlers.click || []) f({ currentTarget: btn, target: btn });
     return btn;

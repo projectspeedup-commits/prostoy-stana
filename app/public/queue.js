@@ -129,6 +129,10 @@ export function rejectionGroups(records) {
       if (e.type === "stop") fields.from = e.at;
       if (e.type === "start") fields.to = e.at;
       if (e.type === "manual") { fields.from = e.from; fields.to = e.to; }
+      if (e.type === "fix") {
+        if (e.from != null) fields.from = e.from;
+        if (e.to != null) fields.to = e.to;
+      }
     }
     return { ...g, record, fields };
   });

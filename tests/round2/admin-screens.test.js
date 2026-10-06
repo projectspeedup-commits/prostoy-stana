@@ -19,7 +19,8 @@ async function fixture(t) {
 }
 const byClass = (a, cls, tag) => findAll(a.main(), (e) => e.className.split(' ').includes(cls) && (!tag || e.tagName === tag));
 const press = (el) => { for (const f of el.handlers.click || []) f({ currentTarget: el, target: el }); };
-const button = (a, label) => findAll(a.main(), (e) => e.tagName === 'BUTTON' && text(e).includes(label))[0];
+// Точная подпись важнее частичной: «Сохранить» не должно находить «Сохранить время»
+const button = (a, label) => { const all = findAll(a.main(), (e) => e.tagName === 'BUTTON'); return all.find((e) => text(e) === label) ?? all.find((e) => text(e).includes(label)); };
 async function openAdmin(a) {
   a.h.go('admin');
   // Рассылка подгружается вторым запросом: без неё раздел «Рассылка на почту» в списке ещё не появился

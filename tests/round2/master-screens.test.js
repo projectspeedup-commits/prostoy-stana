@@ -21,7 +21,8 @@ async function fixture(t, { crew = true } = {}) {
 const byClass = (a, cls, tag) => findAll(a.main(), (e) => e.className.split(' ').includes(cls) && (!tag || e.tagName === tag));
 const press = (el) => { for (const f of el.handlers.click || []) f({ currentTarget: el, target: el }); };
 const type = (el, value) => { el.value = value; for (const f of el.handlers.input || []) f({}); };
-const button = (a, label) => findAll(a.main(), (e) => e.tagName === 'BUTTON' && text(e).includes(label))[0];
+// Точная подпись важнее частичной: «Сохранить» не должно находить «Сохранить время»
+const button = (a, label) => { const all = findAll(a.main(), (e) => e.tagName === 'BUTTON'); return all.find((e) => text(e) === label) ?? all.find((e) => text(e).includes(label)); };
 // Простои без «что сделали»: два закрытых, один с записью
 async function seedStops(port) {
   await post(port, [
@@ -120,7 +121,8 @@ test('простои смены: нажатие открывает запись,
   assert.equal(cur.length, 1); assert.match(text(cur[0]), /08:10–08:25/);
   const editor = byClass(a, 'ps-editor')[0];
   assert.match(text(editor), /Простой 08:10–08:25/); assert.match(text(editor), /15 мин/);
-  assert.match(text(editor), /Стан встал.*08:10.*Стан пошёл.*08:25/, 'время показано, ставит его система');
+  assert.match(text(editor), /Стан встал.*08:10.*Стан пошёл.*08:25/, 'время показано и правится');
+  assert.doesNotMatch(text(editor), /Время ставит система/);
   // Причина: три плитки чипами, текущая отмечена; уточнение — пункты группы
   const reasonChips = findAll(editor, (e) => e.attrs['aria-labelledby'] === 'edit-reason-label')[0];
   const groups = findAll(reasonChips, (e) => e.tagName === 'BUTTON');
@@ -214,10 +216,18 @@ test('сдача смены: чек-лист считает система, у �
   assert.match(text(items[1]), /1 простой без причины/);
   assert.match(text(items[2]), /2 простоя без «что сделали»/);
   assert.match(text(items[3]), /Брак и описания указаны/); assert.match(text(items[4]), /Все записи приняты сервером/);
-  // Кнопка у todo ведёт к первой незаполненной записи
+  // Кнопка у пункта «причина» ведёт в разбор простоев, а «Начать разбор» открывает первую запись без причины
+  assert.match(text(findAll(items[1], (e) => e.tagName === 'BUTTON')[0]), /Разобрать/);
   press(findAll(items[1], (e) => e.tagName === 'BUTTON')[0]);
+  assert.equal(a.h.ui.screen, 'shift'); a.screen();
+  assert.match(text(a.main()), /Разбор простоев/); assert.match(text(a.main()), /Без причины: 1/);
+  press(button(a, 'Начать разбор'));
   assert.equal(a.h.ui.screen, 'detail'); assert.match(a.h.ui.card.downtimeId, /m3|^[0-9a-f-]+$/);
   assert.equal(a.h.cardData(a.h.buildView()).d.reason, null);
+  // Пункт «что сделали» по-прежнему ведёт сразу к записи
+  a.h.go('closeConfirm');
+  press(findAll(byClass(a, 'ps-check', 'LI')[2], (e) => e.tagName === 'BUTTON')[0]);
+  assert.equal(a.h.ui.screen, 'detail');
   // Сдать смену можно с незаполненными пунктами; событие то же, что и раньше
   a.h.go('closeConfirm');
   assert.equal(button(a, 'Сдать смену').disabled, false);

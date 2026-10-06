@@ -95,40 +95,40 @@ test('черновик на шаге описания без пункта воз
   a.screen(); assert.equal(question(a), 'Почему стоит?');
 });
 
-test('«Забыл отметить простой»: плитка → «Что именно?» → описание, шаги без пропусков', async (t) => {
+test('«Забыли отметить остановку»: причина необязательна, её шаги — плитка → «Что именно?» → описание → проверка', async (t) => {
   const { a } = await fixture(t);
   a.h.ui.fw = { step: 2, atMs: a.h.nowMs() - 20 * 60000, group: null, reason: null, note: '' };
   a.h.go('forgotStop'); a.screen();
-  assert.equal(question(a), 'Почему стоит?'); assert.equal(step(a), 'Шаг 2 из 5');
+  assert.equal(question(a), 'Проверьте'); assert.equal(step(a), 'Шаг 2 из 2');
+  assert.match(text(a.main()), /Причина.*не указана/);
+  assert.ok(buttons(a).includes('Сохранить') && buttons(a).includes('Указать причину сейчас'));
+  tap(a, 'Указать причину сейчас');
+  assert.equal(question(a), 'Почему стоит?');
   tap(a, 'Бурёжка');
-  assert.equal(question(a), 'Что именно?'); assert.equal(step(a), 'Шаг 3 из 5');
+  assert.equal(question(a), 'Что именно?');
   tap(a, 'На холодильнике');
-  assert.equal(question(a), 'Расскажите своими словами'); assert.equal(step(a), 'Шаг 4 из 5');
+  assert.equal(question(a), 'Расскажите своими словами');
   assert.ok(buttons(a).some((b) => b.includes('К выбору пункта')));
   tap(a, 'Далее');
-  assert.equal(question(a), 'Всё верно?'); assert.equal(step(a), 'Шаг 5 из 5');
+  assert.equal(question(a), 'Проверьте'); assert.equal(step(a), 'Шаг 2 из 2');
   assert.equal(a.h.ui.fw.reason, 'cobble_coolbed');
+  assert.ok(buttons(a).includes('Изменить причину'));
 });
 
-test('ручной ввод прошлого простоя: плитка → «Что именно?» → описание → «что сделали»', async (t) => {
+test('«Забыл отметить простой»: два времени и проверка, причины в мастере нет', async (t) => {
   const { a } = await fixture(t);
-  const openedAt = Math.floor(a.h.nowMs() / 60000) * 60000;
-  a.h.ui.mw = { origin: 'auto', step: 3, from: openedAt - 40 * 60000, to: openedAt - 20 * 60000, openedAt, group: null, reason: null, note: '', action: '' };
-  a.h.go('manual'); a.screen();
-  assert.equal(question(a), 'Почему стоял?'); assert.equal(step(a), 'Шаг 3 из 7');
-  tap(a, 'Бурёжка');
-  assert.equal(question(a), 'Что именно?'); assert.equal(step(a), 'Шаг 4 из 7');
-  tap(a, 'В трассе ТМУ');
-  assert.equal(question(a), 'Расскажите своими словами'); assert.equal(step(a), 'Шаг 5 из 7');
-  tap(a, 'К выбору пункта');
-  assert.equal(question(a), 'Что именно?');
-  tap(a, 'В трассе ТМУ');
-  tap(a, 'Без описания');
-  assert.equal(question(a), 'Что сделали, чтобы запустить стан?'); assert.equal(step(a), 'Шаг 6 из 7');
-  assert.equal(a.h.ui.mw.reason, 'cobble_tmu');
+  a.h.startManualWizard('auto'); a.screen();
+  assert.equal(question(a), 'Когда стан встал?'); assert.equal(step(a), 'Шаг 1 из 3');
+  tap(a, 'Далее');
+  assert.equal(question(a), 'Когда стан снова пошёл?'); assert.equal(step(a), 'Шаг 2 из 3');
+  tap(a, 'Далее');
+  assert.equal(a.h.ui.screen, 'manualCheck');
+  assert.equal(question(a), 'Проверьте'); assert.equal(step(a), 'Шаг 3 из 3');
+  assert.ok(buttons(a).includes('Сохранить простой') && buttons(a).includes('Указать причину сейчас') && buttons(a).includes('Исправить время'));
+  assert.ok(!buttons(a).some((b) => /Бурёжка|Плановая|Поломка/.test(b)));
 });
 
-test('пуск со сменой причины: плитка → пункт → «Что сделали»; брак — для cobble_* и avaria, не для tech_* и plan_*', async (t) => {
+test('пункты причины: брак спрашивают для cobble_* и avaria, не для tech_* и plan_*', async (t) => {
   const { a } = await fixture(t);
   a.h.send('stop', { downtimeId: 'd2' }); await a.pump();
   const cases = [
@@ -138,23 +138,17 @@ test('пуск со сменой причины: плитка → пункт →
     ['Плановая', 'Настройка стана', false], ['Плановая', 'Смена профиля', false], ['Плановая', 'Другое', false], ['Поломка, замена оборудования', 'Другое', true],
   ];
   for (const [tile, item, billet] of cases) {
-    const view = a.h.buildView();
-    a.h.ui.wz = null;
-    a.h.ui.rw = a.h.newRestart(view);
-    a.h.startRestartReasonWizard(); a.screen();
-    assert.equal(question(a), 'Почему стоял?');
+    a.h.ui.wz = { mode: 'current', downtimeId: 'd2', step: 1, group: null, reason: null, note: '' };
+    a.h.go('reason'); a.screen();
+    assert.equal(question(a), 'Почему стоит?');
     tap(a, tile);
     assert.equal(question(a), 'Что именно?'); assert.equal(step(a), 'Шаг 2 из 3');
     tap(a, item);
-    assert.equal(a.h.ui.screen, 'restartAction', item);
-    a.screen(); assert.equal(step(a), 'Шаг 3 из 3', item);
-    assert.equal(a.h.restartNeedsBillet(a.h.ui.rw, a.h.buildView()), billet, item);
-    // «Назад» с «Что сделали» ведёт на «Что именно?»
-    assert.ok(buttons(a).some((b) => b.includes('К выбору пункта')), item);
+    assert.equal(a.h.ui.screen, 'reason', item);
+    assert.equal(a.h.reasonNeedsBillet(a.h.ui.wz.reason), billet, item);
   }
   // старые коды: поведение прежнее
   for (const [code, expected] of [['perevalka', false], ['burezhka', true], ['avaria', true]]) {
-    a.h.ui.rw = { ...a.h.newRestart(a.h.buildView()), reason: code };
-    assert.equal(a.h.restartNeedsBillet(a.h.ui.rw, a.h.buildView()), expected, code);
+    assert.equal(a.h.reasonNeedsBillet(code), expected, code);
   }
 });

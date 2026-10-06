@@ -23,7 +23,8 @@ async function fixture(t, { crew = true } = {}) {
 const byClass = (a, cls, tag) => findAll(a.main(), (e) => e.className.split(' ').includes(cls) && (!tag || e.tagName === tag));
 const press = (el) => { for (const f of el.handlers.click || []) f({ currentTarget: el, target: el }); };
 const type = (el, value) => { el.value = value; for (const f of el.handlers.input || []) f({}); };
-const button = (a, label) => findAll(a.main(), (e) => e.tagName === 'BUTTON' && text(e).includes(label))[0];
+// Точная подпись важнее частичной: «Сохранить» не должно находить «Сохранить время»
+const button = (a, label) => { const all = findAll(a.main(), (e) => e.tagName === 'BUTTON'); return all.find((e) => text(e) === label) ?? all.find((e) => text(e).includes(label)); };
 const stateOf = async (port) => (await (await fetch(`http://127.0.0.1:${port}/api/state`, { headers })).json()).state;
 
 // Остановка с двумя частями (смена причины по ходу простоя): индексы 0 и 1
@@ -174,7 +175,7 @@ test('сервер: при простое записки — в open.handovers, 
   assert.deepEqual(stopped.open.handovers, []);
 });
 
-test('чек-лист: открытый простой без причины — не «У каждого простоя есть причина»; кнопка «Выбрать» открывает выбор причины', async (t) => {
+test('чек-лист: открытый простой без причины — не «У каждого простоя есть причина»; кнопка «Разобрать» ведёт в разбор', async (t) => {
   const { a, port } = await fixture(t);
   await post(port, [{ id: 'm1', type: 'manual', at: at(100), from: at(10), to: at(25), reason: 'avaria', note: 'Заклинил вал', action: 'Заменили', billet: 0 },
     { id: 'o-stop', type: 'stop', downtimeId: 'open1', at: at(140) }]);
@@ -185,9 +186,13 @@ test('чек-лист: открытый простой без причины —
   assert.match(text(items[1]), /1 простой без причины/);
   assert.doesNotMatch(text(items[1]), /У каждого простоя есть причина/);
   press(findAll(items[1], (e) => e.tagName === 'BUTTON')[0]);
-  assert.equal(a.h.ui.screen, 'reason');
-  assert.equal(a.h.ui.wz.mode, 'current');
-  assert.equal(a.h.ui.wz.downtimeId, 'open1');
+  assert.equal(a.h.ui.screen, 'shift');
+  a.screen();
+  assert.match(text(a.main()), /Без причины: 1/);
+  // «Начать разбор» открывает идущий простой без причины
+  press(button(a, 'Начать разбор'));
+  assert.equal(a.h.ui.screen, 'detail');
+  assert.equal(a.h.ui.card.downtimeId, 'open1');
   // Причина выбрана — пункт зелёный
   await post(port, [{ id: 'o-reason', type: 'reason', downtimeId: 'open1', at: at(150), reason: 'avaria' }]);
   await a.h.loadState();

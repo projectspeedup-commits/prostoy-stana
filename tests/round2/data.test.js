@@ -81,9 +81,14 @@ test('Раунд 2.1–2: пуск отдельным пакетом, чужие
   const { tablet: a, save } = await fixture(t);
   await save(event('open', 'stop', 120, { reason: 'avaria' }));
   await a.h.loadState();
-  a.h.ui.rw = { ...a.h.newRestart(a.h.buildView()), startMs: Date.parse(at(150)), reason: 'perevalka', reasonChanged: true, billet: '7' };
   await save(event('peer-start', 'start', 140, { downtimeId: 'open' }), event('peer-billet', 'fix', 140, { downtimeId: 'open', index: 0, billet: 1 }));
-  a.h.finishRestart('Наши работы'); await a.pump();
+  // Пакет, как его собирали прежние версии: пуск с «что сделали», смена причины и брак. Сервер должен вести себя так же
+  a.h.sendBatch([
+    { type: 'start', fields: { downtimeId: 'open', action: 'Наши работы', at: at(150) } },
+    { type: 'reason', fields: { downtimeId: 'open', reason: 'perevalka', note: '', at: at(150) } },
+    { type: 'fix', fields: { downtimeId: 'open', index: 0, billet: 7, at: at(150) } },
+  ]);
+  await a.pump();
   assert.equal(a.h.records.find((r) => r.event.type === 'start').error, 'not_open');
   assert.ok(a.h.queue.every((e) => ['reason', 'fix'].includes(e.type)));
   assert.equal(a.h.serverState.segments[0].reason, 'avaria');
@@ -108,10 +113,10 @@ test('Раунд 2.3–4: черновик моложе 10 минут и сво�
   assert.equal(reusableRestart(draft, view, clock.t + 599999), true);
   assert.equal(reusableRestart(draft, view, clock.t + 600000), false);
   assert.equal(reusableRestart(draft, { ...view, shift: { startMs: 99 } }, clock.t), false);
-  a.h.ui.rw = draft; a.h.renderRestartAction(a.main(), view);
-  assert.equal(findAll(a.main(), (e) => e.tagName === 'TEXTAREA')[0].value, 'Уже заменили вал');
-  a.h.finishRestart(''); await a.pump();
+  // Пуск одним нажатием: ни текста «что сделали», ни причины, ни брака — уже записанное не стирается
+  a.h.send('start', { downtimeId: 'open' }); await a.pump();
   assert.equal(a.h.serverState.segments[0].action, 'Уже заменили вал');
+  assert.equal(a.h.records.filter((r) => r.event.type === 'start' && 'action' in r.event).length, 0);
   assert.equal(Object.hasOwn(a.h.records.find((r) => r.event.type === 'start').event, 'action'), false);
   a.h.ui.rw = draft; a.h.ui.wz = {}; a.h.ui.fw = {};
   a.h.acceptShift('1', 'p1', 'Иванов Иван Иванович');
@@ -140,12 +145,13 @@ test('Раунд 2.6–7: брак предыдущей зоны, продолж
   const { tablet: a, save, api } = await fixture(t, 8);
   await save(event('old-open', 'stop', -10, { reason: 'avaria' }), event('planned', 'split', 2, { downtimeId: 'old-open', reason: 'perevalka' }));
   await a.h.loadState(); const view = a.h.buildView();
-  a.h.ui.rw = { ...a.h.newRestart(view), billet: '0' };
-  assert.equal(a.h.restartNeedsBillet(a.h.ui.rw, view), true);
-  a.h.finishRestart('Исправили'); await a.pump();
-  assert.equal(a.h.serverState.segments.find((s) => s.index === 0).billet, 0);
+  // Пуск одним нажатием брак не спрашивает: «брак» остаётся пунктом разбора у отрезка с аварией
+  a.h.send('start', { downtimeId: 'old-open' }); await a.pump();
+  assert.equal(a.h.records.some((r) => r.event.type === 'fix'), false);
+  assert.equal(a.h.serverState.segments.find((s) => s.index === 0).billet, null);
   assert.equal(a.h.serverState.segments.find((s) => s.index === 1).billet, null);
-  assert.equal(a.h.manualError(view, { from: base + 1, to: base + 60000, reason: 'avaria', note: 'Авария', action: '' }).includes('уже есть'), true);
+  assert.deepEqual(a.h.handoverGaps(a.h.buildView()).filter((s) => s.index === 0)[0].missing, ['что сделали', 'брак']);
+  assert.equal(a.h.manualError(view, { from: base + 1, to: base + 60000 }).includes('уже есть'), true);
   assert.equal(a.h.serverState.summary.shift.stops, 1);
   const stats = (await api('/api/stats?period=shift')).stats;
   assert.equal(stats.stops, 1); assert.equal(stats.downMin, a.h.serverState.summary.shift.downMinutes);
@@ -171,22 +177,26 @@ test('Раунд 2.1: убрать stop можно только вместе с 
   assert.equal(JSON.parse(a.storage.get('stan.queue')).length, 0);
 });
 
-test('Раунд 2.6: ручной простой требует брак; при закрытии есть переход к незаполненному', async (t) => {
+test('Раунд 2.6: ручной простой принимается только со временем; при закрытии есть переход к незаполненному', async (t) => {
   const { tablet: a, save } = await fixture(t);
-  const mw = { from: base + 60000, to: base + 120000, reason: 'avaria', note: 'Заклинило', action: 'Заменили' };
-  assert.match(a.h.manualError(a.h.buildView(), mw), /от 0 до 1000 тн/);
-  mw.billet = '0'; assert.equal(a.h.manualError(a.h.buildView(), mw), '');
-  await save(event('manual', 'manual', 150, { ...mw, from: at(1), to: at(2), billet: undefined }));
+  const mw = { from: base + 60000, to: base + 120000 };
+  assert.equal(a.h.manualError(a.h.buildView(), mw), '', 'причина, описание и брак не требуются');
+  assert.match(a.h.manualError(a.h.buildView(), { ...mw, to: mw.from }), /Конец должен быть позже начала/);
+  await save(event('manual', 'manual', 150, { from: at(1), to: at(2) }));
   await a.h.loadState();
   const gaps = a.h.handoverGaps(a.h.buildView());
-  assert.equal(gaps.length, 1); assert.deepEqual(gaps[0].missing, ['брак']);
+  assert.equal(gaps.length, 1); assert.deepEqual(gaps[0].missing, ['причина', 'что сделали']);
   a.h.go('closeConfirm');
-  // Чек-лист: пункт «брак» не готов, у него кнопка перехода к записи
+  // Чек-лист: «причина» ведёт в разбор, «что сделали» — к записи
   const todo = findAll(a.main(), (e) => e.tagName === 'LI' && e.attrs['data-status'] === 'todo');
-  assert.equal(todo.length, 1); assert.match(text(todo[0]), /Дополнить: брак \(1\)/);
-  a.click(todo[0], 'Заполнить');
+  assert.equal(todo.length, 2); assert.match(text(todo[0]), /1 простой без причины/); assert.match(text(todo[1]), /1 простой без «что сделали»/);
+  a.click(todo[0], 'Разобрать');
+  assert.equal(a.h.ui.screen, 'shift');
+  a.h.go('closeConfirm');
+  a.click(byTodo(a)[1], 'Заполнить');
   assert.equal(a.h.ui.screen, 'detail'); assert.equal(a.h.ui.card.downtimeId, gaps[0].downtimeId);
 });
+const byTodo = (a) => findAll(a.main(), (e) => e.tagName === 'LI' && e.attrs['data-status'] === 'todo');
 
 test('Раунд 2.7: будущий пуск не удлиняет категорию и счётчик простоя', async (t) => {
   const { tablet: a, save, api } = await fixture(t, 8);
