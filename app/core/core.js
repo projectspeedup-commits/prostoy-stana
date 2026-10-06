@@ -154,7 +154,9 @@ export function eventTimeError(events, event, nowMs) {
     if (!target) return "not_found";
     if (event.type === "split" && (!built.open || built.open.downtimeId !== id || target.index !== built.open.index)) return "not_open";
     if (at < target.startMs) return "bad_time";
-    if (buildDowntimes([...events, event], nowMs).ignored.includes(event.id)) return "bad_time";
+    const after = buildDowntimes([...events, event], nowMs);
+    if (after.ignored.includes(event.id)) return "bad_time";
+    if (event.type === "fix" && (event.from != null || event.to != null)) return fixTimeError(after, id, nowMs);
     return "";
   }
   if (event.type === "stop") {
@@ -168,8 +170,8 @@ export function eventTimeError(events, event, nowMs) {
     }
     // Повторное использование идентификатора закрытого простоя слило бы две остановки в одну
     if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
-    if (built.segments.some((s) => !s.open && s.endMs > at) ||
-        events.some((e) => e.type === "start" && toMs(e.at) > at)) return "overlap";
+    // Конец закрытых отрезков уже учитывает пуски и правки времени
+    if (built.segments.some((s) => !s.open && s.endMs > at)) return "overlap";
   } else if (event.type === "start") {
     const id = event.downtimeId ?? built.open?.downtimeId;
     if (!built.open || id !== built.open.downtimeId) return "not_open";
@@ -179,6 +181,22 @@ export function eventTimeError(events, event, nowMs) {
     // Ручной простой с занятым номером (в том числе номером открытого простоя) слил бы две записи в одну
     if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
     if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) return "overlap";
+  }
+  return "";
+}
+
+// Правка времени простоя: каждый отрезок имеет положительную длину, не выходит за «сейчас»
+// и за 40 дней назад и не налезает на другие простои.
+function fixTimeError(after, id, nowMs) {
+  const own = after.segments.filter((s) => s.downtimeId === id);
+  const others = after.segments.filter((s) => s.downtimeId !== id);
+  for (const s of own) {
+    if (!(s.startMs < s.endMs)) return "bad_time";
+    if (s.startMs < nowMs - 40 * DAY_MS) return "bad_time";
+    if (!s.open && s.endMs > nowMs + 2 * MIN) return "bad_time";
+  }
+  for (const s of own) {
+    if (others.some((o) => s.startMs < o.endMs && s.endMs > o.startMs)) return "overlap";
   }
   return "";
 }
@@ -237,8 +255,7 @@ export function periodParts(segments, fromMs, toMs, refs, nowMs = Infinity) {
 // Граница для забытой остановки, включая пуски и простои прошлых смен.
 export function lastRunningMs(events, nowMs) {
   const ends = buildDowntimes(events, nowMs).segments.filter((s) => !s.open).map((s) => s.endMs);
-  const starts = events.filter((e) => e.type === "start").map((e) => toMs(e.at));
-  return ends.length || starts.length ? Math.max(...ends, ...starts) : null;
+  return ends.length ? Math.max(...ends) : null;
 }
 
 // Записи, сделанные до 30.09.2026, хранят старые коды классификатора. Читаем их как три
@@ -307,8 +324,21 @@ export function buildDowntimes(events, nowMs) {
         const target = [cur, ...segments].find((s) => s &&
           s.downtimeId === e.downtimeId && s.index === e.index);
         if (!target) ignored.push(e.id);
-        else for (const field of ["reason", "node", "billet", "note", "action"]) {
-          if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
+        else {
+          for (const field of ["reason", "node", "billet", "note", "action"]) {
+            if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
+          }
+          // Время: начало — только у первого отрезка; конец — только у последнего закрытого
+          if (e.from != null) {
+            if (target.index === 0) target.startMs = toMs(e.from);
+            else ignored.push(e.id);
+          }
+          if (e.to != null) {
+            const lastClosed = target !== cur && !(cur && cur.downtimeId === target.downtimeId) &&
+              !segments.some((s) => s.downtimeId === target.downtimeId && s.index > target.index);
+            if (lastClosed) target.endMs = toMs(e.to);
+            else ignored.push(e.id);
+          }
         }
         break;
       }
@@ -521,6 +551,15 @@ export function eventInputError(event) {
       const from = toMs(event.from);
       const to = toMs(event.to);
       if (to <= from) throw new Error();
+    }
+    if (event.type === "fix") {
+      // Правка времени: начало — только у первого отрезка простоя
+      if (event.from != null) {
+        toMs(event.from);
+        if (event.index !== 0) throw new Error();
+      }
+      if (event.to != null) toMs(event.to);
+      if (event.from != null && event.to != null && toMs(event.to) <= toMs(event.from)) throw new Error();
     }
   } catch {
     return "bad_request";

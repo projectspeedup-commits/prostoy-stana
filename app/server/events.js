@@ -4,11 +4,11 @@ import { periodRange } from "../core/stats.js";
 
 const MINUTE = 60_000;
 
-// Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
+// Начало учёта: самое раннее время среди событий (у ручного простоя и правки времени — их начало)
 function firstEventMs(events) {
   let first = Infinity;
   for (const e of events) {
-    for (const v of [e.at, e.type === "manual" ? e.from : undefined]) {
+    for (const v of [e.at, e.type === "manual" || e.type === "fix" ? e.from : undefined]) {
       if (v === undefined || v === null) continue;
       try { first = Math.min(first, toMs(v)); } catch { /* битое время пропускаем */ }
     }
