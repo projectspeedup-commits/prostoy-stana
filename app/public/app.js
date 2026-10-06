@@ -3491,7 +3491,8 @@ function renderRepair(main, view) {
         choice("at", e.type === "stop" ? "Исправить время остановки" : "Когда отметили", `${fmtDate(core.toMs(e.at))} ${fmtClock(core.toMs(e.at))} · МСК`),
         e.type === "manual" || (e.type === "fix" && e.from != null) ? choice("from", "Когда стан встал", `${fmtDate(core.toMs(e.from))} ${fmtClock(core.toMs(e.from))}`) : null,
         e.type === "manual" || (e.type === "fix" && e.to != null) ? choice("to", "Когда стан пошёл", `${fmtDate(core.toMs(e.to))} ${fmtClock(core.toMs(e.to))}`) : null,
-        !["shift_open", "shift_close"].includes(e.type) ? row("Причина", reasonLabel(e.reason ?? group?.fields.reason) || "Не указана", () => {
+        // У пуска причины нет: её указывают в разборе простоев (строка нужна, только если причина уже записана)
+        !["shift_open", "shift_close"].includes(e.type) && !(e.type === "start" && !e.reason) ? row("Причина", reasonLabel(e.reason ?? group?.fields.reason) || "Не указана", () => {
           ui.wz = { mode: "repair", downtimeId: e.downtimeId, index: e.index, step: 1,
             reason: e.reason, group: reasonGroup(e.reason), note: e.note || "" };
           go("reason");
