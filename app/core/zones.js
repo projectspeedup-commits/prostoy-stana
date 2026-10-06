@@ -20,13 +20,17 @@ export function dayCells(segments, { fromMs, toMs = fromMs + 48 * HALF_HOUR, now
     startMs: segment.startMs,
     endMs: segment.open ? nowMs : segment.endMs,
     zone: zoneOf(segment.reason, refs),
+    downtimeId: segment.downtimeId ?? null,
   })).filter((segment) => segment.endMs > segment.startMs)
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   return Array.from({ length: 48 }, (_, index) => {
     const startMs = fromMs + index * HALF_HOUR;
     const endMs = Math.min(startMs + HALF_HOUR, toMs);
     const elapsedEnd = Math.max(startMs, Math.min(endMs, nowMs));
-    const cell = { startMs, endMs, future: startMs >= nowMs, ms: empty() };
+    // Номера простоев, отрезки которых заходят в эту ячейку (в уже прошедшей части)
+    const downtimes = [...new Set(stops.filter((stop) => stop.downtimeId !== null && stop.endMs > startMs && stop.startMs < elapsedEnd)
+      .map((stop) => stop.downtimeId))];
+    const cell = { startMs, endMs, future: startMs >= nowMs, ms: empty(), downtimes };
     const parts = [];
     const add = (zone, start, end) => {
       if (end <= start) return;

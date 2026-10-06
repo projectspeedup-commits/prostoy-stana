@@ -87,3 +87,17 @@ test("zoneTotals: точный отрезок внутри ячейки, гра�
   assert.equal(Object.values(zoneTotals(cells, at(0), at(1440))).reduce((a, b) => a + b, 0), 750);
   assert.deepEqual(zoneTotals(cells, at(20), at(20)), { work: 0, plan: 0, unplanned: 0, failure: 0, nodata: 0 });
 });
+
+test("ячейка называет простои, чьи отрезки заходят в её прошедшую часть", () => {
+  const seg = (id, from, to, open = false) => ({ downtimeId: id, ...segment(from, to, null, open) });
+  const cells = dayCells([seg("a", 10, 40), seg("b", 35, 50), seg("c", 90, null, true), segment(0, 5)], options(100));
+  assert.deepEqual(cells[0].downtimes, ["a"], "отрезок без номера в список не попадает");
+  assert.deepEqual(cells[1].downtimes, ["a", "b"]);
+  assert.deepEqual(cells[2].downtimes, []);
+  assert.deepEqual(cells[3].downtimes, ["c"], "идущий простой — от начала до «сейчас»");
+  assert.deepEqual(cells[4].downtimes, [], "будущее — без простоев");
+  // Один простой из двух отрезков в одной ячейке — один номер; прочие поля ячейки не изменились
+  const parts = dayCells([seg("d", 0, 10), seg("d", 10, 20)], options(100));
+  assert.deepEqual(parts[0].downtimes, ["d"]);
+  assert.deepEqual(parts[0].ms, { work: 10 * M, plan: 0, unplanned: 20 * M, failure: 0, nodata: 0 });
+});

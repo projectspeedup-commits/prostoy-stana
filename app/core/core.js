@@ -155,8 +155,24 @@ export function eventTimeError(events, event, nowMs) {
     if (event.type === "split" && (!built.open || built.open.downtimeId !== id || target.index !== built.open.index)) return "not_open";
     if (at < target.startMs) return "bad_time";
     const after = buildDowntimes([...events, event], nowMs);
+    if (event.type === "fix" && (event.from != null || event.to != null)) {
+      // Конец раньше начала (или конец у идущего простоя) — неверное время, а не наложение
+      const parts = built.segments.filter((s) => s.downtimeId === id);
+      const running = parts.some((s) => s.open);
+      const newFrom = event.from != null ? toMs(event.from) : Math.min(...parts.map((s) => s.startMs));
+      const newTo = running ? null : event.to != null ? toMs(event.to) : Math.max(...parts.map((s) => s.endMs));
+      if ((event.to != null && running) || (newTo !== null && newTo <= newFrom)) return "bad_time";
+      // Не раньше 40 суток назад и не позже «сейчас» (+2 минуты допуска, как у остальных событий)
+      if (event.from != null && (newFrom < nowMs - 40 * DAY_MS || newFrom > nowMs + 2 * MIN)) return "bad_time";
+      if (event.to != null && newTo > nowMs + 2 * MIN) return "bad_time";
+      // Правка не должна «потерять» уже принятые события: остановка, попавшая внутрь чужого простоя, — наложение;
+      // потерянный пуск или причина этого же простоя — неверное время
+      const gone = [...events, event].filter((e) => after.ignored.includes(e.id) && !built.ignored.includes(e.id));
+      if (gone.some((e) => e.type === "stop")) return "overlap";
+      if (gone.length) return "bad_time";
+      return fixTimeError(after, id, nowMs);
+    }
     if (after.ignored.includes(event.id)) return "bad_time";
-    if (event.type === "fix" && (event.from != null || event.to != null)) return fixTimeError(after, id, nowMs);
     return "";
   }
   if (event.type === "stop") {
@@ -269,8 +285,34 @@ export function reasonKey(reason) {
   return reason;
 }
 
-/** Собирает отрезки простоя из событий. */
+/**
+ * Собирает отрезки простоя из событий.
+ *
+ * Правка времени (fix с from/to) двигает не готовый отрезок, а сами события: начало — время остановки
+ * (stop) или начало ручного простоя, конец — время пуска (start) или конец ручного простоя. Поэтому такие
+ * события сначала находим обычным проходом, затем собираем заново с исправленным временем: иначе остановка,
+ * внесённая в освободившийся промежуток, считалась бы внутри «длинного» прежнего простоя и пропадала.
+ */
 export function buildDowntimes(events, nowMs) {
+  const first = runBuild(events, nowMs, false);
+  if (!first.patches.size) return first.out;
+  const patched = events.map((e, i) => (first.patches.has(i) ? { ...e, ...first.patches.get(i) } : e));
+  // Остановка сдвинута позже: причины, записанные в промежутке, переносим к новому началу
+  for (const [i, patch] of first.patches) {
+    const old = events[i];
+    if (old.type !== "stop" || patch.at === undefined) continue;
+    const from = toMs(old.at), to = toMs(patch.at);
+    for (let j = 0; j < patched.length; j++) {
+      const r = patched[j];
+      if (r.type === "reason" && r.downtimeId === (old.downtimeId ?? old.id) && toMs(r.at) >= from && toMs(r.at) < to) {
+        patched[j] = { ...r, at: patch.at };
+      }
+    }
+  }
+  return runBuild(patched, nowMs, true).out;
+}
+
+function runBuild(events, nowMs, timeApplied) {
   const now = toMs(nowMs);
   const sorted = events
     .map((e) => (typeof e.reason === "string" && e.reason !== reasonKey(e.reason) ? { ...e, reason: reasonKey(e.reason) } : e))
@@ -278,36 +320,44 @@ export function buildDowntimes(events, nowMs) {
     .sort((a, b) => a.t - b.t || a.i - b.i);
   const segments = [];
   const ignored = [];
+  const patches = new Map(); // номер события → новое время (при правке времени)
+  const meta = new Map(); // отрезок → номера событий, которые его открыли и закрыли
   let cur = null; // единственный открытый отрезок (стан один)
 
   const val = (v, prev) => (v !== undefined ? v : prev !== undefined ? prev : null);
   const matches = (e) => e.downtimeId === undefined || e.downtimeId === null || e.downtimeId === cur.downtimeId;
-  const open = (e, t, downtimeId, index, prev) => ({
-    downtimeId,
-    index,
-    startMs: t,
-    endMs: null,
-    reason: e.reason !== undefined ? e.reason : null,
-    node: val(e.node, prev && prev.node),
-    billet: val(e.billet),
-    note: val(e.note),
-    action: val(e.action),
-    crewId: val(e.crewId, prev && prev.crewId),
-    personId: val(e.personId, prev && prev.personId),
-    manual: false,
-    open: false,
-  });
-  const close = (t) => {
+  const open = (e, t, downtimeId, index, prev, i, kind) => {
+    const seg = {
+      downtimeId,
+      index,
+      startMs: t,
+      endMs: null,
+      reason: e.reason !== undefined ? e.reason : null,
+      node: val(e.node, prev && prev.node),
+      billet: val(e.billet),
+      note: val(e.note),
+      action: val(e.action),
+      crewId: val(e.crewId, prev && prev.crewId),
+      personId: val(e.personId, prev && prev.personId),
+      manual: false,
+      open: false,
+    };
+    meta.set(seg, { openIdx: i, openKind: kind });
+    return seg;
+  };
+  const close = (t, i, kind) => {
     cur.endMs = t;
+    Object.assign(meta.get(cur), { closeIdx: i, closeKind: kind });
     segments.push(cur);
     cur = null;
   };
+  const patch = (i, fields) => patches.set(i, { ...patches.get(i), ...fields });
 
-  for (const { e, t } of sorted) {
+  for (const { e, i, t } of sorted) {
     switch (e.type) {
       case "stop":
         if (cur) ignored.push(e.id);
-        else cur = open(e, t, e.downtimeId ?? e.id, 0, null);
+        else cur = open(e, t, e.downtimeId ?? e.id, 0, null, i, "stop");
         break;
       case "reason": {
         const target = [cur, ...segments.slice().reverse()].find((s) => s &&
@@ -328,16 +378,18 @@ export function buildDowntimes(events, nowMs) {
           for (const field of ["reason", "node", "billet", "note", "action"]) {
             if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
           }
-          // Время: начало — только у первого отрезка; конец — только у последнего закрытого
+          const m = meta.get(target);
+          // Начало — только у первого отрезка простоя
           if (e.from != null) {
-            if (target.index === 0) target.startMs = toMs(e.from);
-            else ignored.push(e.id);
+            if (target.index !== 0) ignored.push(e.id);
+            else if (!timeApplied) patch(m.openIdx, m.openKind === "manual" ? { from: e.from } : { at: e.from });
           }
+          // Конец — только у последнего закрытого отрезка
           if (e.to != null) {
             const lastClosed = target !== cur && !(cur && cur.downtimeId === target.downtimeId) &&
               !segments.some((s) => s.downtimeId === target.downtimeId && s.index > target.index);
-            if (lastClosed) target.endMs = toMs(e.to);
-            else ignored.push(e.id);
+            if (!lastClosed || (m.closeKind !== "start" && m.closeKind !== "manual")) ignored.push(e.id);
+            else if (!timeApplied) patch(m.closeIdx, m.closeKind === "manual" ? { to: e.to } : { at: e.to });
           }
         }
         break;
@@ -346,8 +398,8 @@ export function buildDowntimes(events, nowMs) {
         if (!cur || !matches(e)) ignored.push(e.id);
         else {
           const prev = cur;
-          close(t);
-          cur = open(e, t, prev.downtimeId, prev.index + 1, prev);
+          close(t, i, "split");
+          cur = open(e, t, prev.downtimeId, prev.index + 1, prev, i, "split");
         }
         break;
       case "start":
@@ -355,7 +407,7 @@ export function buildDowntimes(events, nowMs) {
         else {
           // Что сделали, чтобы запустить стан: обязательный текст при пуске
           if (e.action !== undefined) cur.action = e.action;
-          close(t);
+          close(t, i, "start");
         }
         break;
       case "manual": {
@@ -365,7 +417,7 @@ export function buildDowntimes(events, nowMs) {
           ignored.push(e.id);
           break;
         }
-        segments.push({
+        const seg = {
           downtimeId: e.downtimeId ?? e.id,
           index: 0,
           startMs: from,
@@ -379,7 +431,9 @@ export function buildDowntimes(events, nowMs) {
           personId: val(e.personId),
           manual: true,
           open: false,
-        });
+        };
+        meta.set(seg, { openIdx: i, openKind: "manual", closeIdx: i, closeKind: "manual" });
+        segments.push(seg);
         break;
       }
       default:
@@ -394,7 +448,7 @@ export function buildDowntimes(events, nowMs) {
     segments.push(cur);
   }
   segments.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
-  return { segments, ignored, open: openSeg };
+  return { out: { segments, ignored, open: openSeg }, patches };
 }
 
 /**

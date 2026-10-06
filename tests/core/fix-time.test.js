@@ -139,3 +139,50 @@ test("остановка и пуск без причины и без остал�
   assert.equal(s.reason, null);
   assert.equal(s.endMs, toMs(iso("09:12")));
 });
+
+test("остановка в освободившемся промежутке не пропадает при сборке: пуск сдвинут назад", () => {
+  const events = [ev("stop", "09:00", { downtimeId: "a" }), ev("start", "10:00", { downtimeId: "a" }),
+    fix("14:00", { to: iso("09:40") }),
+    ev("stop", "09:50", { downtimeId: "z" }), ev("start", "10:10", { downtimeId: "z" })];
+  const built = buildDowntimes(events, NOW);
+  assert.deepEqual(built.ignored, []);
+  assert.deepEqual(built.segments.map((s) => [s.downtimeId, s.startMs, s.endMs]),
+    [["a", toMs(iso("09:00")), toMs(iso("09:40"))], ["z", toMs(iso("09:50")), toMs(iso("10:10"))]]);
+});
+
+test("начало сдвинуто позже: причина, записанная в момент остановки, не теряется", () => {
+  const events = [ev("stop", "10:00", { downtimeId: "a" }), ev("reason", "10:00", { downtimeId: "a", reason: "avaria", note: "Заклинило" }),
+    ev("start", "10:30", { downtimeId: "a" })];
+  const e = fix("14:00", { from: iso("10:05") });
+  assert.equal(eventTimeError(events, e, NOW), "");
+  const s = seg([...events, e], "a");
+  assert.equal(s.startMs, toMs(iso("10:05"))); assert.equal(s.reason, "avaria"); assert.equal(s.note, "Заклинило");
+  assert.deepEqual(buildDowntimes([...events, e], NOW).ignored, []);
+});
+
+test("последняя правка времени побеждает, прежние значения не мешают", () => {
+  const e1 = fix("14:10", { from: iso("08:50") });
+  const e2 = fix("14:20", { from: iso("08:55"), to: iso("09:20") });
+  const events = [...base(), e1];
+  assert.equal(eventTimeError(events, e2, NOW), "");
+  const s = seg([...events, e2], "a");
+  assert.equal(s.startMs, toMs(iso("08:55"))); assert.equal(s.endMs, toMs(iso("09:20")));
+});
+
+test("ручной простой: правка начала и конца, наложение на соседний простой", () => {
+  const events = [ev("manual", "14:10", { downtimeId: "m", from: iso("11:00"), to: iso("11:30") }),
+    ev("stop", "12:00", { downtimeId: "n" }), ev("start", "12:20", { downtimeId: "n" })];
+  const ok = fix("14:20", { downtimeId: "m", from: iso("10:50"), to: iso("11:45") });
+  assert.equal(eventTimeError(events, ok, NOW), "");
+  const s = seg([...events, ok], "m");
+  assert.equal(s.startMs, toMs(iso("10:50"))); assert.equal(s.endMs, toMs(iso("11:45")));
+  assert.equal(eventTimeError(events, fix("14:20", { downtimeId: "m", to: iso("12:10") }), NOW), "overlap");
+  assert.equal(eventTimeError(events, fix("14:20", { downtimeId: "m", to: iso("11:00") }), NOW), "bad_time");
+});
+
+test("to у идущего простоя попадает в ignored и не меняет сборку", () => {
+  const e = ev("fix", "14:50", { downtimeId: "c", index: 0, to: iso("14:30") });
+  const built = buildDowntimes([...base(), e], NOW);
+  assert.equal(built.ignored.includes(e.id), true);
+  assert.equal(built.open.downtimeId, "c");
+});
