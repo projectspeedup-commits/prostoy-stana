@@ -95,6 +95,18 @@ export function createReportMenu({ h, nowMs, getSchedule, getKey, getApi, demo, 
     c.goLabel.textContent = state.busy ? "Готовлю файл…" : "Скачать";
   }
 
+  // Панель не выше свободного места под кнопкой до низа окна (на телефоне она закреплена в окне — там хватает CSS).
+  // Пересчитывается и при открытии, и при изменении размера окна
+  function fit() {
+    const c = current;
+    if (!c || !state.open) return;
+    if (window.innerWidth <= 599) { c.panel.style.maxHeight = ""; return; }
+    c.panel.style.maxHeight = "";
+    const top = c.panel.getBoundingClientRect().top;
+    c.panel.style.maxHeight = `${Math.max(160, Math.floor(window.innerHeight - Math.max(top, 0) - 12))}px`;
+  }
+  window.addEventListener("resize", () => { fit(); if (state.open && current) current.panel.scrollIntoView({ block: "nearest" }); });
+
   function open() {
     if (!state.busy) {
       state.from = state.to = today();
@@ -103,6 +115,7 @@ export function createReportMenu({ h, nowMs, getSchedule, getKey, getApi, demo, 
     }
     state.open = true;
     paint();
+    fit();
     if (current) {
       current.panel.focus({ preventScroll: true });
       current.panel.scrollIntoView({ block: "nearest" });
@@ -215,7 +228,7 @@ export function createReportMenu({ h, nowMs, getSchedule, getKey, getApi, demo, 
 
     const error = h("p", { class: "rep-error error-text", role: "alert", hidden: true });
     const goLabel = h("span", { text: "Скачать" });
-    const go = h("button", { class: "btn primary rep-go", type: "button", onclick: download }, svgIcon("download"), goLabel);
+    const go = h("button", { class: "ps-btn ps-btn--primary rep-go", type: "button", onclick: download }, svgIcon("download"), goLabel);
     const panel = h("div", { class: "rep-panel", id: "rep-panel", role: "dialog", "aria-label": "Отчёт в Excel", tabindex: "-1", hidden: true },
       h("div", { class: "rep-head" },
         h("h2", { class: "rep-title", text: "Отчёт в Excel" }),

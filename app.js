@@ -1,6 +1,6 @@
 // Страница рабочего: учёт простоев стана. Чистый ES-модуль, без сборки.
 // Версия 2: пошаговые экраны, один вопрос — один экран.
-import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard, fullNameError } from "./queue.js";
+import { deliverBatch, pruneRecords, settleRecords, readyEvents, rejectionGroups, transferFields, reusableRestart, downtimeKey, mergeRecords, mergeQueue, tapGuard, fullNameError, migrateLegacyDraft } from "./queue.js";
 import * as core from "./core/core.js";
 import { zoneOf } from "./core/zones.js";
 import { dayChart, donut } from "./charts.js";
@@ -49,6 +49,13 @@ function takeKeyFromHash() {
   history.replaceState(null, "", location.pathname + location.search);
 }
 
+// Метка ключа для кэша прав: сам ключ в кэше не хранится, но чужой кэш (другой ключ) не принимаем
+function keyTag(k) {
+  let a = 5381;
+  for (const ch of String(k || "")) a = ((a * 33) ^ ch.codePointAt(0)) >>> 0;
+  return a.toString(36);
+}
+
 // --- Обращения к серверу (в демо — имитация из mock.js) ---
 let api = realApi;
 async function realApi(path, options = {}) {
@@ -79,8 +86,11 @@ const restored = readJSON(SESSION_KEY, {});
 let serverState = restored.state || null;
 let stateAt = restored.stateAt || null;
 let queueStoredSeparately = restored.queueSeparated === true || !Array.isArray(restored.queue);
-let queue = queueStoredSeparately ? loadQueue() : restored.queue;
-let records = Array.isArray(restored.records) ? restored.records : [];
+// Повреждённые элементы старой сессии (null, запись без event.id) отбрасываем при чтении: исправные остаются
+const goodEvent = (e) => !!e && typeof e.id === "string" && typeof e.type === "string";
+const goodRecord = (r) => !!r && typeof r === "object" && goodEvent(r.event);
+let queue = queueStoredSeparately ? loadQueue() : restored.queue.filter(goodEvent);
+let records = Array.isArray(restored.records) ? restored.records.filter(goodRecord) : [];
 for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
   const receipt = restored.pendingReplacements?.find((r) => r.id === event.id);
   records.push({ ...receipt, event, status: "pending" });
@@ -88,6 +98,16 @@ for (const event of queue) if (!records.some((r) => r.event.id === event.id)) {
 let clockOffset = restored.clockOffset || 0;
 let stateEpoch = 0;
 let loadingState = false;
+// Первая загрузка справочников и состояния: пока запрос в пути, экран говорит «Загружаем…», а не «нет связи».
+// «Нет связи» — после ошибки или если ответа нет дольше LOAD_SLOW_MS
+const LOAD_SLOW_MS = 15_000;
+const firstLoad = { refs: { busy: false, bad: false }, state: { busy: false, bad: false } };
+function watchLoad(part) {
+  const f = firstLoad[part];
+  f.busy = true; f.bad = false;
+  const timer = setTimeout(() => { if (f.busy) { f.bad = true; render(); } }, LOAD_SLOW_MS);
+  return () => { f.busy = false; clearTimeout(timer); };
+}
 let online = false;
 let flushing = false;
 let shiftTimer = null;
@@ -96,29 +116,35 @@ let handlingStorage = false;
 const taps = tapGuard();
 
 // Экран и данные мастеров. screen: auto | crew | reason | confirmChange |
-// manual | manualCheck | closeCheck | forgotStop | restartTime | restartConfirm | restartAction | actionFix |
-// recorded | shift | billet | closeConfirm | closed
+// manual | manualCheck | closeCheck | forgotStop | restartTime |
+// recorded | shift | detail | closeConfirm | closed
 const ui = {
   screen: "auto",
   crewId: null,      // выбранная бригада на приёме смены
   crewBack: false,   // приём смены открыт кнопкой «Сменить» — есть куда вернуться
   wz: null,          // мастер причины: {mode, downtimeId, index, step, group, reason, note}
-  mw: null,          // мастер «Забыл отметить простой»: {origin, step, from, durMin, group, reason, note}
-  rw: null,          // мастер пуска: {downtimeId, index, startMs, reason, note, reasonChanged}
-  fw: null,          // забытая остановка при закрытии смены: {step, atMs, group, reason, note}
+  mw: null,          // мастер «Забыл отметить простой»: {origin, step, from, to, openedAt}
+  rw: null,          // «забыли отметить пуск» при сдаче смены: {downtimeId, index, startMs, createdMs, shiftStartMs}
+  fw: null,          // забытая остановка при закрытии смены: {step, atMs, group, reason, note}; причина необязательна
   closeReceipt: null, // события исправленного состояния перед закрытием смены
-  af: null,          // дописывание выполненного: {downtimeId, index, action}
-  bl: null,          // шаг заготовки: {downtimeId, index, custom}
+  edit: null,        // правка записи в «Разборе простоев»: {downtimeId, index, base, note, action, billet}
+  timeEdit: null,    // правка времени простоя в разборе (в памяти): {downtimeId, base, from, to}
+  pickPerson: null,  // мастер, отмеченный на приёме смены
   rec: null,         // экран «Простой записан»: {downtimeId}
   closedInfo: null,  // итоги для экрана «Смена сдана»
   closeAction: null, // черновик «что сделали по ремонту» при сдаче смены: {key, text}
   focusNote: false,  // поставить курсор в поле «своими словами»
   keyError: null,
 };
-const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "af", "bl", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio", "stopContext"];
+const DRAFT_FIELDS = ["screen", "crewId", "crewBack", "wz", "mw", "rw", "fw", "closeReceipt", "edit", "rec", "closedInfo", "card", "repair", "resume", "contactBack", "closeAction", "fio", "stopContext"];
+// Черновик старой версии (af/bl, экраны actionFix/billet) переносим в черновик редактора до первой записи в хранилище
+const restoredDraft = migrateLegacyDraft(restored.draft);
 for (const field of DRAFT_FIELDS) {
-  if (restored.draft && Object.hasOwn(restored.draft, field)) ui[field] = restored.draft[field];
+  if (restoredDraft && Object.hasOwn(restoredDraft, field)) ui[field] = restoredDraft[field];
 }
+// Черновик старой версии: мастера пуска с причиной и «что сделали» больше нет
+if (ui.wz && (ui.wz.mode === "restart" || ui.wz.mode === "past")) ui.wz = null;
+if (["restartConfirm", "restartAction"].includes(ui.screen)) ui.screen = "auto";
 settleRejected();
 function mergeStored() {
   if (!queueStoredSeparately) return;
@@ -126,7 +152,7 @@ function mergeStored() {
   const diskQueue = loadQueue();
   const missing = diskQueue.filter((e) => !records.some((r) => r.event.id === e.id))
     .map((event) => ({ ...saved.pendingReplacements?.find((r) => r.id === event.id), event, status: "pending" }));
-  records = mergeRecords(saved.records || [], missing, records);
+  records = mergeRecords((Array.isArray(saved.records) ? saved.records : []).filter(goodRecord), missing, records);
   settleRejected();
   queue = mergeQueue(records, diskQueue, queue);
 }
@@ -206,6 +232,16 @@ function updateClock(serverTime) {
   }
 }
 
+// randomUUID есть только на https и localhost; по http в локальной сети — тот же UUID v4 из getRandomValues
+function newId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const x = [...b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+}
+
 // --- Очередь событий ---
 function queueEvent(type, fields = {}) {
   mergeStored();
@@ -215,7 +251,7 @@ function queueEvent(type, fields = {}) {
   const { at, ...rest } = fields;
   const e = {
     ...(who ? { crewId: who.crewId, personId: who.personId, ...(who.personName ? { personName: who.personName } : {}) } : {}),
-    id: crypto.randomUUID(),
+    id: newId(),
     type,
     at: at || new Date(nowMs()).toISOString(),
     device: "web",
@@ -327,6 +363,8 @@ async function flush() {
 async function loadState() {
   if (!key || flushing || loadingState) return;
   loadingState = true;
+  const done = watchLoad("state");
+  if (!serverState) render();
   const epoch = stateEpoch;
   try {
     const d = await api("/api/state");
@@ -338,14 +376,19 @@ async function loadState() {
     }
   } catch (err) {
     if (err && err.status === 401) return badKey();
+    firstLoad.state.bad = true;
     setOnline(false);
   } finally {
     loadingState = false;
+    done();
   }
   softRender();
 }
 
 async function loadRefs() {
+  if (firstLoad.refs.busy) return false; // запрос уже в пути: второй не запускаем
+  const done = watchLoad("refs");
+  if (!refs) render();
   try {
     const d = await api("/api/refs");
     if (d && d.ok && d.refs) {
@@ -353,15 +396,20 @@ async function loadRefs() {
       refsVersion = d.refsVersion || null;
       canAdmin = d.canAdmin !== false;
       if (!canAdmin && (ui.screen === "admin" || ui.screen === "ai")) ui.screen = "auto";
-      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin }));
+      writeStore(REFS_KEY, JSON.stringify({ refs, refsVersion, canAdmin, keyTag: keyTag(key) }));
       setOnline(true);
+      done();
       render();
       return true;
     }
+    firstLoad.refs.bad = true;
   } catch (err) {
-    if (err && err.status === 401) { badKey(); return false; }
+    if (err && err.status === 401) { done(); badKey(); return false; }
+    firstLoad.refs.bad = true;
     setOnline(false);
   }
+  done();
+  if (!refs) render();
   return false;
 }
 
@@ -371,13 +419,24 @@ function loadCachedRefs() {
     if (c && c.refs && c.refs.reasons) {
       refs = c.refs;
       refsVersion = c.refsVersion || null;
-      canAdmin = c.canAdmin !== false;
+      // Права из кэша верны только для того ключа, под которым их получили; иначе ждём ответ сервера
+      canAdmin = c.keyTag === keyTag(key) && c.canAdmin !== false;
     }
   } catch { /* кеш пуст */ }
 }
 
+// Права и ассистент принадлежат ключу: при смене ключа в том же браузере кэш ролей сбрасываем
+function resetKeyScopedState() {
+  canAdmin = false;
+  ui.admin = null;
+  aiUi.status = null; aiUi.statusReq = false; aiUi.log = []; aiUi.text = ""; aiUi.error = ""; aiUi.busy = false;
+  if (ui.screen === "admin" || ui.screen === "ai") ui.screen = "auto";
+  writeStore(REFS_KEY, "");
+}
+
 function badKey() {
   ui.keyError = "Ключ не подошёл. Введите другой.";
+  resetKeyScopedState();
   key = null;
   writeStore(STORE_KEY, "");
   render();
@@ -403,6 +462,7 @@ function buildView() {
       reason: last && last.reason !== undefined ? last.reason : null,
       note: last && last.note !== undefined ? last.note : null,
       action: last && last.action !== undefined ? last.action : null,
+      billet: last && last.billet !== undefined ? last.billet : null,
       index: last ? last.index : 0,
       handovers: Array.isArray(s.open.handovers) ? s.open.handovers.slice() : [],
     };
@@ -413,6 +473,8 @@ function buildView() {
     crew: s.crew ? { ...s.crew } : null,
     closed: !!s.closed,
     shift: refs ? core.shiftOf(nowMs(), refs.settings.schedule) : s.shift,
+    // Записки прошлых сдач при работающем стане; при простое они лежат в open.handovers
+    handovers: !open && Array.isArray(s.handovers) ? s.handovers.slice() : [],
     dataFromMs: s.dataFromMs ?? null,
     runningSinceMs: s.runningSinceMs ?? null,
     segments: (s.segments || []).filter((x) => !open || x.downtimeId !== open.downtimeId || x.index !== open.index).map((x) => ({ ...x })),
@@ -421,7 +483,7 @@ function buildView() {
   for (const e of readyEvents(queue, records, true)) applyEvent(v, e);
   // Первое нажатие ещё не дошло до сервера — учёт начался с него
   for (const e of queue) {
-    for (const t of [e.at, e.type === "manual" ? e.from : undefined]) {
+    for (const t of [e.at, e.type === "manual" || e.type === "fix" ? e.from : undefined]) {
       if (t === undefined || t === null) continue;
       try { const ms = core.toMs(t); if (v.dataFromMs === null || ms < v.dataFromMs) v.dataFromMs = ms; } catch { /* битое время пропускаем */ }
     }
@@ -506,20 +568,35 @@ function applyEvent(v, e) {
       }
       break;
     }
-    case "fix":
+    case "fix": {
+      // Время: начало — у первой части простоя, конец — у последней закрытой (как в core.buildDowntimes)
+      const fromMs = e.from != null ? core.toMs(e.from) : null;
+      const toMs = e.to != null ? core.toMs(e.to) : null;
       for (const s of v.segments) {
         if (s.downtimeId === e.downtimeId && s.index === e.index) {
           for (const field of ["reason", "billet", "note", "action"]) {
             if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(s[field]))) s[field] = e[field];
           }
+          if (fromMs !== null && s.index === 0) s.startMs = fromMs;
+          const last = !(v.open && v.open.downtimeId === s.downtimeId) &&
+            !v.segments.some((x) => x.downtimeId === s.downtimeId && x.index > s.index);
+          if (toMs !== null && last && !s.open && s.endMs !== null) {
+            if (v.runningSinceMs === s.endMs) v.runningSinceMs = toMs;
+            s.endMs = toMs;
+          }
+          if (s.endMs !== null && s.endMs !== undefined) s.minutes = Math.max(0, Math.round((s.endMs - s.startMs) / 60000));
         }
       }
       if (v.open && v.open.downtimeId === e.downtimeId && v.open.index === e.index) {
         for (const field of ["reason", "billet", "note", "action"]) {
           if (e[field] !== undefined && (!e.onlyEmpty || core.emptyField(v.open[field]))) v.open[field] = e[field];
         }
+        if (fromMs !== null && v.open.index === 0) { v.open.startMs = fromMs; v.open.since = fromMs; }
       }
+      // Начало простоя из нескольких частей: открытая часть хранит его в since
+      if (fromMs !== null && e.index === 0 && v.open && v.open.downtimeId === e.downtimeId && v.open.index > 0) v.open.since = fromMs;
       break;
+    }
     case "shift_open":
       if (t < v.shift.startMs || t >= v.shift.endMs) break;
       v.crew = { crewId: e.crewId, personId: e.personId, personName: e.personName ?? null, at: e.at };
@@ -530,6 +607,10 @@ function applyEvent(v, e) {
           !(v.open.handovers || []).some((x) => x.at === e.at && x.crewId === (e.crewId ?? null))) {
         v.open.handovers = [...(v.open.handovers || []),
           { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }];
+      }
+      if (!v.open && typeof e.action === "string" && e.action.trim() && !(v.handovers || []).some((x) => x.at === e.at && x.crewId === (e.crewId ?? null))) {
+        v.handovers = [...(v.handovers || []),
+          { at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action, note: e.note ?? null }];
       }
       if (t < v.shift.startMs || t >= v.shift.endMs || (v.crew && core.toMs(v.crew.at) > t)) break;
       v.crew = null;
@@ -555,6 +636,21 @@ function shiftSummary(view) {
     }
   }
   return core.summarizeShift(segs, shift, refs, nowMs(), view.dataFromMs);
+}
+
+// Брак простоя за смену — сумма по всем частям (смена причины по ходу простоя даёт несколько частей).
+// Привязка как в отчёте Excel (core/report.js): брак части относится к смене, в которой часть завершилась;
+// открытая часть брака не имеет. Брак не указан ни в одной части — null («не указан»), указан 0 — 0
+// Правило привязки и суммирования — общее (core.segmentBillet / core.sumBillet), его же держат отчёт и «Показатели»
+function shiftBillet(segs, shift) {
+  return core.sumBillet(segs
+    .filter((s) => s.endMs > shift.startMs && s.endMs <= shift.endMs)
+    .map((s) => core.segmentBillet(s)));
+}
+
+// Простои смены, где нет причины (закрытые и идущий): их разбирают по порядку времени
+function noReasonList(view) {
+  return shiftDowntimes(view).filter((d) => d.segs.some((s) => !reasonRef(s.reason)));
 }
 
 // Простои текущей смены, сгруппированные по downtimeId (один простой — одна строка)
@@ -592,7 +688,7 @@ function shiftDowntimes(view) {
       reason: last.reason ?? null,
       note: last.note ?? null,
       action: last.action ?? null,
-      billet: g.segs.map((s) => s.billet).find((b) => b !== null && b !== undefined) ?? null,
+      billet: shiftBillet(g.segs, shift),
       manual: g.segs.some((s) => s.manual),
       indexLast: last.index || 0,
       segs: g.segs,
@@ -639,33 +735,16 @@ function shiftWorkMin(view, downMin) {
   return Math.max(0, Math.round((to - from) / 60000) - downMin);
 }
 
-// Табло стана: московское время, состояние, работа, простой и остановки за период
-function board(view) {
-  const shift = view.shift;
-  const sum = shiftSummary(view);
-  const downMin = sum.downMinutes;
-  const workMin = shiftWorkMin(view, downMin);
-  const stops = sum.stops;
-  const stopped = !!view.open;
-  return h("div", { class: "board" },
-    h("div", { class: "board-top" },
-      h("span", { class: "board-clock", text: fmtClock(nowMs()) }),
-      h("span", { class: "board-date", text: `${fmtDate(nowMs())} · Москва` })),
-    h("div", { class: "board-state " + (stopped ? "stopped" : "running"),
-      text: stopped ? `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, shift)}` : "Стан работает" }),
-    h("div", { class: "board-period muted", text: `${periodLabel(shift)} · с начала периода${refs.demo ? " · демо-данные" : ""}` }),
-    h("div", { class: "board-stats" },
-      h("div", { class: "board-stat good" }, h("span", { class: "v", text: fmtHM(workMin) }), "работа"),
-      h("div", { class: "board-stat bad" }, h("span", { class: "v", text: fmtHM(downMin) }), "простой"),
-      h("div", { class: "board-stat" }, h("span", { class: "v", text: String(stops) }), "остановок")));
-}
-
-// Коротко для табло: «2 ч 11 м»
-function fmtHM(min) {
+// Правило длительностей: в тексте «N ч N мин», в плитках «N ч N м»; нулевые части опускаются («12 ч», «46 мин»)
+function fmtParts(min, unit) {
   min = Math.max(0, Math.round(min));
   const h = Math.floor(min / 60);
-  return h ? `${h} ч ${min % 60} м` : `${min} м`;
+  const m = min % 60;
+  if (!h) return `${m} ${unit}`;
+  return m ? `${h} ч ${m} ${unit}` : `${h} ч`;
 }
+// Для плиток и табло: «2 ч 11 м»
+function fmtHM(min) { return fmtParts(min, "м"); }
 // Подсказки в полях — по теме выбранной причины (из справочника)
 const DEFAULT_NOTE_HINT = "Например: на третьей клети заклинило подшипник";
 const DEFAULT_ACTION_HINT = "Например: заменили ножи, подтянули муфту";
@@ -676,17 +755,15 @@ function isOther(code) { return !!(reasonRef(code) && reasonRef(code).other); }
 // Описание своими словами обязательно: у «иной» причины и у трёх блоков без подпунктов
 function needsNote(code) { const r = reasonRef(code); return !!(r && (r.other || r.noteRequired)); }
 
-function fmtDurMin(min) {
-  min = Math.max(0, Math.round(min));
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return h ? `${h} ч ${m} мин` : `${m} мин`;
-}
+// В тексте: «2 ч 11 мин»
+function fmtDurMin(min) { return fmtParts(min, "мин"); }
 // Долгий простой: от суток — «1 сут 10 ч 21 мин», меньше — как fmtDurMin
 function fmtDurLong(min) {
   min = Math.max(0, Math.round(min));
   const days = Math.floor(min / 1440);
-  return days ? `${days} сут ${Math.floor((min % 1440) / 60)} ч ${min % 60} мин` : fmtDurMin(min);
+  if (!days) return fmtDurMin(min);
+  const rest = min % 1440;
+  return rest ? `${days} сут ${fmtDurMin(rest)}` : `${days} сут`;
 }
 // Сколько работает стан, с секундами: «6 ч 34 мин 12 с», «34 мин 12 с», «12 с»
 function fmtDurSec(sec) {
@@ -747,7 +824,8 @@ function h(tag, attrs, ...kids) {
 }
 
 // Единые контурные иконки: SVG строится через DOM, без inline-кода и стилей.
-function icon(name) {
+// cls — "ico" (прежние экраны) или "ps-ico" (дизайн-система, обводка 2 px)
+function icon(name, cls = "ico") {
   const paths = {
     pulse: "M2 12h5l3-8 4 16 3-8h5",
     clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2",
@@ -762,9 +840,18 @@ function icon(name) {
     stopSq: "M7 7h10v10H7z",
     play: "M8 5.5v13l10.5-6.5z",
     calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2ZM7 2v4M17 2v4M3 9h18M7 13h3M14 13h3M7 17h3",
+    cobble: "M2 15c2.5 0 2.5-6 5-6s2.5 6 5 6 2.5-6 5-6 2.5 6 5 6",
+    wrench: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+    phone: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
+    tick: "M20 6 9 17l-5-5",
+    mail: "M3 5h18v14H3zM3 6l9 7 9-7",
+    plus: "M12 5v14M5 12h14",
+    clip: "M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1ZM8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 14l2 2 4-4",
+    alert: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7.5v5.5M12 16.5h.01",
+    wifioff: "M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5-2.7M19 12.9a10 10 0 0 0-2.3-1.7M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8a15 15 0 0 0-11.3-3.7M12 20h.01",
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "ico");
+  svg.setAttribute("class", cls);
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(svg.namespaceURI, "path");
@@ -773,15 +860,66 @@ function icon(name) {
   return svg;
 }
 
-// Кнопка «Назад»: первая строка вложенного экрана, во всю ширину, серая рамка
-function backBtn(label, onclick) {
-  return h("button", { class: "btn back", onclick }, "← " + label);
+// Кнопка «Назад»: компактная, первая строка шага мастера. На экранах-разделах её нет — там навигация
+function backBtn(label, onclick, extra = "") {
+  return h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-back" + (extra ? " " + extra : ""), onclick }, "← " + label);
+}
+// Кнопка дизайн-системы: kind — primary | secondary | ghost; по умолчанию крупная (64 px)
+function psButton(kind, label, onclick, { lg = true, block = false, ...attrs } = {}) {
+  return h("button", { type: "button", class: `ps-btn ps-btn--${kind}` + (lg ? " ps-btn--lg" : "") + (block ? " ps-btn--block" : ""), onclick, ...attrs }, label);
+}
+// Строка ошибки под полем: видна читалке экрана сразу, когда появляется
+function fieldError(text = "", hidden = false) {
+  return h("p", { class: "ps-field__error", role: "alert", hidden: hidden || !text, text });
+}
+// Поле с подписью; control — input или textarea с классом ps-input
+function psField(label, control, hint = null) {
+  return h("label", { class: "ps-field" }, h("span", { class: "ps-field__label", text: label }), control,
+    hint ? h("span", { class: "ps-field__hint", text: hint }) : null);
+}
+// Сводка записи: заголовок и строки «подпись — значение»
+function summaryCard(title, rows) {
+  return h("section", { class: "ps-card ps-summary" },
+    title ? h("h2", { class: "ps-card__title", text: title }) : null,
+    rows.filter(Boolean).map(([k, v]) => h("div", { class: "ps-kv" }, h("span", { class: "ps-kv__k", text: k }), h("span", { class: "ps-kv__v", text: v }))));
 }
 function stepLine(n, total) {
   return h("p", { class: "step", text: `Шаг ${n} из ${total}` });
 }
 function question(text) {
   return h("h1", { class: "q", text });
+}
+// Экраны мастера смены (дизайн-система): шапка с надзаголовком и действием справа
+function screenHead(over, title, extra = null, cls = "") {
+  return h("div", { class: "ps-head" + (cls ? " " + cls : "") },
+    h("div", { class: "ps-head__text" }, over ? h("div", { class: "ps-overline", text: over }) : null, question(title)),
+    extra);
+}
+// Карточка с заголовком и подписью справа
+function psCard(title, aside, ...kids) {
+  return h("section", { class: "ps-card" },
+    h("div", { class: "ps-card__head" }, h("h2", { class: "ps-card__title", text: title }), aside ? h("span", { class: "ps-card__aside", text: aside }) : null),
+    ...kids);
+}
+// Выбор карточкой: role=radio, отмеченная — aria-checked
+function choiceCard({ title, sub = "", checked = false, current = false, onclick }) {
+  return h("button", { type: "button", class: "ps-choice", role: "radio", "aria-checked": String(!!checked), "aria-current": current ? "true" : null, onclick },
+    h("span", { class: "ps-choice__radio", "aria-hidden": "true" }),
+    h("span", { class: "ps-choice__text" },
+      h("span", { class: "ps-choice__title", text: title }),
+      sub ? h("span", { class: "ps-choice__sub", text: sub }) : null));
+}
+// Время кнопками ±1 мин рядом с полем ввода: формат значения и проверки остаются прежними
+function timeStepper(label, ms, step) {
+  return h("div", { class: "ps-stepper", role: "group", "aria-label": label },
+    h("button", { type: "button", "aria-label": "Раньше на минуту", onclick: () => step(-1) }, "−"),
+    h("output", { text: Number.isFinite(ms) ? fmtClock(ms) : "—:—" }),
+    h("button", { type: "button", "aria-label": "Позже на минуту", onclick: () => step(1) }, "+"));
+}
+const minuteNow = () => Math.floor(nowMs() / 60000) * 60000;
+function initials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return (((parts[0] || "")[0] || "") + ((parts[1] || "")[0] || "")).toUpperCase() || "—";
 }
 
 let toastTimer = null;
@@ -814,6 +952,7 @@ function renderTopbar() {
       : ui.screen === "closeConfirm" ? "Закрытие смены ещё не отправлено"
       : online ? (records.some((r) => r.status === "saved") ? "Принято сервером" : "Связь с сервером есть")
       : stateAt ? `Без сети · последние данные: ${fmtDate(core.toMs(stateAt))}, ${fmtClock(core.toMs(stateAt))} МСК`
+      : (firstLoad.refs.busy && !firstLoad.refs.bad) || (firstLoad.state.busy && !firstLoad.state.bad) ? "Загружаем…"
       : "Нет связи с сервером";
     status.replaceChildren(h("span", { class: "save-status-text", text: statusText }),
       h("span", { class: "save-status-count", text: String(rejected || queue.length || 0), "aria-hidden": "true" }));
@@ -848,8 +987,7 @@ function renderTopbar() {
       admin.dataset.bound = "1";
       admin.addEventListener("click", () => {
         if (!key || !refs || !canAdmin) return;
-        if (ui.screen !== "admin") ui.adminBack = ui.screen;
-        ui.admin = null;
+        if (!ui.admin?.dirty) ui.admin = null; // несохранённые правки не теряем при переходе по разделам
         window.scrollTo(0, 0);
         go("admin");
       });
@@ -873,7 +1011,7 @@ function renderTopbar() {
     ask.hidden = !key || !refs || !canAdmin || !aiUi.status || Boolean(aiUi.status.unavailable);
     ask.classList.toggle("is-on", ui.screen === "ai");
   }
-  // Навигация: «Простои» и «Показатели», отметка текущего раздела
+  // Навигация: «Разбор» и «Показатели», отметка текущего раздела
   for (const [id, screen] of [["nav-shift", "shift"], ["nav-stats", "stats"]]) {
     const b = $(id);
     if (!b) continue;
@@ -913,27 +1051,27 @@ function renderRejects() {
   box.className = "rejects" + (ui.rejectsOpen ? " is-open" : "");
   fill(box,
     h("div", { class: "rejects-heading" }, h("strong", { text: `Нужно исправить: ${rejected.length}` }),
-      h("button", { class: "btn", onclick: () => { ui.rejectsOpen = false; renderRejects(); renderTopbar(); } }, "Закрыть список")),
-    !rejected.length ? h("p", { text: queue.length ? `Ждут отправки: ${queue.length}` : "Записей для исправления нет." }) : null,
-    storageErrors.size ? h("button", { class: "btn", onclick: () => { persistQueue(); render(); } }, "Повторить сохранение на планшете") : null,
-    rejected.length > 1 ? h("button", { class: "btn btn-flat", onclick: () => {
+      psButton("secondary", "Закрыть список", () => { ui.rejectsOpen = false; renderRejects(); renderTopbar(); }, { lg: false })),
+    !rejected.length ? h("p", { class: "ps-field__hint", text: queue.length ? `Ждут отправки: ${queue.length}` : "Записей для исправления нет." }) : null,
+    storageErrors.size ? psButton("secondary", "Повторить сохранение на планшете", () => { persistQueue(); render(); }, { lg: false }) : null,
+    rejected.length > 1 ? psButton("ghost", ui.dismissAllConfirm === rejected.map((g) => g.record.event.id).join("|")
+      ? `Точно убрать ${rejected.length} записей?` : `Убрать все отклонённые записи (${rejected.length})`, () => {
       const ids = rejected.map((g) => g.record.event.id);
       const token = ids.join("|");
       if (ui.dismissAllConfirm === token) { ui.dismissAllConfirm = null; dismissRejected(ids, true); }
       else { ui.dismissAllConfirm = token; renderRejects(); }
-    } }, ui.dismissAllConfirm === rejected.map((g) => g.record.event.id).join("|")
-      ? `Точно убрать ${rejected.length} записей?` : `Убрать все отклонённые записи (${rejected.length})`) : null,
+    }, { lg: false }) : null,
     ...rejected.map((g) => { const r = g.record; return h("div", { class: "reject" },
       h("strong", { text: "Нужно исправить · " + eventTitle(r.event) }),
       h("p", { text: conflictMessage(g) }),
-      savedAnswers(g),
-      h("button", { class: "btn", onclick: () => {
+      conflictAnswers(g),
+      psButton("secondary", "Открыть сохранённую запись", () => {
         ui.repair = { id: r.event.id, event: { ...r.event }, back: ui.screen };
         ui.rejectsOpen = false;
         go("repair");
-      } }, "Открыть сохранённую запись"),
+      }, { lg: false }),
       transferButton(g),
-      h("button", { class: "btn btn-flat", onclick: () => dismissRejected([r.event.id]) }, "Убрать запись")); })
+      psButton("ghost", "Убрать запись", () => dismissRejected([r.event.id]), { lg: false })); })
   );
 }
 
@@ -950,11 +1088,12 @@ function conflictTarget(g) {
 function conflictMessage(g) {
   const target = conflictTarget(g);
   return g.record.event.type === "start" && target?.endMs != null
-    ? `Стан уже пущен в ${fmtClock(target.endMs)} с другого устройства. Ваши ответы ждут решения.` : humanError(g.record.error);
+    ? `Стан уже пущен в ${fmtClock(target.endMs)} с другого устройства. Ваши ответы ждут решения.` : humanError(g.record.error, g.record.event);
 }
-function savedAnswers(g) {
+function savedAnswers(g, caption = null) {
   const f = g.fields;
-  return h("div", { class: "saved-answers" },
+  return h("div", { class: "ps-saved" },
+    caption ? h("strong", { text: caption }) : null,
     f.from ? h("p", { text: `Остановка: ${fmtDate(core.toMs(f.from))} ${fmtClock(core.toMs(f.from))}` }) : null,
     h("p", { text: `Причина: ${reasonLabel(f.reason) || "Не указана"}` }),
     h("p", { text: `Что случилось: ${f.note || "Не указано"}` }),
@@ -962,16 +1101,42 @@ function savedAnswers(g) {
     h("p", { text: `Что сделали: ${f.action || "Не указано"}` }),
     h("p", { text: `Брак: ${f.billet == null ? "Не указан" : fmtTons(f.billet)}` }));
 }
+// Ответы, которые уже записаны на сервере с другого устройства (когда наша запись не прошла из-за занятых полей)
+function takenFields(g) {
+  if (g.record.error !== "fields_taken") return null;
+  const last = conflictTarget(g)?.segments?.at(-1);
+  if (!last) return null;
+  const f = { reason: last.reason, note: last.note, action: last.action, billet: last.billet };
+  return Object.values(f).some((v) => !core.emptyField(v)) ? f : null;
+}
+function otherAnswers(g) {
+  const f = takenFields(g);
+  if (!f) return null;
+  return h("div", { class: "ps-saved ps-saved--other" },
+    h("strong", { text: "Уже записано с другого устройства" }),
+    h("p", { text: `Причина: ${reasonLabel(f.reason) || "Не указана"}` }),
+    h("p", { text: `Что случилось: ${core.emptyField(f.note) ? "Не указано" : f.note}` }),
+    h("p", { text: `Что сделали: ${core.emptyField(f.action) ? "Не указано" : f.action}` }),
+    h("p", { text: `Брак: ${f.billet == null ? "Не указан" : fmtTons(f.billet)}` }));
+}
+// Свои ответы и ответы другого устройства рядом. Без чужих ответов — прежний вид
+function conflictAnswers(g) {
+  const other = otherAnswers(g);
+  return other ? [other, savedAnswers(g, "Ваши ответы")] : savedAnswers(g);
+}
 function transferButton(g) {
   const target = conflictTarget(g);
-  if (!target || (!target.endMs && g.record.event.type !== "stop")) return null;
+  if (!target || (!target.endMs && !["stop", "reason", "split", "fix"].includes(g.record.event.type))) return null;
   const last = target.segments.at(-1);
   const fields = transferFields(g.fields, last);
   const names = { reason: "Причина", note: "Что случилось", action: "Что сделали", billet: "Брак" };
   const busy = Object.keys(names).filter((k) => !core.emptyField(last[k]));
   return h("div", { class: "transfer" },
-    busy.map((k) => h("p", { text: `${names[k]} уже записано: ${k === "reason" ? reasonLabel(last[k]) : k === "billet" ? fmtTons(last[k]) : last[k]}. Это поле сохраним.` })),
-    h("button", { class: "btn", disabled: !Object.keys(fields).length, onclick: () => {
+    busy.map((k) => h("p", { class: "ps-field__hint", text: `${names[k]} уже записано: ${k === "reason" ? reasonLabel(last[k]) : k === "billet" ? fmtTons(last[k]) : last[k]}. Это поле сохраним.` })),
+    psButton("secondary", g.record.error === "fields_taken" ? "Перенести только пустые поля"
+      : g.record.event.type === "stop"
+      ? `Перенести мою причину, брак и «что сделали» в простой ${fmtClock(target.startMs)}–${target.endMs ? fmtClock(target.endMs) : "сейчас"}`
+      : "Добавить мою причину, брак и «что сделали» к этому простою", () => {
       const fresh = conflictTarget(g).segments.at(-1);
       const payload = transferFields(g.fields, fresh);
       if (!Object.keys(payload).length) return render();
@@ -980,9 +1145,9 @@ function transferButton(g) {
       receipt.groupId = g.key;
       receipt.transfers = g.records.filter((r) => ["pending", "rejected"].includes(r.status)).map((r) => r.event.id);
       persistQueue(); flush(); render();
-    } }, g.record.event.type === "stop"
-      ? `Перенести мою причину, брак и «что сделали» в простой ${fmtClock(target.startMs)}–${target.endMs ? fmtClock(target.endMs) : "сейчас"}`
-      : "Добавить мою причину, брак и «что сделали» к этому простою"));
+    }, { lg: false, disabled: !Object.keys(fields).length }),
+    g.record.error === "fields_taken" && !Object.keys(fields).length
+      ? h("p", { class: "ps-field__hint", text: "Свободных полей нет, переносить нечего. Ответы другого устройства останутся." }) : null);
 }
 // Отклонённую запись, которая больше не нужна, убирают с планшета: она не показывается и не отправляется.
 // На сервере её нет — он её не принял, поэтому убрать можно без следа в учёте
@@ -1005,10 +1170,16 @@ function dismissRejected(ids, confirmed = false) {
   render();
 }
 
-function humanError(code) {
+function humanError(code, event = null) {
+  // Правка времени из разбора: причину отказа называем прямо
+  if (event && event.type === "fix" && (event.from != null || event.to != null)) {
+    if (code === "overlap") return "Пересекается с другим простоем. Проверьте начало и конец и сохраните время снова.";
+    if (code === "bad_time") return "Проверьте время: пуск не раньше остановки, время не в будущем, начало не старше 40 суток.";
+  }
   const messages = {
-    overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в итоге смены.",
+    overlap: "Остановка пересекается с записанным простоем или указана раньше последнего пуска. Проверьте время или дополните запись в разборе простоев.",
     bad_time: "Дата должна быть не старше 40 суток, длительность ручного простоя — не больше 7 суток. Пуск не может быть раньше остановки или смены причины. Проверьте время записи.",
+    duplicate_downtime: "Номер простоя уже использован для другой остановки. Запись не принята: обновите состояние стана и создайте остановку заново.",
     not_found: "Простой или его отрезок не найден. Ответы ждут исправления остановки.",
     fields_taken: "Причина уже указана с другого устройства. Сравните ответы и перенесите только пустые поля либо уберите свою запись.",
     not_open: "Нет открытого простоя для этого пуска. Обновите состояние стана.",
@@ -1038,16 +1209,17 @@ function receiptFor(downtimeId) {
 }
 
 function reasonRef(code) {
-  return code && refs.reasons ? refs.reasons[code] : undefined;
+  return code && refs && refs.reasons ? refs.reasons[code] : undefined;
 }
 function reasonLabel(code) {
+  if (!refs) return code || ""; // справочник ещё не загружен: показываем код, экран перерисуется после /api/refs
   const r = reasonRef(code);
   // «Иная причина» — с группой: «Иная механическая причина»
   if (r && r.other) return r.title || r.short || "Иная причина";
   return r ? r.short || r.title || "Причина без названия" : code ? "Уточните причину" : "";
 }
 function personName(id) {
-  const p = (refs.people || []).find((x) => x.id === id);
+  const p = ((refs && refs.people) || []).find((x) => x.id === id);
   return p ? p.name : "—";
 }
 // ФИО мастера: введённое при приёме смены, иначе из списка
@@ -1055,7 +1227,7 @@ function personLabel(id, name) {
   return typeof name === "string" && name.trim() ? name.trim() : personName(id);
 }
 function crewTitle(id) {
-  const c = (refs.crews || []).find((x) => x.id === id);
+  const c = ((refs && refs.crews) || []).find((x) => x.id === id);
   return c ? c.title : id != null && id !== "" ? `Смена ${id}` : "—";
 }
 // ФИО полностью: три слова и больше, без инициалов с точками
@@ -1078,26 +1250,26 @@ function go(screen) {
   ui.screen = screen;
   if (isDraftScreen(screen)) ui.resume = null;
   render();
+  // Новый экран открывается с самого верха, а не с позиции кнопки, по которой нажали
+  window.scrollTo(0, 0);
 }
 
 function resetStopDrafts() {
   ui.rw = ui.wz = ui.fw = null;
   ui.resume = null;
 }
+// Черновик времени пуска для сценария «забыли отметить пуск» при сдаче смены
 function newRestart(view) {
   return { downtimeId: view.open.downtimeId, index: view.open.index,
-    startMs: nowMs(), createdMs: nowMs(), shiftStartMs: view.shift.startMs,
-    reason: view.open.reason, note: view.open.note, action: view.open.action ?? "",
-    reasonChanged: false, hadReason: !!view.open.reason };
+    startMs: nowMs(), createdMs: nowMs(), shiftStartMs: view.shift.startMs };
 }
 
 function isDraftScreen(screen) {
-  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "restartConfirm", "restartAction", "actionFix", "billet", "repair", "repairField"].includes(screen);
+  return ["reason", "manual", "manualCheck", "closeCheck", "forgotStop", "restartTime", "repair", "repairField"].includes(screen);
 }
 function cancelDraft() {
-  const from = ui.screen;
-  ui.wz = ui.mw = ui.rw = ui.fw = ui.af = ui.bl = ui.repair = ui.resume = null;
-  go(["actionFix", "billet"].includes(from) ? "detail" : "auto");
+  ui.wz = ui.mw = ui.rw = ui.fw = ui.repair = ui.resume = null;
+  go("auto");
 }
 
 // --- Экраны ---
@@ -1107,7 +1279,7 @@ function syncStopContext() {
     const context = `${current.shift.startMs}|${current.crew?.at || ""}|${current.closed}|${current.open?.downtimeId || ""}`;
     if (ui.stopContext && ui.stopContext !== context) {
       resetStopDrafts();
-      if (["reason", "confirmChange", "restartTime", "restartAction", "restartConfirm", "forgotStop"].includes(ui.screen) && !ui.repair) ui.screen = "auto";
+      if (["reason", "confirmChange", "restartTime", "forgotStop"].includes(ui.screen) && !ui.repair) ui.screen = "auto";
     }
     ui.stopContext = context;
   }
@@ -1121,10 +1293,10 @@ function render() {
     !!view?.open, needCrewSafe(view), $("main").querySelector("h1")?.textContent]));
   // На первом шаге причины выход уже есть: «Назад». Вторая кнопка лишняя
   const firstReasonStep = ui.screen === "reason" && ui.wz?.step === 1 && !ui.rw;
-  // На вопросе о состоянии стана выход уже есть: «На главный экран»
+  // На вопросе о состоянии стана выход уже есть: «Назад»
   const noCancel = firstReasonStep || ui.screen === "closeCheck";
   if (key && refs && serverState && isDraftScreen(ui.screen) && !noCancel) {
-    $("main").append(h("button", { class: "btn btn-flat cancel", onclick: cancelDraft },
+    $("main").append(h("button", { type: "button", class: "ps-btn ps-btn--ghost cancel", onclick: cancelDraft },
       ui.rw ? "Отменить оформление пуска" : "Отменить изменения"));
   }
   persistClient();
@@ -1140,9 +1312,12 @@ function renderScreen() {
   const view = buildView();
   if (!view) return renderLoading(main);
   switch (ui.screen) {
-    case "dismissConfirm": return fill(main, question("Убрать остановку вместе с причиной, пуском и браком? В учёт они не попадут"),
-      h("button", { class: "btn", onclick: () => go(ui.dismissBack || "auto") }, "Оставить запись"),
-      h("button", { class: "btn warn-btn", onclick: () => dismissRejected(ui.dismissPendingIds, true) }, "Убрать вместе с ответами"));
+    case "dismissConfirm": return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+      question("Убрать остановку вместе с причиной, пуском и браком?"),
+      h("div", { class: "ps-notice" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: "В учёт они не попадут." })),
+      h("div", { class: "ps-actions ps-actions--col" },
+        psButton("primary", "Оставить запись", () => go(ui.dismissBack || "auto")),
+        psButton("secondary", "Убрать вместе с ответами", () => dismissRejected(ui.dismissPendingIds, true)))));
     case "crew": return renderCrew(main, view);
     case "reason": return renderReasonWizard(main, view);
     case "confirmChange": return renderConfirmChange(main, view);
@@ -1151,12 +1326,8 @@ function renderScreen() {
     case "closeCheck": return renderCloseCheck(main, view);
     case "forgotStop": return renderForgotStop(main, view);
     case "restartTime": return renderRestartTime(main, view);
-    case "restartConfirm": return renderRestartConfirm(main, view);
-    case "restartAction": return renderRestartAction(main, view);
-    case "actionFix": return renderActionFix(main, view);
     case "recorded": return renderRecorded(main, view);
     case "shift": return renderShift(main, view);
-    case "billet": return renderBillet(main, view);
     case "closeConfirm": return renderCloseConfirm(main, view);
     case "closed": return renderClosed(main, view);
     case "contact": return renderContact(main, view);
@@ -1184,26 +1355,33 @@ const DEFAULT_CONTACTS = [
 function renderContact(main, view) {
   // Первая плитка звонит мастеру, который принял смену, — по телефону из раздела «Администратор»
   const master = view.crew && (refs.people || []).find((p) => p.id === view.crew.personId);
-  const masterTile = { title: master ? `Мастер смены · ${master.name}` : "Мастер смены", tel: (master && master.phone) || "" };
-  const list = [masterTile, ...((refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS.slice(1))];
-  const back = ui.contactBack && ui.contactBack !== "contact" ? ui.contactBack : "auto";
+  const masterTile = master ? { role: "Мастер смены", name: master.name, tel: master.phone || "" } : { name: "Мастер смены", tel: "" };
+  const list = [masterTile, ...((refs.settings && refs.settings.contacts) || DEFAULT_CONTACTS.slice(1)).map((c) => ({ name: c.title, tel: c.tel }))];
   const status = online && !queue.length ? "Связь с сервером есть, нажатия доходят."
     : online ? `Отправляются нажатия: ${queue.length}.`
     : `Нет связи с сервером. Нажатия сохранены на планшете${queue.length ? ` (${queue.length})` : ""} и уйдут сами, когда связь появится.`;
-  fill(main,
-    backBtn("Вернуться", () => go(back)),
+  const statusTone = online && !queue.length ? "ok" : "warn";
+  // Карточка звонка: мастер — «роль + имя», остальные — название из настроек. Номера нет — серая, без звонка
+  const card = (c) => {
+    const inside = [
+      h("span", { class: "ps-contact__icon" }, icon("phone", "ps-ico")),
+      h("span", { class: "ps-contact__text" },
+        c.role ? h("span", { class: "ps-contact__role", text: c.role }) : null,
+        h("span", { class: "ps-contact__name", text: c.name }),
+        h("span", { class: "ps-contact__phone", text: c.tel || "номер не задан" })),
+    ];
+    return c.tel
+      ? h("a", { class: "ps-contact", href: `tel:${c.tel.replace(/[^\d+]/g, "")}`, "aria-label": `Позвонить: ${c.role ? c.role + ", " : ""}${c.name}, ${c.tel}` }, ...inside)
+      : h("div", { class: "ps-contact", "aria-disabled": "true" }, ...inside);
+  };
+  fill(main, h("div", { class: "ps-flow" },
     question("Связаться"),
-    h("p", { class: "muted", text: status }),
-    h("div", { class: "tiles one" },
-      list.map((c) => c.tel
-        ? h("a", { class: "tile", href: `tel:${c.tel.replace(/[^\d+]/g, "")}` }, c.title, h("span", { class: "t-code", text: c.tel }))
-        : h("div", { class: "tile tile-off" }, c.title, h("span", { class: "t-code", text: "номер не задан" }))))
-  );
+    h("div", { class: "ps-notice", "data-tone": statusTone, role: "status" }, icon(statusTone === "ok" ? "tick" : online ? "alert" : "wifioff", "ps-ico"), h("span", { text: status })),
+    h("div", { class: "ps-contacts" }, list.map(card))));
 }
 
 // --- Раздел «Администратор»: время смен, мастера с телефонами, номера для «Связаться» ---
 // Две смены закрывают сутки без промежутков: конец одной — начало другой. Шаг — 30 минут, как у шкалы суток
-const HALF_HOURS = Array.from({ length: 48 }, (_, i) => `${two(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`);
 const PHONE_RE = /^\+?[0-9 ()\-]{5,24}$/;
 let adminReq = null;
 
@@ -1282,7 +1460,7 @@ async function sendMailTest(r) {
   render();
 }
 const hmMin = (v) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
-const fmtLen = (min) => (min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
+const fmtLen = (min) => fmtDurMin(min);
 function adminProblems(s) {
   const out = [];
   const [a, b] = s.schedule.shifts.map((x) => hmMin(x.start));
@@ -1320,7 +1498,7 @@ async function saveAdmin() {
   };
   try {
     const d = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ settings, refsVersion: a.refsVersion }) });
-    const keep = { mail: a.mail, mailVersion: a.mailVersion, smtpConfigured: a.smtpConfigured, envFallback: a.envFallback, mailDirty: a.mailDirty };
+    const keep = { mail: a.mail, mailVersion: a.mailVersion, smtpConfigured: a.smtpConfigured, envFallback: a.envFallback, mailDirty: a.mailDirty, section: a.section };
     ui.admin = { settings: adminDraft(d.settings), refsVersion: d.refsVersion, ...keep };
     if (mailOut) {
       try {
@@ -1328,6 +1506,8 @@ async function saveAdmin() {
         Object.assign(ui.admin, { mail: mailDraft(m.mail), mailVersion: m.mailVersion, envFallback: m.envFallback || 0, mailDirty: false });
       } catch (err) {
         if (err && err.status === 401) badKey();
+        ui.admin.dirty = true;
+        ui.admin.conflict = !!(err && err.status === 409);
         ui.admin.error = ["Настройки сохранены, а рассылка нет: " + ((err && err.data && err.data.message) || "нет связи с сервером. Повторите, когда связь появится.")];
         render();
         return;
@@ -1338,7 +1518,9 @@ async function saveAdmin() {
   } catch (err) {
     if (err && err.status === 401) badKey();
     a.saving = false;
-    a.error = [(err && err.data && err.data.message) || (err && err.status
+    // 409: версию настроек успели сменить с другого устройства — форму нужно обновить, правки не потеряны до этого момента
+    if (err && err.status === 409) { a.conflict = true; a.error = null; }
+    else a.error = [(err && err.status === 413 ? "Настроек слишком много: сократите списки и повторите." : err && err.data && err.data.message) || (err && err.status
       ? "Сервер не принял настройки."
       : "Нет связи с сервером. Настройки не сохранены — повторите, когда связь появится.")];
   }
@@ -1348,7 +1530,7 @@ async function saveAdmin() {
 const AI_EXAMPLES = ["Сколько стоял стан за эту неделю и почему?", "Какие причины простоев чаще всего в этом месяце?", "Сравни вчерашние сутки с позавчерашними", "Стан сейчас работает?"];
 const aiUi = { status: null, statusReq: false, log: [], text: "", busy: false, error: "" };
 function loadAiStatus() {
-  if (aiUi.statusReq || aiUi.status) return;
+  if (!key || !canAdmin || aiUi.statusReq || aiUi.status) return;
   aiUi.statusReq = true;
   api("/api/admin/ai/status")
     .then((d) => { aiUi.status = d; })
@@ -1382,113 +1564,172 @@ async function askAi(question) {
 function aiCard() {
   const st = aiUi.status;
   if (!st || st.unavailable) return null;
-  const input = h("textarea", { class: "ai-input", maxlength: "1000", rows: "3", "aria-label": "Вопрос о работе стана", placeholder: "Например: почему вчера стоял стан?" });
+  const input = h("textarea", { class: "ps-input ai-input", maxlength: "1000", rows: "3", "aria-label": "Вопрос о работе стана", placeholder: "Например: почему вчера стоял стан?" });
   input.value = aiUi.text;
   input.addEventListener("input", () => { aiUi.text = input.value; });
   // Enter отправляет вопрос, Shift+Enter — перенос строки (при наборе по-китайски/японски Enter не трогаем)
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); askAi(aiUi.text); }
   });
-  return h("section", { class: "adm-card ai-card", "aria-label": "Спросить ИИ о работе стана" },
-    h("h2", { text: "Спросить ИИ о работе стана" }),
-    st.configured === false ? h("p", { class: "adm-banner", role: "status", text: "ИИ-консультант не настроен на сервере" }) : null,
-    h("div", { class: "ai-log", role: "log", "aria-live": "polite" },
-      aiUi.log.map((m) => h("div", { class: "ai-msg ai-" + m.role },
-        h("span", { class: "ai-who", text: m.role === "user" ? "Вы" : "ИИ" }),
-        h("p", { class: "ai-text", text: m.content })))),
-    st.configured === false ? null : h("div", { class: "ai-examples", role: "group", "aria-label": "Примеры вопросов" },
-      AI_EXAMPLES.map((q) => h("button", { type: "button", class: "btn btn-flat adm-chip", disabled: aiUi.busy, onclick: () => askAi(q) }, q))),
-    aiUi.error ? h("p", { class: "error-text", role: "alert", text: aiUi.error }) : null,
-    st.configured === false ? null : input,
-    st.configured === false ? null : h("div", { class: "ai-actions" },
-      h("button", { type: "button", class: "btn primary", disabled: aiUi.busy, onclick: () => askAi(aiUi.text) }, aiUi.busy ? "Думаю…" : "Спросить"),
-      h("button", { type: "button", class: "btn btn-flat", disabled: aiUi.busy, onclick: () => { aiUi.log = []; aiUi.error = ""; aiUi.text = ""; render(); } }, "Новый разговор")));
+  const ready = st.configured !== false;
+  return h("section", { class: "ps-card ai-card", "aria-label": "Спросить ИИ о работе стана" },
+    !ready ? h("div", { class: "ps-notice", role: "status" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: "ИИ-консультант не настроен на сервере" })) : null,
+    h("div", { class: "ps-chat", role: "log", "aria-live": "polite" },
+      aiUi.log.length ? aiUi.log.map((m) => h("div", { class: "ps-msg ps-msg--" + (m.role === "user" ? "user" : "assistant") },
+        h("span", { class: "ps-msg__who", text: m.role === "user" ? "Вы" : "ИИ" }),
+        h("p", { class: "ps-msg__text", text: m.content })))
+        : (ready ? h("p", { class: "ps-field__hint", text: "Задайте вопрос о работе стана или выберите готовый." }) : null)),
+    !ready ? null : h("div", { class: "ps-chips", role: "group", "aria-label": "Примеры вопросов" },
+      AI_EXAMPLES.map((q) => h("button", { type: "button", class: "ps-chip", disabled: aiUi.busy, onclick: () => askAi(q) }, q))),
+    aiUi.error ? h("div", { class: "ps-notice", "data-tone": "stop", role: "alert" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: aiUi.error })) : null,
+    !ready ? null : input,
+    !ready ? null : h("div", { class: "ps-actions" },
+      psButton("primary", aiUi.busy ? "Думаю…" : "Спросить", () => askAi(aiUi.text), { disabled: aiUi.busy }),
+      psButton("ghost", "Новый разговор", () => { aiUi.log = []; aiUi.error = ""; aiUi.text = ""; render(); }, { disabled: aiUi.busy })));
 }
-// Отдельный экран ассистента: та же карточка, что раньше жила в «Администраторе»
+// Отдельный экран ассистента: карточка с лентой сообщений; заголовок у экрана, а не у карточки
 function renderAi(main) {
   if (!canAdmin) return go("auto");
   loadAiStatus();
   const card = aiCard();
-  fill(main, backBtn("На главный экран", () => go("auto")), question("Спросить ассистента"),
-    card || h("p", { class: "muted", text: "Ассистент сейчас недоступен." }));
+  fill(main, h("div", { class: "ps-flow ps-flow--chat" }, question("Спросить ассистента"),
+    card || h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: "Ассистент сейчас недоступен." }))));
   if (ui.aiFocus) {
     ui.aiFocus = false;
     const input = main.querySelector(".ai-input");
     if (input) input.focus();
   }
 }
+
+// Разделы «Администратора»: слева (от 1024 px), на узких экранах — строкой с прокруткой
+const ADMIN_SECTIONS = [["shifts", "Время смен", "clock"], ["masters", "Мастера смен", "helmet"], ["contacts", "Номера «Связаться»", "phone"], ["mail", "Рассылка на почту", "mail"]];
+const MAIL_WHAT_SHORT = { shift: "Смена", day: "Сутки", week: "Неделя" };
+const stepHalfHour = (value, dir) => {
+  const m = (hmMin(value) + dir * 30 + 1440) % 1440;
+  return `${two(Math.floor(m / 60))}:${two(m % 60)}`;
+};
+function scheduleProblem(shifts) {
+  const [a, b] = shifts.map((x) => hmMin(x.start));
+  const len = (b - a + 1440) % 1440;
+  return a === b ? "Смены не могут начинаться в одно время." : len < 60 || 1440 - len < 60 ? "Каждая смена должна длиться не меньше часа." : "";
+}
 function renderAdmin(main) {
   if (!canAdmin) return go("auto");
-  const back = ui.adminBack && ui.adminBack !== "admin" ? ui.adminBack : "auto";
-  const leave = () => {
-    if (ui.admin && ui.admin.dirty && !ui.admin.leaveArmed) {
-      ui.admin.leaveArmed = true;
-      return showToast("Изменения не сохранены. Нажмите «Вернуться» ещё раз, чтобы выйти без сохранения");
-    }
-    ui.admin = null;
-    go(back);
-  };
-  const head = [backBtn("Вернуться", leave), question("Администратор")];
   if (!ui.admin) loadAdmin();
   loadAiStatus();
   const a = ui.admin;
-  if (a.loading) return fill(main, ...head, h("p", { class: "muted", text: "Загружаем настройки…" }));
+  const head = screenHead("Настройки системы", "Администратор");
+  const shell = (...kids) => fill(main, h("div", { class: "ps-flow ps-admin" }, head, ...kids));
+  if (a.loading) return shell(h("p", { class: "ps-lead", text: "Загружаем настройки…" }));
   if (a.loadError) {
-    return fill(main, ...head, h("p", { class: "error-text", text: a.loadError }),
-      h("button", { class: "btn", onclick: () => { ui.admin = null; render(); } }, "Повторить"));
+    return shell(h("div", { class: "ps-notice", "data-tone": "stop", role: "alert" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: a.loadError })),
+      h("div", null, psButton("secondary", "Повторить", () => { ui.admin = null; render(); })));
   }
   const s = a.settings;
-  const touch = () => { a.dirty = true; a.leaveArmed = false; };
+  const sections = ADMIN_SECTIONS.filter(([id]) => id !== "mail" || a.mail || a.mailError);
+  const section = sections.some(([id]) => id === a.section) ? a.section : "shifts";
+
+  // Панель сохранения: появляется с первой правкой, обновляется без перерисовки экрана — иначе пропадёт курсор
+  const barText = h("span", { class: "ps-savebar__text" });
+  const cancelBtn = psButton("ghost", "Отменить", () => { ui.admin = null; render(); }, { lg: false });
+  const saveBtn = psButton("primary", "Сохранить", saveAdmin, { lg: false });
+  const refreshBtn = psButton("primary", "Обновить форму", () => { ui.admin = null; render(); }, { lg: false });
+  const bar = h("div", { class: "ps-savebar", role: "region", "aria-label": "Сохранение настроек" }, barText, cancelBtn, saveBtn, refreshBtn);
+  const paintBar = () => {
+    bar.hidden = !(a.dirty || a.conflict || a.saving);
+    barText.textContent = a.conflict ? "Настройки изменили на другом устройстве, обновите форму" : "Есть несохранённые изменения";
+    cancelBtn.hidden = !!a.conflict;
+    saveBtn.hidden = !!a.conflict;
+    saveBtn.disabled = !!a.saving;
+    saveBtn.textContent = a.saving ? "Сохраняем…" : "Сохранить";
+    refreshBtn.hidden = !a.conflict;
+  };
+  const touch = () => { a.dirty = true; paintBar(); };
+  paintBar();
+
   // Поля пишут прямо в черновик и не перерисовывают экран — иначе пропадёт курсор
   const txt = (value, attrs, set) => {
-    const el = h("input", { type: "text", autocomplete: "off", ...attrs });
+    const el = h("input", { type: "text", class: "ps-input", autocomplete: "off", ...attrs });
     el.value = value;
     el.addEventListener("input", () => { set(el.value); touch(); });
     return el;
   };
-  const sel = (value, label, options, set) => {
-    const el = h("select", { "aria-label": label }, options.map(([v, t]) => h("option", { value: v, text: t })));
-    el.value = value;
-    el.addEventListener("change", () => { set(el.value); touch(); render(); });
-    return el;
+  const field = (label, control, cls) => h("label", { class: "ps-field" + (cls ? " " + cls : "") }, h("span", { class: "ps-field__label", text: label }), control);
+  const remove = (label, onclick) => psButton("ghost", "Убрать", onclick, { lg: false, "aria-label": label });
+  const empty = (text) => h("p", { class: "ps-field__hint", text });
+
+  // --- Время смен: начало — кнопками ± с шагом 30 минут, конец считается сам
+  const shiftsCard = () => {
+    const [s1, s2] = s.schedule.shifts;
+    const outs = {}, ends = {}, lens = {};
+    const warn = fieldError();
+    const lenText = (from, to) => { const len = (hmMin(to) - hmMin(from) + 1440) % 1440; return len ? fmtLen(len) : ""; };
+    const paint = () => {
+      outs[1].textContent = s1.start; outs[2].textContent = s2.start;
+      ends[1].textContent = s2.start; ends[2].textContent = s1.start;
+      lens[1].textContent = lenText(s1.start, s2.start); lens[2].textContent = lenText(s2.start, s1.start);
+      const problem = scheduleProblem(s.schedule.shifts);
+      warn.textContent = problem;
+      warn.hidden = !problem;
+    };
+    const row = (sh, other) => {
+      const out = outs[sh.no] = h("output", { "aria-live": "polite", text: sh.start });
+      ends[sh.no] = h("b", { text: other.start });
+      lens[sh.no] = h("span", { class: "ps-field__hint" });
+      const move = (dir) => { sh.start = stepHalfHour(sh.start, dir); touch(); paint(); };
+      return h("div", { class: "ps-time" },
+        h("div", { class: "ps-time__name" }, icon(sh.no === 1 ? "sun" : "moon", "ps-ico"), h("strong", { text: `Смена ${sh.no}` }), lens[sh.no]),
+        h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Начало" }),
+          h("div", { class: "ps-stepper", role: "group", "aria-label": `Начало смены ${sh.no}` },
+            h("button", { type: "button", "aria-label": "Раньше на 30 минут", onclick: () => move(-1) }, "−"), out,
+            h("button", { type: "button", "aria-label": "Позже на 30 минут", onclick: () => move(1) }, "+"))),
+        h("div", { class: "ps-time__end" }, "конец ", ends[sh.no]));
+    };
+    const node = psCard("Время смен", "2 смены",
+      h("div", { class: "ps-rows" }, row(s1, s2), row(s2, s1)), warn,
+      h("p", { class: "ps-field__hint", text: "Конец одной смены — это начало другой: две смены закрывают сутки без промежутков. Время меняйте между сменами — по нему считаются отчёты. Шаг — 30 минут." }));
+    paint();
+    return node;
   };
-  const field = (label, control, cls) => h("label", { class: "adm-field" + (cls ? " " + cls : "") }, h("span", { text: label }), control);
-  const times = HALF_HOURS.map((t) => [t, t]);
 
-  const [s1, s2] = s.schedule.shifts;
-  const len1 = (hmMin(s2.start) - hmMin(s1.start) + 1440) % 1440;
-  const shiftRow = (sh, other, len) => h("div", { class: "adm-shift" },
-    h("div", { class: "adm-shift-name" }, icon(sh.no === 1 ? "sun" : "moon"),
-      h("strong", { text: `Смена ${sh.no}` }), h("span", { class: "muted", text: len ? fmtLen(len) : "" })),
-    field("Начало", sel(sh.start, `Смена ${sh.no}, начало`, times, (v) => { sh.start = v; })),
-    field("Конец", sel(other.start, `Смена ${sh.no}, конец`, times, (v) => { other.start = v; })));
-
-  const crewOptions = [["1", "Смена 1"], ["2", "Смена 2"]];
-  const personRow = (p) => h("div", { class: "adm-row" },
-    field("Фамилия, имя, отчество", txt(p.name, { maxlength: "120", autocapitalize: "words", spellcheck: "false" }, (v) => { p.name = v; }), "adm-grow"),
-    field("Смена", sel(p.crewId, "Смена мастера", crewOptions, (v) => { p.crewId = v; })),
+  // --- Мастера по сменам
+  // Перенос между сменами меняет только crewId: id мастера остаётся, и у принятой смены не пропадает его телефон
+  const crewSwitch = (p) => h("div", { class: "ps-field ps-person__crew" }, h("span", { class: "ps-field__label", text: "Смена" }),
+    h("div", { class: "ps-segmented", role: "group", "aria-label": `Смена мастера ${p.name}`.trim() },
+      ["1", "2"].map((no) => h("button", { type: "button", "data-crew-pick": no, "aria-pressed": String(p.crewId === no),
+        onclick: () => {
+          if (p.crewId === no) return;
+          p.crewId = no; touch(); render();
+          main.querySelector?.(`[data-crew="${no}"] [data-crew-pick="${no}"][aria-pressed="true"]`)?.focus();
+        } }, `Смена ${no}`))));
+  const personRow = (p) => h("div", { class: "ps-person" },
+    field("Фамилия, имя, отчество", txt(p.name, { maxlength: "120", autocapitalize: "words", spellcheck: "false", "data-role": "name" }, (v) => { p.name = v; }), "ps-person__name"),
     field("Телефон", txt(p.phone, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { p.phone = v; })),
-    h("button", { class: "btn btn-flat adm-del", "aria-label": `Убрать мастера ${p.name}`.trim(), onclick: () => {
-      s.people.splice(s.people.indexOf(p), 1); touch(); render();
-    } }, "Убрать"));
+    crewSwitch(p),
+    remove(`Убрать мастера ${p.name}`.trim(), () => { s.people.splice(s.people.indexOf(p), 1); touch(); render(); }));
   const crewGroup = (crewId) => {
     const own = s.people.filter((p) => p.crewId === crewId);
-    return h("div", { class: "adm-group" },
-      h("h3", { class: "adm-group-title", text: `Смена ${crewId}` }),
-      own.length ? own.map(personRow) : h("p", { class: "muted", text: "Мастеров нет." }),
-      h("button", { class: "btn adm-add", onclick: () => {
+    const start = (s.schedule.shifts.find((x) => String(x.no) === crewId) || {}).start;
+    return h("div", { class: "ps-group", "data-crew": crewId },
+      h("h3", { class: "ps-group__title", text: `Смена ${crewId}` + (start ? ` · с ${start}` : "") }),
+      own.length ? own.map(personRow) : empty("Мастеров нет."),
+      psButton("secondary", `Добавить мастера в смену ${crewId}`, () => {
         s.people.push({ id: null, name: "", crewId, phone: "" }); touch(); render();
-        const names = main.querySelectorAll(".adm-group")[Number(crewId) - 1]?.querySelectorAll('input[maxlength="120"]');
+        const names = main.querySelectorAll(`[data-crew="${crewId}"] input[data-role="name"]`);
         names?.[names.length - 1]?.focus();
-      } }, `Добавить мастера в смену ${crewId}`));
+      }, { lg: false }));
   };
-  const contactRow = (c) => h("div", { class: "adm-row" },
-    field("Кому звонить", txt(c.title, { maxlength: "60", placeholder: "Например: дежурный механик" }, (v) => { c.title = v; }), "adm-grow"),
-    field("Телефон", txt(c.tel, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { c.tel = v; })),
-    h("button", { class: "btn btn-flat adm-del", "aria-label": `Убрать номер ${c.title}`.trim(), onclick: () => {
-      s.contacts.splice(s.contacts.indexOf(c), 1); touch(); render();
-    } }, "Убрать"));
+  const mastersCard = () => psCard("Мастера смен", `${s.people.length}`, crewGroup("1"), crewGroup("2"));
 
+  // --- Номера для «Связаться»
+  const contactRow = (c) => h("div", { class: "ps-person" },
+    field("Подпись", txt(c.title, { maxlength: "60", placeholder: "Например: дежурный механик" }, (v) => { c.title = v; }), "ps-person__name"),
+    field("Телефон", txt(c.tel, { type: "tel", inputmode: "tel", maxlength: "24", placeholder: "+7 900 000-00-00" }, (v) => { c.tel = v; })),
+    remove(`Убрать номер ${c.title}`.trim(), () => { s.contacts.splice(s.contacts.indexOf(c), 1); touch(); render(); }));
+  const contactsCard = () => psCard("Номера для «Связаться»", "видят все устройства",
+    h("p", { class: "ps-field__hint", text: "Первая кнопка на экране «Связаться» сама звонит мастеру, который принял смену, — по его телефону из раздела «Мастера смен». Здесь — остальные номера." }),
+    s.contacts.length ? s.contacts.map(contactRow) : empty("Номеров нет."),
+    s.contacts.length < 12 ? psButton("secondary", "Добавить номер", () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); }, { lg: false }) : null);
 
   // --- Рассылка на почту
   const mailTouch = () => { a.mailDirty = true; touch(); };
@@ -1499,75 +1740,70 @@ function renderAdmin(main) {
     }
     mailTouch(); render();
   };
-  const sendRow = (r, x) => h("div", { class: "adm-send" },
-    h("div", { class: "adm-send-main" },
-      field("В", (() => {
-        const el = h("input", { type: "time", step: "60", required: true, "aria-label": "Время отправки, московское" });
-        el.value = x.time;
-        el.addEventListener("input", () => { x.time = el.value; mailTouch(); });
-        return el;
-      })()),
-      field("Что слать", sel(x.what, "Что слать", Object.entries(MAIL_WHAT_TITLE), (v) => { x.what = v; mailTouch(); }), "adm-grow")),
-    h("div", { class: "adm-days", role: "group", "aria-label": "Дни недели" },
-      MAIL_DAYS.map(([n, label]) => h("button", {
-        type: "button", class: "adm-day" + (x.days.includes(n) ? " is-on" : ""), "aria-pressed": x.days.includes(n) ? "true" : "false",
-        onclick: () => { x.days = x.days.includes(n) ? x.days.filter((d) => d !== n) : [...x.days, n].sort((p, q) => p - q); mailTouch(); render(); },
-      }, label))),
-    h("button", { type: "button", class: "btn btn-flat adm-del", "aria-label": "Убрать отправку", onclick: () => {
-      r.sends.splice(r.sends.indexOf(x), 1); mailTouch(); render();
-    } }, "Убрать"));
+  const sendRow = (r, x) => {
+    const time = h("input", { type: "time", class: "ps-input", step: "60", required: true, "aria-label": "Время отправки, московское" });
+    time.value = x.time;
+    time.addEventListener("input", () => { x.time = time.value; mailTouch(); });
+    const whatBtns = Object.keys(MAIL_WHAT_TITLE).map((id) => h("button", { type: "button", "aria-pressed": String(x.what === id), title: MAIL_WHAT_TITLE[id],
+      onclick: () => { x.what = id; whatBtns.forEach((b, i) => b.setAttribute("aria-pressed", String(Object.keys(MAIL_WHAT_TITLE)[i] === id))); mailTouch(); } }, MAIL_WHAT_SHORT[id]));
+    const dayBtns = MAIL_DAYS.map(([n, label]) => h("button", { type: "button", class: "ps-chip", "aria-pressed": String(x.days.includes(n)),
+      onclick: (e) => {
+        x.days = x.days.includes(n) ? x.days.filter((d) => d !== n) : [...x.days, n].sort((p, q) => p - q);
+        e.currentTarget.setAttribute("aria-pressed", String(x.days.includes(n)));
+        mailTouch();
+      } }, label));
+    return h("div", { class: "ps-send" },
+      h("div", { class: "ps-form-row" },
+        field("Время, московское", time),
+        h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Что слать" }), h("div", { class: "ps-segmented", role: "group", "aria-label": "Что слать" }, whatBtns))),
+      h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Дни недели" }), h("div", { class: "ps-chips ps-days", role: "group", "aria-label": "Дни недели" }, dayBtns)),
+      remove("Убрать отправку", () => { r.sends.splice(r.sends.indexOf(x), 1); mailTouch(); render(); }));
+  };
   const recipientCard = (r) => {
     const name = txt(r.name, { maxlength: "80", placeholder: "Например: Иванов И. И.", autocapitalize: "words" }, (v) => { r.name = v; mailTouch(); });
     const email = txt(r.email, { type: "email", inputmode: "email", maxlength: "120", placeholder: "master@example.ru", autocapitalize: "none", spellcheck: "false" }, (v) => { r.email = v; mailTouch(); });
-    const on = h("button", { type: "button", class: "adm-switch" + (r.enabled ? " is-on" : ""), role: "switch", "aria-checked": r.enabled ? "true" : "false",
-      onclick: () => { r.enabled = !r.enabled; mailTouch(); render(); } }, h("span", { class: "adm-switch-knob" }), h("span", { text: r.enabled ? "Включён" : "Выключен" }));
+    const switchText = h("span", { text: r.enabled ? "Включён" : "Выключен" });
+    const on = h("button", { type: "button", class: "ps-switch", role: "switch", "aria-checked": String(!!r.enabled),
+      onclick: (e) => { r.enabled = !r.enabled; e.currentTarget.setAttribute("aria-checked", String(r.enabled)); switchText.textContent = r.enabled ? "Включён" : "Выключен"; mailTouch(); } },
+    h("span", { class: "ps-switch__knob", "aria-hidden": "true" }), switchText);
     const t = r._test;
-    return h("div", { class: "adm-mail-card" + (r.enabled ? "" : " is-off") },
-      h("div", { class: "adm-row adm-mail-head" }, field("Имя", name, "adm-grow"), field("Адрес почты", email, "adm-grow"), on),
-      h("div", { class: "adm-sends" },
-        r.sends.length ? r.sends.map((x) => sendRow(r, x)) : h("p", { class: "muted", text: "Отправок нет: этому получателю ничего не придёт." }),
-        r.sends.length < 10 ? h("button", { type: "button", class: "btn adm-add", onclick: () => { r.sends.push({ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }); mailTouch(); render(); } }, "Добавить отправку") : null),
-      h("div", { class: "adm-quick", role: "group", "aria-label": "Быстрый выбор" },
-        MAIL_QUICK.map(([title, preset]) => h("button", { type: "button", class: "btn btn-flat adm-chip", onclick: () => addSends(r, preset) }, title))),
-      h("div", { class: "adm-mail-foot" },
-        h("button", { type: "button", class: "btn adm-add", disabled: !!(t && t.busy), onclick: () => sendMailTest(r) }, t && t.busy ? "Отправляем…" : "Отправить пробное письмо"),
-        r._confirmDel
-          ? h("div", { class: "adm-confirm", role: "alert" }, h("span", { text: "Удалить получателя?" }),
-            h("button", { type: "button", class: "btn adm-del", onclick: () => { a.mail.recipients.splice(a.mail.recipients.indexOf(r), 1); mailTouch(); render(); } }, "Да, удалить"),
-            h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = false; render(); } }, "Отмена"))
-          : h("button", { type: "button", class: "btn btn-flat adm-del", onclick: () => { r._confirmDel = true; render(); } }, "Удалить получателя")),
-      t && !t.busy && t.text ? h("p", { class: t.ok ? "adm-test-ok" : "error-text", role: "status", text: t.text }) : null);
+    return h("div", { class: "ps-subcard" },
+      h("div", { class: "ps-form-row" }, field("Имя", name), field("Адрес почты", email), on),
+      r.sends.length ? r.sends.map((x) => sendRow(r, x)) : empty("Отправок нет: этому получателю ничего не придёт."),
+      h("div", { class: "ps-chips", role: "group", "aria-label": "Быстрый выбор" },
+        MAIL_QUICK.map(([title, preset]) => h("button", { type: "button", class: "ps-chip", onclick: () => addSends(r, preset) }, title))),
+      h("div", { class: "ps-actions" },
+        r.sends.length < 10 ? psButton("secondary", "Добавить отправку", () => { r.sends.push({ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }); mailTouch(); render(); }, { lg: false }) : null,
+        psButton("secondary", t && t.busy ? "Отправляем…" : "Отправить пробное письмо", () => sendMailTest(r), { lg: false, disabled: !!(t && t.busy) })),
+      t && !t.busy && t.text ? h("div", { class: "ps-notice", "data-tone": t.ok ? "ok" : "stop", role: "status" }, icon(t.ok ? "tick" : "alert", "ps-ico"), h("span", { class: "ps-notice__body", text: t.text })) : null,
+      r._confirmDel
+        ? h("div", { class: "ps-notice", role: "alert" }, h("span", { class: "ps-notice__body", text: "Удалить получателя?" }),
+          psButton("primary", "Да, удалить", () => { a.mail.recipients.splice(a.mail.recipients.indexOf(r), 1); mailTouch(); render(); }, { lg: false }),
+          psButton("secondary", "Отмена", () => { r._confirmDel = false; render(); }, { lg: false }))
+        : h("div", null, psButton("ghost", "Удалить получателя", () => { r._confirmDel = true; render(); }, { lg: false })));
   };
-  const mailSection = a.mail ? h("section", { class: "adm-card", "aria-label": "Рассылка на почту" },
-    h("h2", { text: "Рассылка на почту" }),
-    a.smtpConfigured === false ? h("p", { class: "adm-banner", role: "status", text: "Отправка почты не настроена на сервере. Список можно править, но письма не уйдут." }) : null,
-    a.envFallback && !a.mail.recipients.length ? h("p", { class: "muted adm-note", text: `Пока список пуст, письма о смене уходят на адреса из настроек сервера (${a.envFallback}).` }) : null,
-    h("p", { class: "muted adm-note", text: "Время — московское. Письмо о смене приходит после её окончания: дневная заканчивается в 20:00, ночная в 08:00" }),
-    a.mail.recipients.length ? a.mail.recipients.map(recipientCard) : h("p", { class: "muted", text: "Получателей нет." }),
-    a.mail.recipients.length < 30 ? h("button", { type: "button", class: "btn adm-add", onclick: () => {
+  const mailCard = () => a.mail ? psCard("Рассылка на почту", "время московское",
+    a.smtpConfigured === false ? h("div", { class: "ps-notice", role: "status" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: "Отправка почты не настроена на сервере. Список можно править, но письма не уйдут." })) : null,
+    a.envFallback && !a.mail.recipients.length ? h("p", { class: "ps-field__hint", text: `Пока список пуст, письма о смене уходят на адреса из настроек сервера (${a.envFallback}).` }) : null,
+    h("p", { class: "ps-field__hint", text: "Письмо о смене приходит после её окончания: дневная заканчивается в 20:00, ночная в 08:00." }),
+    a.mail.recipients.length ? a.mail.recipients.map(recipientCard) : empty("Получателей нет."),
+    a.mail.recipients.length < 30 ? h("div", null, psButton("secondary", "Добавить получателя", () => {
       a.mail.recipients.push({ id: null, name: "", email: "", enabled: true, sends: [{ time: "08:05", what: "shift", days: [1, 2, 3, 4, 5, 6, 7] }] });
       mailTouch(); render();
-    } }, "Добавить получателя") : null) : (a.mailError ? h("p", { class: "error-text", text: a.mailError }) : null);
+    }, { lg: false })) : null)
+    : h("div", { class: "ps-notice", "data-tone": "stop", role: "alert" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: a.mailError || "" }));
 
-  fill(main, ...head,
-    h("p", { class: "muted", text: "Изменения вступают в силу после «Сохранить» — сразу на всех планшетах." }),
-    h("section", { class: "adm-card", "aria-label": "Время смен" },
-      h("h2", { text: "Время смен" }),
-      shiftRow(s1, s2, len1), shiftRow(s2, s1, len1 ? 1440 - len1 : 0),
-      h("p", { class: "muted adm-note", text: "Конец одной смены — это начало другой: две смены закрывают сутки без промежутков. Время меняйте между сменами — по нему считаются отчёты." })),
-    h("section", { class: "adm-card", "aria-label": "Мастера смен" },
-      h("h2", { text: "Мастера смен" }),
-      crewGroup("1"), crewGroup("2")),
-    h("section", { class: "adm-card", "aria-label": "Номера для «Связаться»" },
-      h("h2", { text: "Номера для «Связаться»" }),
-      h("p", { class: "muted adm-note", text: "Первая кнопка на экране «Связаться» сама звонит мастеру, который принял смену, — по его телефону выше. Здесь — остальные номера." }),
-      s.contacts.length ? s.contacts.map(contactRow) : h("p", { class: "muted", text: "Номеров нет." }),
-      s.contacts.length < 12 ? h("button", { class: "btn adm-add", onclick: () => { s.contacts.push({ title: "", tel: "" }); touch(); render(); } }, "Добавить номер") : null),
-    mailSection,
-    a.error ? h("div", { class: "adm-errors", role: "alert" }, a.error.map((t) => h("p", { class: "error-text", text: t }))) : null,
-    h("div", { class: "adm-actions" },
-      h("button", { class: "btn primary", disabled: a.saving, onclick: saveAdmin }, a.saving ? "Сохраняем…" : "Сохранить"),
-      a.dirty ? h("button", { class: "btn btn-flat", onclick: () => { ui.admin = null; render(); } }, "Отменить изменения") : null));
+  const nav = h("nav", { class: "ps-subnav", "aria-label": "Разделы настроек" }, sections.map(([id, label, ic]) =>
+    h("button", { type: "button", class: "ps-subnav__item", "aria-current": id === section ? "page" : null,
+      onclick: () => { a.section = id; render(); } }, icon(ic, "ps-ico"), h("span", { text: label }))));
+  const body = { shifts: shiftsCard, masters: mastersCard, contacts: contactsCard, mail: mailCard }[section]();
+  shell(h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "Изменения вступают в силу после «Сохранить» — сразу на всех планшетах." })),
+    h("div", { class: "ps-cols ps-cols--admin" }, nav,
+      h("div", { class: "ps-stack" }, body,
+        a.error ? h("div", { class: "ps-notice", "data-tone": "stop", role: "alert" }, icon("alert", "ps-ico"),
+          h("span", { class: "ps-notice__body" }, a.error.map((t) => h("span", { text: t })))) : null,
+        bar)));
 }
 
 // Рендер по таймерам/ответам сервера: не дёргать экран, пока рабочий печатает
@@ -1577,44 +1813,69 @@ function softRender() {
     renderTopbar();
     return;
   }
+  const main = $("main");
+  const sig = a && a !== document.body && main.contains(a) ? focusSignature(a, main) : null;
   render();
+  // render() пересобирает дочерние элементы main: клавиатурный фокус вернуть на тот же по смыслу элемент
+  if (sig && !a.isConnected && (!document.activeElement || document.activeElement === document.body)) {
+    const all = [...main.querySelectorAll(sig.tag)];
+    const target = all.filter((e) => focusKey(e) === sig.strict)[sig.nthStrict] || all.filter((e) => focusKey(e, true) === sig.loose)[sig.nthLoose];
+    if (target) target.focus({ preventScroll: true });
+  }
+}
+// Стабильный признак элемента: тег, id, data-атрибуты, роль, подпись и текст; nth — номер среди одинаковых
+function focusKey(el, loose = false) {
+  if (el.classList.contains("ds-row")) return JSON.stringify(["ds-row", el.dataset.start]);
+  const data = Object.keys(el.dataset).sort().map((k) => k + "=" + el.dataset[k]);
+  const base = [el.tagName, el.id, el.getAttribute("role") || "", el.className, data];
+  // loose — без подписи и текста: у кнопок с живым временем текст меняется между обновлениями
+  return JSON.stringify(loose ? base : [...base, el.getAttribute("aria-label") || "", (el.textContent || "").trim().slice(0, 80)]);
+}
+function focusSignature(el, main) {
+  const all = [...main.querySelectorAll(el.tagName)];
+  const nthOf = (loose) => all.filter((e) => focusKey(e, loose) === focusKey(el, loose)).indexOf(el);
+  return { tag: el.tagName, strict: focusKey(el), loose: focusKey(el, true), nthStrict: nthOf(false), nthLoose: nthOf(true) };
 }
 
 function renderKey(main) {
-  const input = h("input", { type: "password", autocomplete: "off", "aria-label": "Ключ устройства" });
-  fill(main,
-    h("h1", { class: "q", text: "Устройство не подключено" }),
-    h("p", { class: "muted", text: "Введите ключ устройства из письма мастера или откройте ссылку с ключом." }),
-    ui.keyError ? h("p", { class: "error-text", text: ui.keyError }) : null,
-    input,
-    h("button", {
-      class: "btn primary",
-      onclick: () => {
-        const v = input.value.trim();
-        if (!v) return;
-        key = v;
-        ui.keyError = null;
-        writeStore(STORE_KEY, v);
-        boot();
-      },
-    }, "Подключить")
-  );
+  const input = h("input", { type: "password", class: "ps-input", autocomplete: "off" });
+  const connect = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    if (v !== key) resetKeyScopedState();
+    key = v;
+    ui.keyError = null;
+    writeStore(STORE_KEY, v);
+    boot();
+  };
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    question("Устройство не подключено"),
+    h("p", { class: "ps-lead", text: "Введите ключ устройства из письма мастера или откройте ссылку с ключом." }),
+    ui.keyError ? h("div", { class: "ps-notice", "data-tone": "stop", role: "alert" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: ui.keyError })) : null,
+    h("section", { class: "ps-card" }, psField("Ключ устройства", input), psButton("primary", "Подключить", connect, { block: true }))));
 }
 
 function renderNoRefs(main) {
-  fill(main,
-    h("h1", { class: "q", text: "Нет данных" }),
-    h("p", { class: "muted", text: "На планшете ещё нет списка работников и причин простоя. Подключитесь к сети и повторите загрузку." }),
-    h("button", { class: "btn primary", onclick: () => { loadRefs().then((ok) => { if (ok) loadState(); else render(); }); } }, "Повторить")
-  );
+  const f = firstLoad.refs;
+  // Запрос ещё ждёт ответа: просто «Загружаем…», без сообщения об отсутствии связи и без «Повторить»
+  if (f.busy && !f.bad) return fill(main, h("div", { class: "ps-flow ps-flow--narrow", role: "status" },
+    question("Загружаем…"), h("p", { class: "ps-lead", text: "Получаем список работников и причин простоя." })));
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    question("Нет данных"),
+    h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "На планшете ещё нет списка работников и причин простоя. Подключитесь к сети и повторите загрузку." })),
+    psButton("primary", "Повторить", () => { loadRefs().then((ok) => { if (ok) loadState(); else render(); }); }, { disabled: f.busy })));
 }
 
 function renderLoading(main) {
-  fill(main,
-    question(loadingState ? "Получаем состояние стана…" : "Нужно первое подключение"),
-    h("p", { class: "muted", text: "На планшете ещё нет состояния стана. Подключитесь к сети и нажмите «Повторить». После этого можно будет работать без сети." }),
-    h("button", { class: "btn", disabled: loadingState, onclick: () => boot() }, "Повторить")
-  );
+  const f = firstLoad.state;
+  if (!f.bad) return fill(main, h("div", { class: "ps-flow ps-flow--narrow", role: "status" },
+    question("Загружаем…"), h("p", { class: "ps-lead", text: "Получаем состояние стана." })));
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    question("Нужно первое подключение"),
+    h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "На планшете ещё нет состояния стана. Подключитесь к сети и нажмите «Повторить». После этого можно будет работать без сети." })),
+    psButton("primary", "Повторить", () => boot(), { disabled: loadingState })));
 }
 
 // Приём смены: шаг 1 — бригада, шаг 2 — человек
@@ -1637,25 +1898,27 @@ function renderFio(main, view) {
   const fio = ui.fio;
   const fields = [["last", "Фамилия"], ["first", "Имя"], ["middle", "Отчество"]];
   const cap = (v) => String(v || "").trim().replace(/\s+/g, " ").replace(/(^|[ -])([\p{Script=Cyrillic}a-z])/gu, (m, p, c) => p + c.toUpperCase());
-  const error = h("p", { class: "error-text", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
+  const error = h("p", { class: "ps-field__error", text: "Впишите фамилию, имя и отчество полностью, без сокращений." });
   error.hidden = true;
-  const submit = h("button", { class: "btn primary", onclick: () => {
+  const submit = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", onclick: () => {
     const problem = fullNameError(fields.map(([k]) => fio[k] || ""));
     if (problem) { error.textContent = problem; error.hidden = false; return; }
     acceptShift(fio.crewId, fio.personId, fields.map(([k]) => cap(fio[k])).join(" "));
-  } }, "Принять смену");
+  } }, icon("tick", "ps-ico"), "Принять смену");
   const update = () => { const problem = fullNameError(fields.map(([k]) => fio[k] || "")); error.textContent = problem; error.hidden = !problem; submit.disabled = !!problem; };
   const inputs = fields.map(([k, label]) => {
-    const input = h("input", { type: "text", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "120" });
+    const input = h("input", { type: "text", class: "ps-input", id: `fio-${k}`, autocomplete: "off", autocapitalize: "words", spellcheck: "false", maxlength: "120" });
     input.value = fio[k] || "";
     input.addEventListener("input", () => { fio[k] = input.value; error.hidden = true; update(); persistClient(); });
-    return [h("label", { for: `fio-${k}`, text: label }), input];
+    return h("div", { class: "ps-field" }, h("label", { class: "ps-field__label", for: `fio-${k}`, text: label }), input);
   });
   update();
-  fill(main, backBtn("К списку мастеров", () => { ui.fio = null; render(); }),
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("К списку мастеров", () => { ui.fio = null; render(); }),
     question("Фамилия, имя и отчество мастера"),
-    h("p", { class: "muted", text: `${crewTitle(fio.crewId)} · ${periodLabel(view.shift)}. Полностью, как в документах: так мастер будет записан в приёме смены.` }),
-    ...inputs.flat(), error, submit);
+    h("section", { class: "ps-card" },
+      h("p", { class: "ps-field__hint", text: `${crewTitle(fio.crewId)} · ${periodLabel(view.shift)}. Полностью, как в документах: так мастер будет записан в приёме смены.` }),
+      ...inputs, error, submit)));
   if (!fio.last) main.querySelector("#fio-last")?.focus();
   else if (!fio.first) main.querySelector("#fio-first")?.focus();
 }
@@ -1666,6 +1929,16 @@ function crewHours(id) {
   return i < 0 ? "" : `${shifts[i].start}–${shifts[(i + 1) % shifts.length].start}`;
 }
 
+// Состояние стана на экране приёма смены: панель с таймером
+function stateNow(view) {
+  if (view.open) {
+    const since = view.open.since ?? view.open.startMs;
+    return statePanel({ running: false, since, subtitle: `Стоит с ${fmtSince(since, view.shift)}`, compact: true });
+  }
+  const since = Math.min(nowMs(), runningSince(view));
+  return statePanel({ running: true, since, subtitle: Number.isFinite(since) ? `Пущен в ${fmtClock(since)}` : null, compact: true });
+}
+
 function renderCrew(main, view) {
   if (ui.fio) return renderFio(main, view);
   const crews = refs.crews || [];
@@ -1674,29 +1947,32 @@ function renderCrew(main, view) {
   const kids = [];
   if (ui.confirmCrew) {
     const current = core.shiftOf(nowMs(), refs.settings.schedule);
-    return fill(main, question(`Сейчас идёт Смена ${current.shiftNo} (${fmtClock(current.startMs)}–${fmtClock(current.endMs)}). Принять Смену ${ui.confirmCrew}?`),
-      h("button", { class: "btn primary", onclick: () => { ui.crewId = ui.confirmCrew; ui.confirmCrew = null; render(); } }, "Принять выбранную смену"),
-      h("button", { class: "btn", onclick: () => { ui.confirmCrew = null; render(); } }, "Вернуться к выбору"));
+    return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+      question(`Сейчас идёт Смена ${current.shiftNo} (${fmtClock(current.startMs)}–${fmtClock(current.endMs)}). Принять Смену ${ui.confirmCrew}?`),
+      h("div", { class: "ps-actions" },
+        h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => { ui.crewId = ui.confirmCrew; ui.confirmCrew = null; render(); } }, "Принять выбранную смену"),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => { ui.confirmCrew = null; render(); } }, "Вернуться к выбору"))));
   }
   if (!chosen) {
-    if (ui.crewBack) kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
-    kids.push(board(view), stepLine(1, 2), question("Выберите вашу смену"),
-      h("p", { class: "muted", text: `Сейчас: ${periodLabel(view.shift)}` }));
-    kids.push(h("div", { class: "tiles" },
-      crews.map((c) => h("button", { class: "tile" + (String(c.id) === String(view.shift.shiftNo) ? " current-shift" : ""),
-        "aria-current": String(c.id) === String(view.shift.shiftNo) ? "true" : null,
-        onclick: () => {
-          if (String(c.id) !== String(core.shiftOf(nowMs(), refs.settings.schedule).shiftNo)) ui.confirmCrew = c.id;
-          else ui.crewId = c.id;
-          render();
-        } }, c.title, String(c.id) === String(view.shift.shiftNo) ? " · сейчас" : ""))
-    ));
-    kids.push(metrics());
+    if (ui.crewBack) kids.push(backBtn("Назад", () => { ui.crewBack = false; go("auto"); }));
+    kids.push(stepLine(1, 2), screenHead(`Сейчас: ${periodLabel(view.shift)}`, "Выберите вашу смену"));
+    kids.push(h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" },
+        psCard("Какая смена", null,
+          h("div", { class: "ps-choices", role: "radiogroup", "aria-label": "Смена" }, crews.map((c) => {
+            const now = String(c.id) === String(view.shift.shiftNo);
+            return choiceCard({ title: c.title, sub: `по расписанию ${crewHours(c.id)}${now ? " · сейчас" : ""}`, current: now, checked: false, onclick: () => {
+              if (String(c.id) !== String(core.shiftOf(nowMs(), refs.settings.schedule).shiftNo)) ui.confirmCrew = c.id;
+              else ui.crewId = c.id;
+              render();
+            } });
+          })))),
+      h("div", { class: "ps-stack" }, psCard("Стан сейчас", null, stateNow(view)))));
   } else {
     if (!single) {
       kids.push(backBtn("К выбору смены", () => { ui.crewId = null; render(); }));
     } else if (ui.crewBack) {
-      kids.push(backBtn("На главный экран", () => { ui.crewBack = false; go("auto"); }));
+      kids.push(backBtn("Назад", () => { ui.crewBack = false; go("auto"); }));
     }
     // У кого в списке только инициалы — ФИО дописывают при приёме
     const pick = (p) => {
@@ -1704,14 +1980,26 @@ function renderCrew(main, view) {
       ui.fio = { crewId: chosen, personId: p.id, last: p.name.trim().split(/\s+/)[0] || "", first: "", middle: "" };
       render();
     };
-    const tile = (p) => h("button", { class: "tile", onclick: () => pick(p) }, p.name);
     const own = (refs.people || []).filter((p) => p.crewId === chosen);
-    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2), question("Мастер, который принимает смену"),
-      h("p", { class: "muted", text: `${crewTitle(chosen)} · по расписанию ${crewHours(chosen)}` }),
-      h("div", { class: "tiles" }, own.map(tile)),
-      h("button", { class: "btn", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"));
+    // Мастер один — он и отмечен; иначе кнопка «Принять смену» ждёт выбора
+    const picked = own.find((p) => p.id === ui.pickPerson) || (own.length === 1 ? own[0] : null);
+    const accept = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", disabled: !picked,
+      onclick: () => picked && pick(picked) }, icon("tick", "ps-ico"), "Принять смену");
+    kids.push(stepLine(single ? 1 : 2, single ? 1 : 2),
+      screenHead(`${crewTitle(chosen)} · по расписанию ${crewHours(chosen)}`, "Кто принимает смену"));
+    kids.push(h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" },
+        psCard("Мастер, который принимает смену", null,
+          own.length ? h("div", { class: "ps-choices", role: "radiogroup", "aria-label": "Кто принимает смену" }, own.map((p) =>
+            choiceCard({ title: p.name, sub: fullName(p.name) ? "" : "ФИО допишете при приёме", checked: !!picked && picked.id === p.id,
+              onclick: () => { ui.pickPerson = p.id; render(); } }))) : h("p", { class: "ps-field__hint", text: "В списке этой смены пока никого нет." }),
+          h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => { ui.fio = { crewId: chosen, personId: null, last: "", first: "", middle: "" }; render(); } }, "Нет в списке — ввести ФИО"))),
+      h("div", { class: "ps-stack" },
+        renderHandoverCard(view.open || { handovers: view.handovers }),
+        psCard("Стан сейчас", null, stateNow(view)),
+        accept)));
   }
-  fill(main, ...kids);
+  fill(main, h("div", { class: "ps-flow" }, kids));
 }
 
 // Шкала суток: 48 получасовых ячеек текущих производственных суток (08:00–08:00).
@@ -1732,21 +2020,59 @@ function scaleFor(view) {
       t = sh.endMs;
     }
     const endOf = (s) => (s.open || s.endMs == null ? now : s.endMs);
-    const earlier = (serverState?.day?.segments || [])
+    const dayRaw = serverState?.day?.segments || [];
+    const earlier = dayRaw
       .filter((s) => s.startMs < shiftFrom)
-      .map((s) => ({ startMs: s.startMs, endMs: Math.min(endOf(s), shiftFrom), reason: s.reason ?? null }));
-    const current = view.segments.map((s) => ({ startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
-    if (view.open) current.push({ startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
+      .map((s) => ({ downtimeId: s.downtimeId, startMs: s.startMs, endMs: Math.min(endOf(s), shiftFrom), reason: s.reason ?? null }));
+    const current = view.segments.map((s) => ({ downtimeId: s.downtimeId, startMs: Math.max(s.startMs, shiftFrom), endMs: endOf(s), reason: s.reason ?? null }));
+    if (view.open) current.push({ downtimeId: view.open.downtimeId, startMs: Math.max(view.open.startMs, shiftFrom), endMs: now, reason: view.open.reason ?? null });
     const cells = dayCells([...earlier, ...current], { fromMs, toMs: fromMs + 24 * HOUR, nowMs: now, dataFromMs: view.dataFromMs, refs });
-    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, shifts: dayShifts, fmtClock, fmtDate: () => fmtDate(fromMs), icon });
+    const info = scaleDowntimes(view, dayRaw);
+    const mine = new Set(shiftDowntimes(view).map((d) => d.downtimeId));
+    return dayScale({ cells, nowMs: now, shiftFromMs: shiftFrom, shiftToMs: view.shift.endMs, shifts: dayShifts, fmtClock, fmtDate: () => fmtDate(fromMs), icon,
+      onCell: (cell) => cellDetails(view, info, mine, cell) });
   } catch (e) {
     console.error("Шкала суток:", e);
     return null;
   }
 }
+// Простои суток для подробностей шкалы: номер → начало, конец (null — идёт), причина последней части
+function scaleDowntimes(view, dayRaw) {
+  const info = new Map();
+  const add = (s, open) => {
+    if (!s.downtimeId) return;
+    const cur = info.get(s.downtimeId) || { startMs: Infinity, endMs: -Infinity, open: false, reason: null, index: -1 };
+    cur.startMs = Math.min(cur.startMs, s.startMs);
+    if (open || s.open || s.endMs == null) cur.open = true; else cur.endMs = Math.max(cur.endMs, s.endMs);
+    if ((s.index ?? 0) >= cur.index) { cur.index = s.index ?? 0; cur.reason = s.reason ?? null; }
+    info.set(s.downtimeId, cur);
+  };
+  for (const s of dayRaw) add(s, false);
+  for (const s of view.segments) add(s, false);
+  if (view.open) add({ downtimeId: view.open.downtimeId, startMs: view.open.since ?? view.open.startMs, index: view.open.index, reason: view.open.reason }, true);
+  return info;
+}
+// Подробности получаса: простои, которые его пересекают, и кнопки «Разобрать» / «Отметить простой здесь»
+function cellDetails(view, info, mine, cell) {
+  const items = [];
+  for (const id of cell.downtimes || []) {
+    const d = info.get(id);
+    if (!d) continue;
+    items.push(h("div", { class: "ds-detail" },
+      h("span", { class: "ds-detail__text", text: `${fmtClock(d.startMs)}–${d.open ? "сейчас" : fmtClock(d.endMs)} · ${reasonLabel(d.reason) || "Без причины"}` }),
+      mine.has(id) ? h("button", { type: "button", class: "ps-btn ps-btn--secondary ds-detail__btn", onclick: () => openDetail(id) }, "Разобрать") : null));
+  }
+  // Был ход работы, а простоя нет: забытую остановку можно отметить задним числом
+  if (!cell.future && (cell.ms?.work || 0) > 0 && cell.startMs >= view.shift.startMs) {
+    items.push(h("div", { class: "ds-detail" },
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ds-detail__btn", onclick: () => startManualWizard("scale", cell.startMs) }, "Отметить простой здесь")));
+  }
+  return items.length ? h("div", { class: "ds-details__list" }, items) : null;
+}
 // Главный экран: шкала слева (на узком экране — под кнопками), справа всё остальное
 function withScale(view, ...kids) {
-  return h("div", { class: "with-scale" }, scaleFor(view), h("div", { class: "with-scale__main" }, ...kids));
+  // Шкала в DOM после пульта: Tab доходит до «Стан встал» раньше шкалы; на экране она и так внизу (order: 2)
+  return h("div", { class: "with-scale" }, h("div", { class: "with-scale__main" }, ...kids), scaleFor(view));
 }
 
 // «Отчёт в Excel» подключается отдельно: если файл не загрузится, пульт работает как раньше
@@ -1759,16 +2085,21 @@ import("./report-ui.js").then((m) => {
 
 // Пульт стана (дизайн-система, вариант A): панель состояния с таймером и одна кнопка —
 // единственное действие, доступное сейчас. Стан работает — «Стан встал», стоит — «Стан пошёл»
-function millPanel({ running, since, subtitle, hint, onGo, onStop }) {
+function statePanel({ running, since, subtitle, compact = false, withReport = false }) {
   const start = Number.isFinite(since) ? since : nowMs();
+  return h("section", { class: "ps-state" + (compact ? " ps-state--compact" : ""), "data-state": running ? "run" : "stop", "aria-live": "polite" },
+    h("div", { class: "pult-state__top" },
+      h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
+      withReport ? reportMenu() : null),
+    h(compact ? "h2" : "h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
+    h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
+    subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null);
+}
+// below — блок между панелью и кнопкой (плитки причин, пока стан стоит)
+function millPanel({ running, since, subtitle, hint, onGo, onStop, below = null }) {
   return h("div", { class: "pult" },
-    h("section", { class: "ps-state", "data-state": running ? "run" : "stop", "aria-live": "polite" },
-      h("div", { class: "pult-state__top" },
-        h("div", { class: "ps-state__eyebrow" }, h("span", { class: "ps-dot", "data-live": true, "data-tone": running ? "run" : "stop" }), "Сейчас"),
-        reportMenu()),
-      h("h1", { class: "ps-state__title", text: running ? "Стан работает" : "Стан стоит" }),
-      h("div", { class: "ps-state__timer", dataset: { since: String(start) } }, fmtTimer(nowMs() - start)),
-      subtitle ? h("p", { class: "ps-state__meta", text: subtitle }) : null),
+    statePanel({ running, since, subtitle, withReport: true }),
+    below,
     h("button", { class: "ps-action ps-action--" + (running ? "stop" : "run"), type: "button", "data-act": running ? "stop" : "run",
       onclick: running ? onStop : onGo },
       h("span", { class: "ps-action__icon" }, icon(running ? "stopSq" : "play")),
@@ -1786,13 +2117,11 @@ function renderRun(main, view) {
       running: true,
       since: lastStart,
       subtitle: Number.isFinite(lastStart) ? `Пущен в ${fmtClock(lastStart)}` : null,
-      hint: "Нажмите сразу при остановке — время поставит система",
+      hint: "Нажмите сразу при остановке — время поставит система, причину укажете позже",
       onStop: () => {
-        const downtimeId = crypto.randomUUID();
-        send("stop", { downtimeId });
-        // Сразу предлагаем причину, но можно и позже
-        ui.wz = { mode: "current", downtimeId, step: 1, group: null, reason: null, note: "" };
-        go("reason");
+        // Одно нажатие: причину не спрашиваем, её указывают в разборе смены
+        ui.wz = null;
+        send("stop", { downtimeId: newId() });
       },
     }),
     shiftBlock(view)
@@ -1818,28 +2147,25 @@ const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 10
 const mins = (x) => (x === null || x === undefined ? "—" : fmtHM(x));
 // Подпись строки: время · остановки · доля · принят стоящим (у смен, принявших простой уже стоящим)
 function barValue(r, total) {
-  const parts = [fmtHM(r.minutes)];
+  const parts = [fmtDurMin(r.minutes)];
   if (r.stops || !r.carried) parts.push(`${r.stops} ост.`);
+  if (r.billetTn > 0) parts.push(`брак ${fmtTons(r.billetTn)}`);
   if (total) parts.push(`${Math.round((r.minutes / total) * 100)}%`);
   if (r.carried) parts.push(r.carried === 1 ? "принят стоящим" : `принят стоящим: ${r.carried}`);
   return parts.join(" · ");
 }
-// zone(r) — цвет полосы по зоне причины; fill — свой класс полосы (например, нейтральный для смен)
-function barList(title, rows, total, label, zone = null, fill = "") {
+// Полосы причин: zone(r) — зона причины (цвет полосы и квадрат у названия); без неё — нейтральная полоса
+function barList(title, rows, total, label, zone = null) {
   if (!rows || !rows.length) return null;
   const max = Math.max(...rows.map((r) => r.minutes), 1);
-  return h("div", { class: "m-block" },
-    h("div", { class: "m-title", text: title }),
-    rows.slice(0, 8).map((r) => h("div", { class: "m-bar" },
-      h("div", { class: "m-bar-head" },
-        h("span", { class: "m-bar-name" }, zone ? zoneMark(zone(r)) : null, label(r)),
-        h("span", { class: "m-bar-val", text: barValue(r, total) })),
-      h("div", { class: "m-track" }, r.byZone ? r.byZone.filter((z) => z.minutes > 0).map((z) =>
-        h("div", { class: "m-fill z-" + z.zone, style: `width:${z.minutes / max * 100}%`, title: `${z.minutes} мин` }))
-        : h("div", { class: "m-fill" + (zone ? " z-" + zone(r) : fill ? " " + fill : ""), style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` })))));
-}
-function zoneMark(zone) {
-  return h("span", { class: "reason-zone-mark reason-zone-" + zone, "aria-hidden": "true" });
+  return psCard(title, null, h("div", { class: "ps-bars" },
+    rows.slice(0, 8).map((r) => h("div", { class: "ps-bar" },
+      h("div", { class: "ps-bar__head" },
+        h("span", { class: "ps-bar__name" }, zone ? h("span", { class: "ps-swatch", "data-zone": zone(r), "aria-hidden": "true" }) : null, h("span", { text: label(r) })),
+        h("span", { class: "ps-bar__val", text: barValue(r, total) })),
+      h("div", { class: "ps-bar__track" }, r.byZone ? r.byZone.filter((z) => z.minutes > 0).map((z) =>
+        h("div", { class: "ps-bar__fill", "data-zone": z.zone, style: `width:${z.minutes / max * 100}%`, title: fmtDurMin(z.minutes) }))
+        : h("div", { class: "ps-bar__fill", "data-zone": zone ? zone(r) : "neutral", style: `width:${Math.max(2, Math.round((r.minutes / max) * 100))}%` }))))));
 }
 // Кольцо «работа и простой»: доли зон теми же цветами, что шкала суток
 function zoneDonut(st) {
@@ -1849,137 +2175,155 @@ function zoneDonut(st) {
     return { name: names[zone], minutes: row ? row.minutes : 0, cls: "z-" + zone };
   }).filter((r) => r.minutes > 0);
   if (!rows.length) return null;
-  return h("div", { class: "m-block" },
-    h("div", { class: "m-title", text: "Работа и простой по видам" }),
-    donut(rows, "за период"));
+  return psCard("Работа и простой по видам", null, donut(rows, "за период"));
 }
 function zoneMetrics(st) {
   const labels = { work: "Работа", plan: "Плановый простой",
     unplanned: "Внеплановый простой", failure: "Аварийный простой" };
-  return h("section", { class: "m-block zone-metrics", "aria-label": "Простой по зонам" },
-    h("div", { class: "m-title", text: "Простой по зонам" }),
+  return psCard("Простой по зонам", null, h("div", { class: "ps-zrows" },
     Object.entries(labels).map(([zone, label]) => {
       const row = (st.byZone || []).find((item) => item.zone === zone);
-      return h("div", { class: "zone-metric-row" },
-        h("span", { class: "zone-metric-name" }, zoneMark(zone), label),
-        h("span", { class: "zone-metric-value",
-          text: row ? row.minutes + " мин · " + row.stops + " ост. · " + pct(row.share) : "—" }));
-    }),
-    h("p", { class: "hint", text: "Доля — от времени учёта за выбранный период. Остановка со сменой зоны учитывается в каждой из этих зон." }));
+      return h("div", { class: "ps-zrow" },
+        h("span", { class: "ps-zrow__name" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), h("span", { text: label })),
+        h("span", { class: "ps-zrow__val", text: row ? fmtDurMin(row.minutes) + " · " + row.stops + " ост. · " + pct(row.share) : "—" }));
+    })),
+  h("p", { class: "ps-field__hint", text: "Доля — от времени учёта за выбранный период. Остановка со сменой зоны учитывается в каждой из этих зон." }));
 }
-function metrics() {
+// Показатели (вариант «Диспетчерская»): период, плитки, полосы причин. Цифры — из /api/stats, здесь они не пересчитываются
+function metrics(view) {
   const period = ui.statsPeriod || "shift";
   loadStats(period);
   const c = (ui.stats || {})[period] || {};
   const st = c.data;
-  const tabs = h("div", { class: "m-tabs" },
-    PERIODS.map(([id, name]) => h("button", {
-      class: "m-tab" + (id === period ? " on" : ""),
-      onclick: () => { ui.statsPeriod = id; render(); },
-    }, name)));
+  const tabs = h("div", { class: "ps-segmented ps-period", role: "group", "aria-label": "Период" },
+    PERIODS.map(([id, name]) => h("button", { type: "button", "aria-pressed": String(id === period),
+      onclick: () => { ui.statsPeriod = id; render(); } }, name)));
+  const stopped = !!view.open;
+  const state = h("div", { class: "ps-notice", "data-tone": stopped ? "stop" : "ok", role: "status" }, icon(stopped ? "alert" : "tick", "ps-ico"),
+    h("span", { class: "ps-notice__body", text: stopped ? `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}` : "Стан работает" }));
+  const head = screenHead(c.label || periodLabel(view.shift), "Показатели стана", reportMenu(), "ps-head--stats");
+  const top = [head, h("div", { class: "ps-toolbar" }, tabs, state)];
   if (!st) {
-    return h("div", { class: "metrics" }, h("div", { class: "m-head", text: "Работа стана" }), tabs,
-      h("p", { class: "muted", text: c.error ? "Нет связи с сервером. Показатели появятся, когда связь вернётся." : "Считаем…" }));
+    return h("div", { class: "ps-flow ps-stats" }, ...top,
+      h("div", { class: "ps-notice", "data-tone": c.error ? "stop" : "info", role: "status" }, icon(c.error ? "alert" : "info", "ps-ico"),
+        h("span", { class: "ps-notice__body", text: c.error ? "Нет связи с сервером. Показатели появятся, когда связь вернётся." : "Считаем…" })));
   }
   if (st.noData) {
-    return h("div", { class: "metrics" }, h("div", { class: "m-head", text: "Работа стана" }), tabs,
-      h("p", { class: "muted", text: "За этот период записей ещё нет." }));
+    return h("div", { class: "ps-flow ps-stats" }, ...top,
+      h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: "За этот период записей ещё нет." })));
   }
-  const kpi = (v, t, cls = "") => h("div", { class: "board-stat " + cls }, h("span", { class: "v", text: v }), t);
+  const kpi = (v, t, tone = "") => h("div", { class: "ps-kpi", "data-tone": tone || null },
+    h("span", { class: "ps-kpi__label", text: t }), h("span", { class: "ps-kpi__value", text: v }));
   const q = st.quality || {};
   const warn = [];
   if (q.noReason) warn.push(`без причины: ${q.noReason}`);
   if (q.noAction) warn.push(`не указано, что сделали: ${q.noAction}`);
+  if (q.noBillet) warn.push(`не указан брак: ${q.noBillet}`);
   if (q.otherShare > 0.1) warn.push(`«иная причина» — ${pct(q.otherShare)} простоя, стоит дополнить список причин`);
   const crewName = (id) => (id ? crewTitle(id) : "Смена не указана");
-  return h("div", { class: "metrics" },
-    h("div", { class: "m-head", text: "Работа стана" }),
-    tabs,
-    zoneMetrics(st),
-    barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? reasonLabel(r.reason) : "Без причины"),
-      (r) => zoneOf(r.reason, refs)),
-    h("div", { class: "board-stats m-kpi" },
-      kpi(pct(st.availability), "доступность", st.availability !== null && st.availability < 0.85 ? "bad" : "good"),
-      kpi(mins(st.workMin), "работа", "good"),
-      kpi(mins(st.downMin), "простой", "bad"),
-      kpi(String(st.stops), "остановок"),
-      kpi(mins(st.plannedMin), "плановые"),
-      kpi(mins(st.unplannedMin + st.shortMin), "внеплановые", "bad"),
-      kpi(mins(st.avgStopMin), "средний простой"),
-      kpi(mins(st.mtbfMin), "работа между отказами"),
-      kpi(mins(st.mttrMin), "время на ремонт")),
-    st.longest ? h("p", { class: "muted", text: `Самый долгий простой: ${fmtHM(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` }) : null,
-    warn.length ? h("div", { class: "banner-warn", text: "Проверить: " + warn.join("; ") }) : null,
-    zoneDonut(st),
-    barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
-    st.byDay && st.byDay.length > 1 ? h("div", { class: "m-block" },
-      h("div", { class: "m-title", text: "По суткам: работа и простой, часы" }),
-      dayChart(st.byDay),
-      h("div", { class: "chart-legend" },
-        h("span", { class: "lg work", text: "работа" }), h("span", { class: "lg down", text: "простой" }), h("span", { class: "lg nodata", text: "нет данных" }))) : null,
-    h("p", { class: "hint", text: "Доступность — доля работы во времени без плановых остановок. «Работа между отказами» и «время на ремонт» считаются по внеплановым простоям." })
-  );
+  return h("div", { class: "ps-flow ps-stats" }, ...top,
+    h("div", { class: "ps-kpis ps-kpis--row" },
+      kpi(pct(st.availability), "Доступность", st.availability !== null && st.availability < 0.85 ? "bad" : "good"),
+      kpi(mins(st.workMin), "Работа", "good"),
+      kpi(mins(st.downMin), "Простой", "bad"),
+      kpi(String(st.stops), "Остановок"),
+      // Брак — только заготовка, испорченная при простоях (в тоннах); не указан ни разу — прочерк
+      h("div", { class: "ps-kpi", "data-kind": "billet" },
+        h("span", { class: "ps-kpi__label", text: "Брак, тн" }),
+        h("span", { class: "ps-kpi__value", text: st.billetTn == null ? "—" : fmtTons(st.billetTn) }))),
+    h("div", { class: "ps-kpis ps-kpis--auto" },
+      kpi(mins(st.plannedMin), "Плановые"),
+      kpi(mins(st.unplannedMin + st.shortMin), "Внеплановые", "bad"),
+      kpi(mins(st.avgStopMin), "Средний простой"),
+      kpi(mins(st.mtbfMin), "Работа между отказами"),
+      kpi(mins(st.mttrMin), "Время на ремонт")),
+    warn.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"), h("span", { class: "ps-notice__body", text: "Проверить: " + warn.join("; ") })) : null,
+    h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" },
+        barList("Причины простоя", st.byReason, st.downMin, (r) => (r.reason ? reasonLabel(r.reason) : "Без причины"),
+          (r) => zoneOf(r.reason, refs)),
+        barList("По сменам", st.byCrew, st.downMin, (r) => crewName(r.crewId)),
+        st.longest ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("clock", "ps-ico"),
+          h("span", { class: "ps-notice__body", text: `Самый долгий простой: ${fmtDurMin(st.longest.minutes)}, ${reasonLabel(st.longest.reason) || "без причины"}, с ${fmtClock(st.longest.startMs)} ${fmtDate(st.longest.startMs)}` })) : null),
+      h("div", { class: "ps-stack" },
+        zoneMetrics(st),
+        zoneDonut(st),
+        st.byDay && st.byDay.length > 1 ? psCard("По суткам: работа и простой, часы", null, dayChart(st.byDay),
+          h("div", { class: "chart-legend" },
+            h("span", { class: "lg work", text: "работа" }), h("span", { class: "lg down", text: "простой" }), h("span", { class: "lg nodata", text: "нет данных" }))) : null)),
+    h("p", { class: "ps-field__hint", text: "Доступность — доля работы во времени без плановых остановок. «Работа между отказами» и «время на ремонт» считаются по внеплановым простоям." }));
 }
 
 // Блок смены: кто принял, время смены, остаток, закрытие. Одинаков при работающем и стоящем стане
+// Карточка смены на пульте: мастер, сколько осталось, что нужно дописать, «Сдать смену»
 function shiftBlock(view) {
   const c = view.crew;
-  let downtimeHelp = "Посмотреть или исправить простои за смену";
+  let stopsLine = "";
   try {
     const sum = shiftSummary(view);
     const n = sum.stops;
-    const downMin = sum.downMinutes;
-    downtimeHelp = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(downMin)} · посмотреть или исправить` : "Простоев не было";
+    stopsLine = n ? `${n} ${plural(n, "простой", "простоя", "простоев")} · ${fmtDurMin(sum.downMinutes)}` : "Простоев не было";
   } catch { /* Сводка не должна мешать управлению станом. */ }
-  const action = (name, title, help, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { class: "action-ico" }, icon(name)),
-    h("span", { class: "action-copy" }, h("span", { text: title }), h("span", { class: "action-help", text: help })), icon("chevron"));
+  // Закрытые простои, где не указано «что сделали»: первый открывается кнопкой «Заполнить»
+  let missing = [];
+  try {
+    missing = [...new Map(handoverGaps(view).filter((s) => s.missing.includes("что сделали")).map((s) => [s.downtimeId, s])).values()];
+  } catch { /* то же */ }
+  let unreasoned = [];
+  try { unreasoned = noReasonList(view); } catch { /* то же */ }
+  const { startMs, endMs } = view.shift;
+  const pct = Math.max(0, Math.min(100, ((nowMs() - startMs) / (endMs - startMs)) * 100));
   return h("section", { class: "shift-block", "aria-label": "Ваша смена" },
-    h("div", { class: "shift-card" },
-    h("div", { class: "shift-person" },
-      h("div", { class: "shift-avatar" }, icon("helmet")),
-      h("div", { class: "shift-person-copy" },
-      c ? h("p", { class: "muted", text: "Мастер смены" }) : null,
-      h("h2", { text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
-      c ? h("p", { class: "muted", text: `Смену принял в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
-      c ? h("p", null, "На смене ", h("strong", { dataset: { since: String(core.toMs(c.at)), fmt: "dur" } }, fmtDurMin((nowMs() - core.toMs(c.at)) / 60000))) : null)),
-    h("div", { class: "shift-time" },
-      icon("clock"),
-      h("span", { text: `${fmtClock(view.shift.startMs)}–${fmtClock(view.shift.endMs)} · МСК` }),
-      h("span", { class: "shift-remaining" }, "До конца ", h("strong", { dataset: { until: String(view.shift.endMs) } }, fmtDurMin((view.shift.endMs - nowMs()) / 60000))), icon("chevron"))),
-    ui.resume ? action("info", "Продолжить заполнение", "Ответы предыдущего шага сохранены", () => go(ui.resume)) : null,
-    action("check", "Закрыть смену", "Проверить состояние стана и закрыть смену", () => { ui.closeReceipt = null; go("closeCheck"); }),
-    action("bars", "Простои за смену", downtimeHelp, () => go("shift")),
-    action("chart", "Показатели стана", "Работа и простои за смену, сутки и месяц", () => go("stats"))
-  );
+    h("div", { class: "ps-card ps-shift" },
+      h("div", { class: "ps-shift__who" },
+        h("span", { class: "ps-avatar", "aria-hidden": "true", text: c ? initials(personLabel(c.personId, c.personName)) : "—" }),
+        h("div", { class: "ps-shift__text" },
+          h("div", { class: "ps-overline", text: "Мастер смены" }),
+          h("h2", { class: "ps-shift__name", text: c ? personLabel(c.personId, c.personName) : "Смена не принята" }),
+          c ? h("div", { class: "ps-shift__meta", text: `Принял смену в ${fmtClock(core.toMs(c.at))} · ${crewTitle(c.crewId)} · ${periodLabel(view.shift).split(" ")[0].toLowerCase()}` }) : null,
+          stopsLine ? h("div", { class: "ps-shift__meta", text: stopsLine }) : null)),
+      h("div", { class: "ps-progress" },
+        h("div", { class: "ps-progress__row" },
+          h("span", { text: `${fmtClock(startMs)} – ${fmtClock(endMs)} · МСК` }),
+          h("span", null, "до конца ", h("b", { dataset: { until: String(endMs) } }, fmtDurMin((endMs - nowMs()) / 60000)))),
+        h("div", { class: "ps-progress__track" }, h("div", { class: "ps-progress__fill", dataset: { from: String(startMs), to: String(endMs) }, style: `width: ${pct.toFixed(1)}%` }))),
+      missing.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+        h("span", { class: "ps-notice__body", text: `${missing.length} ${plural(missing.length, "простой", "простоя", "простоев")} без «что сделали»` }),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => openDetail(missing[0].downtimeId, missing[0].index) }, "Заполнить")) : null,
+      unreasoned.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+        h("span", { class: "ps-notice__body", text: `Без причины: ${unreasoned.length}` }),
+        h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => go("shift") }, "Разобрать")) : null,
+      ui.resume ? h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--block", onclick: () => go(ui.resume) }, "Продолжить заполнение: ответы предыдущего шага сохранены") : null,
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg ps-btn--block", onclick: () => { ui.closeReceipt = null; go("closeCheck"); } },
+        icon("clip", "ps-ico"), "Сдать смену")));
 }
 
 // Экран «Показатели стана»: табло и метрики за период, доступен в любой момент
 function renderStats(main, view) {
-  fill(main, backBtn("На главный экран", () => go("auto")), board(view), metrics());
+  fill(main, metrics(view));
 }
 
-// Ключ простоя в пределах смены: черновик «что сделали по ремонту» относится к своему простою и своей смене
+// Ключ простоя (или работающего стана) в пределах смены: черновик «что сделали по ремонту» относится к своему простою и своей смене
 function stopShiftKey(view) {
-  return `${view.open.downtimeId}|${view.shift.day}|${view.shift.shiftNo}`;
+  return `${view.open ? view.open.downtimeId : "run"}|${view.shift.day}|${view.shift.shiftNo}`;
 }
 
 // Что передали прошлые смены по ремонту: текст сдачи смены или пусто
 function handoverText(item) {
   return typeof item?.action === "string" ? item.action.trim() : "";
 }
-// Карточка «Ремонт по сменам»: три последние передачи, новая сверху. Только для чтения
+// Карточка «Передали по ремонту»: три последние передачи, новая сверху. Только для чтения
 function renderHandoverCard(open) {
   const list = (open.handovers || []).slice(-3).reverse();
   if (!list.length) return null;
-  return h("div", { class: "card" },
-    h("div", { class: "card-title", text: "Ремонт по сменам" }),
+  return psCard("Передали по ремонту", list.length > 1 ? `последние ${list.length}` : "",
     list.map((x) => {
       const at = core.toMs(x.at);
       const text = handoverText(x);
-      return h("div", null,
-        h("div", { class: "card-line", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` }),
-        h("details", { class: "handover-preview" }, h("summary", { class: "card-note note-preview", text: text ? `«${text}»` : "без записи" }), h("p", { class: "card-note", text: text || "без записи" })));
+      return h("div", { class: "ps-notice", "data-tone": "info" }, icon("wrench", "ps-ico"),
+        h("div", { class: "ps-notice__body" },
+          h("span", { class: "ps-notice__line", text: text ? `«${text}»` : "без записи" }),
+          h("span", { class: "ps-field__hint", text: `${crewTitle(x.crewId)} · ${personLabel(x.personId, x.personName)} · передал ${fmtDate(at)} в ${fmtClock(at)}` })));
     }));
 }
 
@@ -1988,49 +2332,93 @@ function renderStop(main, view) {
   const open = view.open;
   const since = open.since ?? open.startMs; // начало всего простоя, не текущего отрезка
   const cur = open.reason;
-
+  const askReason = () => {
+    if (!(ui.wz && ui.wz.mode === "current" && ui.wz.downtimeId === open.downtimeId)) {
+      ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
+    }
+    go("reason");
+  };
+  // Причины ещё нет — под панелью состояния текст и небольшая кнопка (на месте прежних плиток)
+  const pick = cur ? null : h("section", { class: "ps-pick", "aria-label": "Причина остановки" },
+    h("p", { class: "ps-lead", text: `Стан стоит с ${fmtSince(since, view.shift)}. Причину укажете в разборе смены` }),
+    h("div", { class: "ps-actions" }, psButton("secondary", "Указать причину сейчас", askReason, { lg: false })));
   const left = h("div", null,
     millPanel({
       running: false,
       since,
       subtitle: `Стоит с ${fmtSince(since, view.shift)}`,
+      below: pick,
       hint: "Время пуска поставит система",
+      // Одно нажатие: пуск записывается сразу, причина и «что сделали» — в разборе смены
       onGo: () => {
-        if (reusableRestart(ui.rw, view, nowMs()) && !ui.rw.thenClose) {
-          return go(ui.wz?.mode === "restart" ? "reason" : ui.rw.route ? "restartAction" : "restartConfirm");
-        }
         ui.wz = null;
-        ui.rw = newRestart(view);
-        if (open.reason) go("restartConfirm");
-        else startRestartReasonWizard();
+        ui.rw = null;
+        send("start", { downtimeId: open.downtimeId });
+        showToast("Записано. Причину и что сделали — в разборе смены");
+        go("auto");
       },
     })
   );
 
   let card;
   if (cur) {
-    card = h("div", { class: "card" },
-      h("div", { class: "card-title", text: reasonLabel(cur) }),
-      open.note ? h("div", { class: "card-note note-preview", text: `«${open.note}»`, title: open.note }) : null,
-      h("button", { class: "btn btn-flat", onclick: () => openDetail(open.downtimeId) }, "Открыть полную запись"),
-      h("button", { class: "btn", onclick: () => go("confirmChange") }, "Изменить")
+    card = h("section", { class: "ps-card" },
+      h("div", { class: "ps-overline", text: "Причина простоя" }),
+      h("h2", { class: "ps-card__title", text: reasonLabel(cur) }),
+      open.note ? h("p", { class: "ps-lead ps-note-preview", text: `«${open.note}»`, title: open.note }) : null,
+      h("div", { class: "ps-actions" },
+        psButton("secondary", "Открыть полную запись", () => openDetail(open.downtimeId), { lg: false }),
+        psButton("secondary", "Изменить", () => go("confirmChange"), { lg: false }))
     );
   } else {
-    card = h("div", null,
-      h("div", { class: "card none" },
-        h("div", { class: "card-title", text: "Причина не указана" })
-      ),
-      h("button", {
-        class: "btn warn-btn",
-        onclick: () => {
-          ui.wz = { mode: "current", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
-          go("reason");
-        },
-      }, "Указать причину")
-    );
+    card = null;
   }
 
   fill(main, withScale(view, h("div", { class: "stop-grid" }, left, h("div", null, card, renderHandoverCard(open))), shiftBlock(view)));
+}
+
+// Минуты простоя по зонам за смену: те же отрезки, что в сводке; округляет ядро (apportionMinutes)
+function shiftZoneMinutes(view, downMin) {
+  const shift = view.shift;
+  const ms = { plan: 0, unplanned: 0, failure: 0 };
+  const add = (reason, from, to) => {
+    const a = Math.max(from, shift.startMs);
+    const b = Math.min(to, shift.endMs, nowMs());
+    if (b > a) ms[zoneOf(reason, refs)] += b - a;
+  };
+  for (const s of view.segments) add(s.reason, s.startMs, s.open || s.endMs === null ? nowMs() : s.endMs);
+  if (view.open) add(view.open.reason, view.open.startMs, nowMs());
+  const keys = ["plan", "unplanned", "failure"];
+  const mins = core.apportionMinutes(keys.map((k) => ms[k]), downMin);
+  return Object.fromEntries(keys.map((k, i) => [k, mins[i]]));
+}
+// Итоги смены плитками: работа и три вида простоя; ниже — брак за смену
+function shiftKpis(view) {
+  const sum = shiftSummary(view);
+  const downMin = sum.downMinutes;
+  const zones = shiftZoneMinutes(view, downMin);
+  const tile = (zone, label, min) => h("div", { class: "ps-kpi", "data-zone": zone, "data-zero": min >= 1 ? null : "" },
+    h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }), label),
+    h("span", { class: "ps-kpi__value", text: fmtHM(min) }));
+  const billet = Math.round(shiftDowntimes(view).reduce((n, d) => n + (Number(d.billet) || 0), 0) * 1000) / 1000;
+  // Брак открытой части в смену не попадает (считается в смене завершения части) — объясняем рабочему
+  const openBillet = Number(view.open?.billet) || 0;
+  return [
+    h("div", { class: "ps-kpis" },
+      tile("work", "Работа", shiftWorkMin(view, downMin)), tile("plan", "Плановый", zones.plan),
+      tile("unplanned", "Внеплановый", zones.unplanned), tile("failure", "Аварийный", zones.failure)),
+    h("div", { class: "ps-kpi", "data-kind": "billet", "data-zero": billet ? null : "" },
+      h("span", { class: "ps-kpi__label", text: "Брак за смену" }),
+      h("span", { class: "ps-kpi__value", text: fmtTons(billet) })),
+    openBillet > 0 ? h("p", { class: "ps-field__hint", "data-kind": "billet-open", text: `Брак открытого простоя (${fmtTons(openBillet)}) учтётся после пуска` }) : null];
+}
+
+// Пункт проверки: считает система, мастер его не отмечает; у todo — кнопка перехода к исправлению
+function checkItem(done, text, action = null) {
+  return h("li", { class: "ps-check", "data-status": done ? "done" : "todo" },
+    h("span", { class: "ps-check__mark", "aria-hidden": "true" }, icon(done ? "tick" : "alert", "ps-ico")),
+    h("span", { class: "ps-check__text" }, h("span", { class: "ps-sr", text: done ? "Готово: " : "Нужно сделать: " }), text),
+    !done && action ? h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: action.onclick }, action.label) : null);
 }
 
 // Закрытие смены начинается со сверки записи на планшете с состоянием стана.
@@ -2041,24 +2429,25 @@ function runningSince(view) {
 }
 function renderCloseCheck(main, view) {
   const open = view.open;
-  fill(main, backBtn("На главный экран", () => go("auto")),
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("Назад", () => go("auto")),
     question(open ? "Стан всё ещё стоит?" : "Стан в рабочем состоянии?"),
-    h("p", { class: "hint", text: open
+    h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: open
       ? `На планшете: стан стоит с ${fmtSince(open.since ?? open.startMs, view.shift)} · ${reasonLabel(open.reason) || "причина не указана"}`
-      : `На планшете: стан работает с ${fmtSince(runningSince(view), view.shift)}` }),
-    h("button", { class: "btn primary", onclick: () => go("closeConfirm") }, open ? "Да, стоит" : "Да, работает"),
-    h("button", { class: "btn", onclick: () => {
-      const current = buildView();
-      if (!!current.open !== !!open) { render(); return; }
-      if (current.open) {
-        if (!reusableRestart(ui.rw, current, nowMs())) { ui.wz = null; ui.rw = newRestart(current); }
-        ui.rw.thenClose = true;
-        go("restartTime");
-      } else {
-        ui.fw ||= { step: 1, atMs: nowMs(), group: null, reason: null, note: "" };
-        go("forgotStop");
-      }
-    } }, open ? "Нет, уже работает" : "Нет, стан стоит"));
+      : `На планшете: стан работает с ${fmtSince(runningSince(view), view.shift)}` })),
+    h("div", { class: "ps-actions ps-actions--col" },
+      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => go("closeConfirm") }, open ? "Да, стоит" : "Да, работает"),
+      h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => {
+        const current = buildView();
+        if (!!current.open !== !!open) { render(); return; }
+        if (current.open) {
+          if (!reusableRestart(ui.rw, current, nowMs())) { ui.wz = null; ui.rw = newRestart(current); }
+          go("restartTime");
+        } else {
+          ui.fw ||= { step: 1, atMs: nowMs(), group: null, reason: null, note: "" };
+          go("forgotStop");
+        }
+      } }, open ? "Нет, уже работает" : "Нет, стан стоит"))));
 }
 
 function forgottenTimeError(view, ms, restart = false) {
@@ -2073,15 +2462,15 @@ function forgottenTimeError(view, ms, restart = false) {
 }
 
 // Общий шаг московского времени. Неверный ввод также сохраняется в черновике.
-function forgottenTimeFields(view, draft, field, restart, next) {
-  const input = h("input", { type: "datetime-local", "aria-label": restart ? "Время пуска, Москва" : "Время остановки, Москва" });
+function forgottenTimeFields(view, draft, field, restart, next, label = "Далее") {
+  const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": restart ? "Время пуска, Москва" : "Время остановки, Москва" });
   input.value = draft.timeValue ?? localTimeValue(draft[field]);
-  const error = h("p", { class: "error-text" });
-  const submit = h("button", { class: "btn primary", onclick: () => {
+  const error = fieldError();
+  const submit = psButton("primary", label, () => {
     const msg = forgottenTimeError(buildView(), draft[field], restart);
     if (msg) { error.textContent = msg; error.hidden = false; return; }
     next();
-  } }, "Далее");
+  });
   const update = () => {
     const msg = forgottenTimeError(view, draft[field], restart);
     error.textContent = msg;
@@ -2094,13 +2483,20 @@ function forgottenTimeFields(view, draft, field, restart, next) {
     update();
   });
   update();
-  return [h("p", { class: "muted", text: "Дата и время по Москве." }), input,
-    h("div", { class: "tiles" }, [[10, "10 мин назад"], [30, "30 мин назад"], [60, "1 ч назад"], [120, "2 ч назад"]].map(([min, label]) =>
-      h("button", { class: "tile", onclick: () => {
+  // Кнопки ±1 мин двигают то же значение, что и поле: проверки и формат события прежние
+  const stepper = timeStepper(restart ? "Время пуска" : "Время остановки", draft[field], (dir) => {
+    draft[field] = (Number.isFinite(draft[field]) ? draft[field] : minuteNow()) + dir * 60000;
+    delete draft.timeValue;
+    render();
+  });
+  return [h("section", { class: "ps-card" },
+    h("div", { class: "ps-form-row" }, h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Время по Москве" }), stepper), psField("Или дата и время", input)),
+    h("div", { class: "ps-chips", role: "group", "aria-label": "Быстрый выбор" }, [[10, "10 мин назад"], [30, "30 мин назад"], [60, "1 ч назад"], [120, "2 ч назад"]].map(([min, label]) =>
+      h("button", { type: "button", class: "ps-chip", onclick: () => {
         draft[field] = Math.floor(nowMs() / 60000) * 60000 - min * 60000;
         delete draft.timeValue;
         render();
-      } }, label))), error, submit];
+      } }, label)))), error, submit];
 }
 
 // У плитки черновика больше одного пункта — значит, шаг «Что именно?» был
@@ -2112,35 +2508,36 @@ function renderForgotStop(main, view) {
   if (!fw) return go("closeCheck");
   const back = () => {
     if (fw.step === 1) { go("closeCheck"); ui.resume = "forgotStop"; persistClient(); }
-    else { fw.step = fw.step === 5 && fw.unknown ? 2 : fw.step === 4 && !tileMulti(fw) ? 2 : fw.step - 1; render(); }
+    else { fw.step = fw.step === 5 && !tileMulti(fw) ? 3 : fw.step - 1; render(); }
   };
-  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К выбору причины", 4: tileMulti(fw) ? "К выбору пункта" : "К выбору причины", 5: fw.unknown ? "К выбору группы" : "К описанию причины" };
-  const top = () => [backBtn(backLabels[fw.step], back),
-    h("p", { class: "muted", text: "Забыли отметить остановку" }),
-    fw.unknown ? stepLine(fw.step === 5 ? 3 : fw.step, 3) : fw.step >= 4 && !tileMulti(fw) ? stepLine(fw.step - 1, 4) : stepLine(fw.step, 5)];
-  const next = () => { fw.step++; render(); };
+  const backLabels = { 1: "К проверке состояния стана", 2: "К времени остановки", 3: "К проверке", 4: "К выбору причины", 5: tileMulti(fw) ? "К выбору пункта" : "К выбору причины" };
+  const top = () => [backBtn(backLabels[fw.step] || backLabels[1], back),
+    h("div", { class: "ps-overline", text: "Забыли отметить остановку" }),
+    fw.step <= 2 ? stepLine(fw.step, 2) : null];
+  const toCheck = () => { fw.step = 2; render(); };
+  const flow = (...kids) => fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, ...kids));
   if (fw.step === 1) {
-    fill(main, ...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, next));
+    flow(...top(), question("Когда стан встал?"), ...forgottenTimeFields(view, fw, "atMs", false, toCheck));
     return;
   }
   if (fw.reason) fw.reason = core.reasonKey(fw.reason);
-  if (fw.step === 4 && !fw.unknown && !reasonRef(fw.reason)) fw.step = 2;
-  if (fw.step === 3 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 2;
-  if (fw.step === 2) {
-    fill(main, ...top(), question("Почему стоит?"),
-      reasonGroups(fw, (single) => { fw.step = single ? 4 : 3; render(); }));
-    return;
-  }
+  if (fw.step === 5 && !reasonRef(fw.reason)) fw.step = 3;
+  if (fw.step === 4 && !(refs.tiles || []).some((t) => t.id === fw.group)) fw.step = 3;
   if (fw.step === 3) {
-    fill(main, ...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 4; render(); }));
+    flow(...top(), question("Почему стоит?"),
+      reasonGroups(fw, (single) => { fw.step = single ? 5 : 4; render(); }));
     return;
   }
   if (fw.step === 4) {
-    const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
-      placeholder: noteHint(fw.reason), "aria-label": "Описание своими словами" });
+    flow(...top(), question("Что именно?"), reasonChoices(fw, () => { fw.step = 5; render(); }));
+    return;
+  }
+  if (fw.step === 5) {
+    const ta = h("textarea", { class: "ps-input", rows: "4", maxlength: String(NOTE_MAX),
+      placeholder: noteHint(fw.reason) });
     ta.value = fw.note || "";
-    const error = h("p", { class: "error-text", text: "Опишите своими словами, что случилось." });
-    const submit = h("button", { class: "btn primary", onclick: next }, "Далее");
+    const error = fieldError("Опишите своими словами, что случилось.");
+    const submit = psButton("primary", "Далее", toCheck);
     let touched = !!ta.value;
     const update = () => {
       fw.note = ta.value;
@@ -2149,30 +2546,34 @@ function renderForgotStop(main, view) {
     };
     ta.addEventListener("input", () => { touched = true; fw.noteEdited = true; update(); });
     update();
-    fill(main, ...top(), question("Расскажите своими словами"),
-      h("p", { class: "muted", text: reasonLabel(fw.reason) }), ta, error,
-      h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit);
+    flow(...top(), question("Расскажите своими словами"),
+      h("div", { class: "ps-picked" }, h("span", { class: "ps-swatch", "data-zone": zoneOf(core.reasonKey(fw.reason), refs), "aria-hidden": "true" }), h("span", { text: reasonLabel(fw.reason) })),
+      psField("Что случилось", ta, "Можно надиктовать — кнопка микрофона на клавиатуре"), error, submit);
     focusReasonNote(ta);
     return;
   }
+  const hasReason = !!reasonRef(fw.reason);
   const error = forgottenStopError(view, fw);
-  fill(main, ...top(), question("Всё верно?"),
-    h("div", { class: "card" }, h("div", { class: "card-title", text:
-      `Стан стоит с ${fmtDate(fw.atMs)} ${fmtClock(fw.atMs)} · ${fw.unknown ? "причина не указана" : reasonLabel(fw.reason)}${!fw.unknown && fw.note?.trim() ? ` · «${fw.note.trim()}»` : ""}` })),
-    error ? h("p", { class: "error-text", text: error }) : null,
-    h("button", { class: "btn primary", disabled: !!error, onclick: saveForgottenStop }, "Сохранить"));
+  flow(...top(), question("Проверьте"),
+    summaryCard(`Стан стоит с ${fmtDate(fw.atMs)} ${fmtClock(fw.atMs)}`, [
+      ["Причина", hasReason ? reasonLabel(fw.reason) : "не указана, укажете в разборе смены"],
+      hasReason && fw.note?.trim() ? ["Что случилось", fw.note.trim()] : null]),
+    error ? fieldError(error) : null,
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", "Сохранить", saveForgottenStop, { disabled: !!error }),
+      psButton("secondary", hasReason ? "Изменить причину" : "Указать причину сейчас", () => { fw.step = 3; render(); })));
 }
 function forgottenStopError(view, fw) {
-  return forgottenTimeError(view, fw.atMs) || (!fw.unknown && !reasonRef(fw.reason) ? "Выберите причину простоя."
-    : !fw.unknown && needsNote(fw.reason) && !validAction(fw.note) ? "Опишите своими словами, что случилось." : "");
+  return forgottenTimeError(view, fw.atMs) ||
+    (reasonRef(fw.reason) && needsNote(fw.reason) && !validAction(fw.note) ? "Опишите своими словами, что случилось." : "");
 }
 function saveForgottenStop() {
   const fw = ui.fw;
   if (!fw || forgottenStopError(buildView(), fw)) { render(); return; }
-  const downtimeId = crypto.randomUUID();
+  const downtimeId = newId();
   const at = new Date(fw.atMs).toISOString();
   const events = [{ type: "stop", fields: { downtimeId, at } }];
-  if (!fw.unknown) events.push({ type: "reason", fields: { downtimeId, at, reason: fw.reason, note: fw.note.trim() } });
+  if (reasonRef(fw.reason)) events.push({ type: "reason", fields: { downtimeId, at, reason: fw.reason, note: (fw.note || "").trim() } });
   ui.fw = null;
   ui.resume = null;
   ui.screen = "closeConfirm";
@@ -2184,71 +2585,44 @@ function saveForgottenStop() {
 function renderRestartTime(main, view) {
   const rw = ui.rw;
   if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  const total = rw.route === "reason" || !rw.reason ? 4 : 3;
-  fill(main, backBtn("К проверке состояния стана", () => { go("closeCheck"); ui.resume = "restartTime"; persistClient(); }),
-    h("p", { class: "muted", text: "Забыли отметить пуск" }), stepLine(1, total), question("Когда стан пошёл?"),
-    ...forgottenTimeFields(view, rw, "startMs", true, () => {
-      if (!restartMatches(buildView(), rw)) { render(); return; }
-      rw.timeConfirmed = true;
-      if (rw.route === "reason" && ui.wz?.mode === "restart") { ui.wz.step = 1; go("reason"); }
-      else if (rw.reason) go("restartConfirm");
-      else startRestartReasonWizard();
-    }));
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("К проверке состояния стана", () => { go("closeCheck"); ui.resume = "restartTime"; persistClient(); }),
+    h("div", { class: "ps-overline", text: "Забыли отметить пуск" }), question("Когда стан пошёл?"),
+    ...forgottenTimeFields(view, rw, "startMs", true, saveForgottenStart, "Сохранить пуск")));
 }
-
-function restartBack() {
-  if (ui.rw?.thenClose) return backBtn("К времени пуска", () => go("restartTime"));
-  return backBtn("К простою", () => { ui.resume = ui.screen; go("auto"); });
-}
-
-function startRestartReasonWizard() {
+// Пуск задним числом: только время, без причины и «что сделали»; затем — к сдаче смены
+function saveForgottenStart() {
   const rw = ui.rw;
-  rw.route = "reason";
-  if (ui.wz?.mode === "restart" && ui.wz.downtimeId === rw.downtimeId && ui.wz.index === rw.index) ui.wz.step = 1;
-  else ui.wz = { mode: "restart", downtimeId: rw.downtimeId, index: rw.index, step: 1,
-    group: reasonGroup(rw.reason), reason: rw.reason, note: rw.note || "" };
-  go("reason");
-}
-
-function renderRestartConfirm(main, view) {
-  const rw = ui.rw;
-  if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  if (rw.reason) rw.reason = core.reasonKey(rw.reason);
-  if (!reasonRef(rw.reason)) return startRestartReasonWizard();
-  fill(main,
-    restartBack(),
-    stepLine(rw.thenClose ? 2 : 1, rw.thenClose ? 3 : 2),
-    question(`Причина: ${reasonLabel(rw.reason)} — верно?`),
-    h("button", { class: "btn primary", onclick: () => {
-      // При пуске причину своими словами не спрашиваем (решение владельца 01.10.2026)
-      rw.route = "confirm"; go("restartAction");
-    } }, "Да, верно"),
-    h("button", { class: "btn", onclick: startRestartReasonWizard }, "Изменить")
-  );
+  if (!rw) return;
+  const view = buildView();
+  if (!restartMatches(view, rw)) { render(); return; }
+  const msg = forgottenTimeError(view, rw.startMs, true);
+  if (msg) { showToast(msg); return; }
+  const at = new Date(rw.startMs).toISOString();
+  ui.rw = null;
+  ui.wz = null;
+  ui.screen = "closeConfirm";
+  const sent = sendBatch([{ type: "start", fields: { downtimeId: rw.downtimeId, at } }]);
+  ui.closeReceipt = sent.map((e) => e.id);
+  render();
 }
 
 // Вопрос перед сменой причины на ходу
 function renderConfirmChange(main, view) {
   const open = view.open;
   if (!open) return go("auto");
-  fill(main,
-    backBtn("Вернуться к простою", () => go("auto")),
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("К простою", () => go("auto")),
     question("Причина сменилась по ходу простоя?"),
-    h("button", {
-      class: "btn",
-      onclick: () => {
-        ui.wz = { mode: "refix", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
-        go("reason");
-      },
-    }, "Нет, исправить ошибку"),
-    h("button", {
-      class: "btn primary",
-      onclick: () => {
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", "Да, теперь стоим по другой причине", () => {
         ui.wz = { mode: "split", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
         go("reason");
-      },
-    }, "Да, теперь стоим по другой причине")
-  );
+      }),
+      psButton("secondary", "Нет, исправить ошибку", () => {
+        ui.wz = { mode: "refix", downtimeId: open.downtimeId, step: 1, group: null, reason: null, note: "" };
+        go("reason");
+      }))));
 }
 
 // Один выбор причины во всех мастерах. Ключ отличает пункты с одинаковым кодом.
@@ -2267,31 +2641,40 @@ function chooseReasonItem(draft, tile, item) {
   }
   ui.focusNote = true;
 }
+// Иконка плитки: плановая — календарь, бурёжка — волна, поломка — ключ
+const REASON_ICON = { plan: "calendar", unplanned: "cobble", failure: "wrench" };
 // Плитка → next(true), если пункт выбран сразу (он один); иначе next(false) — нужен шаг «Что именно?»
+// draft — черновик мастера или функция, которая даёт его в момент нажатия (на пульте черновика ещё нет)
 function reasonGroups(draft, next) {
-  return h("div", { class: "tiles reason-groups" }, (refs.tiles || []).map((tile) =>
-    h("button", { class: "tile reason-group reason-zone-" + tile.zone,
-      onclick: () => {
-        draft.group = tile.id;
-        draft.unknown = false;
-        const items = reasonItems(tile);
-        const single = items.length === 1;
-        if (single) chooseReasonItem(draft, tile, items[0]);
-        next(single);
-      } },
-    h("span", { class: "reason-group-title", text: tile.title }),
-    h("span", { class: "reason-group-subtitle", text: tile.subtitle }))));
+  const current = typeof draft === "function" ? draft : () => draft;
+  const shown = typeof draft === "function" ? null : draft;
+  return h("div", { class: "ps-reasons-box" },
+    h("div", { class: "ps-reasons", role: "group", "aria-label": "Причина остановки" }, (refs.tiles || []).map((tile) =>
+      h("button", { type: "button", class: "ps-reason", "data-zone": tile.zone, "aria-pressed": String(!!shown && shown.group === tile.id),
+        onclick: () => {
+          const d = current();
+          d.group = tile.id;
+          const items = reasonItems(tile);
+          const single = items.length === 1;
+          if (single) chooseReasonItem(d, tile, items[0]);
+          next(single);
+        } },
+      h("span", { class: "ps-reason__icon" }, icon(REASON_ICON[tile.zone] || "wrench", "ps-ico")),
+      h("span", { class: "ps-reason__title", text: tile.title }),
+      h("span", { class: "ps-reason__sub", text: tile.subtitle })))));
 }
-// Шаг «Что именно?»: пункты плитки, полоска и подпись — по зоне пункта
+// Шаг «Что именно?»: пункты плитки чипами, квадрат и подпись — по зоне пункта
 const ITEM_ZONE_LABEL = { plan: "плановый простой", unplanned: "внеплановый простой", failure: "аварийный простой" };
 function reasonChoices(draft, next) {
   const tile = (refs.tiles || []).find((item) => item.id === draft.group);
-  return h("div", { class: "tiles reason-groups reason-items" }, reasonItems(tile).map((item) => {
+  return h("div", { class: "ps-chips ps-chips--items", role: "group", "aria-label": "Что именно" }, reasonItems(tile).map((item) => {
     const zone = zoneOf(core.reasonKey(item.code), refs);
-    return h("button", { class: "tile reason-group reason-zone-" + zone,
+    return h("button", { type: "button", class: "ps-chip ps-chip--item", "aria-pressed": String(draft.itemKey === reasonItemKey(tile, item)),
       onclick: () => { chooseReasonItem(draft, tile, item); next(); } },
-    h("span", { class: "reason-group-title", text: item.label }),
-    h("span", { class: "reason-group-subtitle", text: ITEM_ZONE_LABEL[zone] || "" }));
+    h("span", { class: "ps-swatch", "data-zone": zone, "aria-hidden": "true" }),
+    h("span", { class: "ps-chip__text" },
+      h("span", { class: "ps-chip__label", text: item.label }),
+      h("span", { class: "ps-chip__zone", text: ITEM_ZONE_LABEL[zone] || "" })));
   }));
 }
 function focusReasonNote(ta) {
@@ -2301,68 +2684,52 @@ function focusReasonNote(ta) {
   ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
-// Мастер выбора причины: группа → причина → своими словами
+// Мастер выбора причины: группа → причина → своими словами (на пульте, в разборе, при исправлении записи)
 function renderReasonWizard(main, view) {
   const wz = ui.wz;
   if (!wz) return go("auto");
-  const restarting = wz.mode === "restart";
-  if (restarting && !restartMatches(view, ui.rw)) return renderStaleRestart(main);
-  const past = wz.mode === "past" || wz.mode === "shiftfix" || restarting;
-  const offset = restarting && ui.rw?.thenClose ? 1 : 0;
-  const total = restarting ? (wz.step === 1 || tileMulti(wz) ? 3 : 2) + offset : 3;
-  // При пуске шага «своими словами» нет: плитка → «Что именно?» → «Что сделали»
-  if (restarting && wz.step === 3) wz.step = 2;
-  const restartHasReason = ui.rw?.hadReason ?? !!ui.rw?.reason;
+  const past = wz.mode === "shiftfix";
+  const total = 3;
   const back1 = {
     current: ["Вернуться к простою (причину можно указать позже)", () => go("auto")],
     refix: ["Вернуться к простою", () => go("auto")],
     split: ["Вернуться к простою", () => go("auto")],
-    past: ["На главный экран", () => go("auto")],
     shiftfix: ["К записи простоя", () => go("detail")],
     repair: ["К сохранённой записи", () => go("repair")],
-    restart: [restartHasReason ? "К подтверждению причины" : ui.rw?.thenClose ? "К времени пуска" : "К простою",
-      () => restartHasReason ? go("restartConfirm") : ui.rw.thenClose ? go("restartTime") : (ui.resume = "reason", go("auto"))],
   }[wz.mode];
+  if (!back1) { ui.wz = null; return go("auto"); }
 
   if (wz.reason) wz.reason = core.reasonKey(wz.reason);
   if (wz.step === 3 && !reasonRef(wz.reason)) wz.step = 1;
   if (wz.step === 2 && !(refs.tiles || []).some((t) => t.id === wz.group)) wz.step = 1;
 
   if (wz.step === 1) {
-    fill(main,
+    // Пока стан стоит, плитки идут сразу под панелью состояния
+    const stopped = ["current", "refix", "split"].includes(wz.mode) && view.open;
+    fill(main, h("div", { class: "ps-flow" },
       backBtn(...back1),
-      stepLine(1 + offset, total),
+      stopped ? statePanel({ running: false, since: view.open.since ?? view.open.startMs,
+        subtitle: `Стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}`, compact: true }) : null,
+      stepLine(1, total),
       question(past ? "Почему стоял?" : "Почему стоит?"),
-      reasonGroups(wz, (single) => {
-        if (single && restarting) return finishReasonWizard(wz.note || "");
-        wz.step = single ? 3 : 2; render();
-      }),
-      !restarting && wz.mode === "past" ? h("button", {
-        class: "btn btn-flat reason-later",
-        onclick: () => {
-          if (wz.mode === "past") go("recorded");
-          else go(wz.mode === "shiftfix" ? "detail" : wz.mode === "repair" ? "repair" : "auto");
-        },
-      }, "Укажу позже") : null
-    );
+      reasonGroups(wz, (single) => { wz.step = single ? 3 : 2; render(); })
+    ));
     return;
   }
 
   if (wz.step === 2) {
-    fill(main,
+    fill(main, h("div", { class: "ps-flow" },
       backBtn("К выбору причины", () => { wz.step = 1; render(); }),
-      stepLine(2 + offset, total),
+      stepLine(2, total),
       question("Что именно?"),
-      reasonChoices(wz, () => {
-        if (restarting) return finishReasonWizard(wz.note || "");
-        wz.step = 3; render();
-      }));
+      reasonChoices(wz, () => { wz.step = 3; render(); })));
     return;
   }
 
   // Шаг 3: своими словами
   const ta = h("textarea", {
-    class: "note-input",
+    class: "ps-input",
+    id: "wz-note",
     rows: "4",
     maxlength: String(NOTE_MAX),
     placeholder: noteHint(wz.reason),
@@ -2370,7 +2737,7 @@ function renderReasonWizard(main, view) {
   });
   ta.value = wz.note || "";
   const must = needsNote(wz.reason);
-  const needText = h("p", { class: "error-text", text: "Напишите, что случилось" });
+  const needText = h("p", { class: "ps-field__error", text: "Напишите, что случилось" });
   // Красная строка — только после попытки пройти дальше с пустым полем
   let tried = false;
   const upd = () => { needText.hidden = !must || !tried || validAction(ta.value); };
@@ -2380,18 +2747,23 @@ function renderReasonWizard(main, view) {
     if (must && !validAction(ta.value)) { tried = true; upd(); ta.focus(); return; }
     finishReasonWizard(withNote ? ta.value : "");
   };
-  fill(main,
+  fill(main, h("div", { class: "ps-flow" },
     backBtn(reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? "К выбору пункта" : "К выбору причины",
       () => { wz.step = reasonItems((refs.tiles || []).find((t) => t.id === wz.group)).length > 1 ? 2 : 1; render(); }),
     stepLine(tileMulti(wz) ? 3 : 2, tileMulti(wz) ? 3 : 2),
     question(must ? "Что случилось? Опишите своими словами" : "Расскажите своими словами"),
-    h("div", { class: "card" }, h("div", { class: "card-title", text: reasonLabel(wz.reason) })),
-    ta,
-    must ? needText : null,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    h("button", { class: "btn primary", onclick: () => done(true) }, restarting ? "Далее" : "Сохранить"),
-    must ? null : h("button", { class: "btn", onclick: () => done(false) }, "Без описания")
-  );
+    h("div", { class: "ps-picked" },
+      h("span", { class: "ps-swatch", "data-zone": zoneOf(core.reasonKey(wz.reason), refs), "aria-hidden": "true" }),
+      h("span", { text: reasonLabel(wz.reason) })),
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "wz-note", text: must ? "Что случилось" : "Что случилось (по желанию)" }),
+      ta,
+      must ? needText : null,
+      h("span", { class: "ps-field__hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" })),
+    h("div", { class: "ps-actions" },
+      h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => done(true) }, "Сохранить"),
+      must ? null : h("button", { type: "button", class: "ps-btn ps-btn--secondary ps-btn--lg", onclick: () => done(false) }, "Без описания"))
+  ));
   focusReasonNote(ta);
 }
 
@@ -2402,7 +2774,7 @@ function finishReasonWizard(rawNote) {
   }
   const note = String(rawNote || "").trim();
   if (!reasonRef(wz.reason)) { wz.step = 1; render(); return; }
-  if (wz.mode !== "restart" && needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
+  if (needsNote(wz.reason) && !validAction(note)) { showToast("Напишите, что случилось"); return; }
   const noteField = { note };
   if (wz.mode === "repair") {
     ui.repair.event.reason = wz.reason;
@@ -2413,22 +2785,17 @@ function finishReasonWizard(rawNote) {
   if (wz.mode === "shiftfix" && !cardData(buildView())) {
     showToast("Запись изменилась. Ответы остаются в черновике; проверьте итог смены."); return;
   }
-  if (wz.mode === "restart") {
-    ui.rw.reason = wz.reason;
-    ui.rw.note = note;
-    ui.rw.reasonChanged = true;
-    go("restartAction");
-  } else if (wz.mode === "split") {
+  if (wz.mode === "split") {
     send("split", { downtimeId: wz.downtimeId, reason: wz.reason, ...noteField });
     showToast(receiptStatus(receiptFor(wz.downtimeId)));
     go("auto");
-  } else if (wz.mode === "past") {
-    send("fix", { downtimeId: wz.downtimeId, index: wz.index, reason: wz.reason, ...noteField });
-    go("recorded");
   } else if (wz.mode === "shiftfix") {
+    // Простой был без причины: если без причины больше никого нет — назад в разбор, иначе остаёмся в записи
+    const before = cardData(buildView());
+    const wasEmpty = !!before && !reasonRef(before.s.reason);
     send("fix", { downtimeId: wz.downtimeId, index: wz.index, reason: wz.reason, ...noteField });
     ui.wz = null;
-    go("detail");
+    go(wasEmpty && !noReasonList(buildView()).length ? "shift" : "detail");
   } else {
     // current и refix: событие reason для текущего отрезка
     send("reason", { downtimeId: wz.downtimeId, reason: wz.reason, ...noteField });
@@ -2445,76 +2812,23 @@ function restartMatches(view, rw) {
   return rw && view.open && view.open.downtimeId === rw.downtimeId && view.open.index === rw.index;
 }
 function renderStaleRestart(main) {
-  fill(main, question("Состояние стана изменилось"),
-    h("p", { text: "Этот простой уже изменили. Ответы оставлены в черновике. Вернитесь на главный экран и проверьте стан перед пуском." }),
-    h("button", { class: "btn", onclick: () => { ui.resume = ui.screen; go("auto"); } }, "На главный экран"));
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, question("Состояние стана изменилось"),
+    h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "Этот простой уже изменили. Ответы оставлены в черновике. Вернитесь к стану и проверьте его перед пуском." })),
+    psButton("primary", "Вернуться к стану", () => { ui.resume = ui.screen; go("auto"); })));
 }
 
-function actionText(value) {
-  const text = typeof value === "string" ? value.trim() : "";
-  return validAction(text) ? text : "";
-}
-
-function renderRestartAction(main, view) {
-  const rw = ui.rw;
-  if (!restartMatches(view, rw)) return renderStaleRestart(main);
-  const ta = h("textarea", {
-    class: "note-input",
-    rows: "4",
-    maxlength: String(NOTE_MAX),
-    placeholder: actionHint(rw.reason !== undefined && rw.reason !== null ? rw.reason : view.open.reason),
-    "aria-label": "Что сделали, чтобы запустить стан",
-  });
-  ta.value = rw.action ?? view.open.action ?? "";
-  // После бурёжки и аварии — обязательно, сколько заготовки испорчено (владелец, 01.10.2026)
-  const needBillet = restartNeedsBillet(rw, view);
-  // Текстовое поле с цифровой клавиатурой: number не принимает «2,5» с русской клавиатуры
-  const billet = needBillet ? h("input", { id: "restart-billet", type: "text", maxlength: "8",
-    inputmode: "decimal", autocomplete: "off", placeholder: "Тонны, 0 — если брака нет", "aria-label": "Сколько заготовки испорчено, в тоннах" }) : null;
-  const billetError = needBillet ? h("p", { class: "error-text", text: "Укажите от 0 до 1000 тн. Если брака нет — 0." }) : null;
-  if (needBillet) {
-    billet.value = rw.billet ?? "";
-    billetError.hidden = true;
-    billet.addEventListener("input", () => { rw.billet = billet.value; billetError.hidden = true; });
-  }
-  const submit = h("button", { class: "btn primary", onclick: () => {
-    if (needBillet && !validBillet(billet.value)) { billetError.hidden = false; billet.focus(); return; }
-    finishRestart(ta.value);
-  } }, "Сохранить пуск");
-  ta.addEventListener("input", () => { rw.action = ta.value; });
-  const total = (rw.route === "reason" && ui.wz && tileMulti(ui.wz) ? 3 : 2) + (rw.thenClose ? 1 : 0);
-  // Что по этому простою уже сделали прошлые смены (последние три записи)
-  const earlier = (view.open.handovers || []).map(handoverText).filter(Boolean).slice(-3).reverse();
-  fill(main,
-    backBtn(rw.route === "reason" ? (tileMulti(ui.wz) ? "К выбору пункта" : "К выбору причины") : "К причине", () => {
-      if (rw.route === "reason") { ui.wz.step = tileMulti(ui.wz) ? 2 : 1; go("reason"); }
-      else go("restartConfirm");
-    }),
-    stepLine(total, total),
-    question("Что сделали, чтобы запустить стан?"),
-    h("p", { class: "muted", text: `Время пуска: ${fmtSince(rw.startMs, view.shift)} МСК${rw.thenClose ? "" : " — по первому нажатию"}` }),
-    earlier.length ? h("div", { class: "earlier" },
-      h("p", { class: "hint", text: "Раньше по этому простою:" }),
-      earlier.map((text) => h("p", { class: "hint earlier-text", text: `«${text}»` }))) : null,
-    ta,
-    h("p", { class: "hint", text: "Можно оставить пустым. Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    needBillet ? h("label", { for: "restart-billet", class: "billet-label", text: "Сколько заготовки испорчено, тн" }) : null,
-    billet,
-    billetError,
-    submit
-  );
-}
+// Брак чипами; другое значение вводится в поле (текст с запятой, 0–1000)
+const BILLET_CHIPS = ["0", "0,5", "1", "1,5", "2"];
+const sameTons = (a, b) => {
+  const x = String(a ?? "").trim().replace(",", ".");
+  return x !== "" && Number(x) === Number(b.replace(",", "."));
+};
 // Брак спрашиваем, если простой был внеплановым (бурёжка) или аварией
 function reasonNeedsBillet(reason) {
   const r = reason && reasonRef(core.reasonKey(reason));
   return !!(r && r.askBillet);
 }
-function restartBilletSegment(rw, view) {
-  const all = [...(serverState?.open?.segments || []), ...view.segments, view.open].filter((s) => s && s.downtimeId === rw.downtimeId);
-  return all.map((s) => s.index === view.open?.index ? { ...s, reason: rw.reason ?? s.reason } : s)
-    .sort((a, b) => a.index - b.index).findLast((s) => reasonNeedsBillet(s.reason));
-}
-function restartNeedsBillet(rw, view) { return !!restartBilletSegment(rw, view); }
 function validBillet(v) {
   const s = String(v ?? "").trim().replace(",", ".");
   if (!s) return false;
@@ -2522,47 +2836,13 @@ function validBillet(v) {
   return Number.isFinite(n) && n >= 0 && n <= 1000;
 }
 
-function finishRestart(rawAction) {
-  const rw = ui.rw;
-  const action = rawAction.trim();
-  if (!rw) return;
-  if (!restartMatches(buildView(), rw)) { render(); return; }
-  if (!reasonRef(rw.reason)) { startRestartReasonWizard(); return; }
-  if (rw.startMs < buildView().open.startMs || rw.startMs > nowMs()) {
-    showToast("Проверьте время пуска и часы планшета"); return;
-  }
-  const at = new Date(rw.startMs).toISOString();
-  const events = [{ type: "start", fields: { downtimeId: rw.downtimeId, ...(action ? { action } : {}), at } }];
-  if (rw.reasonChanged) {
-    events.push({ type: "reason", fields: {
-      downtimeId: rw.downtimeId,
-      reason: rw.reason,
-      note: rw.note || "",
-      at,
-    } });
-  }
-  const openNow = buildView().open;
-  // Брак — к последнему отрезку этого простоя (тот же fix, что правка «Брак» в итоге смены)
-  if (restartNeedsBillet(rw, buildView())) {
-    if (!validBillet(rw.billet)) { render(); return; }
-    // Номер последнего отрезка открытого простоя: после смены причины их несколько
-    const index = restartBilletSegment(rw, buildView()).index;
-    events.push({ type: "fix", fields: { downtimeId: rw.downtimeId, index,
-      billet: Number(String(rw.billet).trim().replace(",", ".")), at } });
-  }
-  ui.rec = { downtimeId: rw.downtimeId, sinceMs: openNow.since ?? openNow.startMs, endMs: rw.startMs };
-  ui.rw = null;
-  ui.wz = null;
-  ui.screen = rw.thenClose ? "closeConfirm" : "recorded";
-  const sent = sendBatch(events);
-  if (rw.thenClose) { ui.closeReceipt = sent.map((e) => e.id); render(); }
-}
-
-// Мастер «Забыл отметить простой»
-function startManualWizard(origin) {
+// Мастер «Забыл отметить простой»: два времени и проверка; причину указывают в разборе смены
+// fromMs — заранее заданное начало (со шкалы суток)
+function startManualWizard(origin, fromMs = null) {
   const openedAt = Math.floor(nowMs() / 60000) * 60000;
-  ui.mw = { origin, step: 1, from: openedAt - 30 * 60000, to: openedAt - 15 * 60000,
-    openedAt, group: null, reason: null, note: "", action: "" };
+  const prefilled = Number.isFinite(fromMs);
+  ui.mw = { origin, step: 1, from: prefilled ? fromMs : openedAt - 30 * 60000,
+    to: prefilled ? Math.max(fromMs + 60000, Math.min(fromMs + 30 * 60000, openedAt)) : openedAt - 15 * 60000, openedAt };
   go("manual");
 }
 
@@ -2576,7 +2856,6 @@ function parseLocalTime(value) {
   try { return core.toMs(value + "Z") - (refs.settings.schedule.tzOffsetMinutes ?? 180) * 60000; }
   catch { return NaN; }
 }
-function manualTo(mw) { return mw.to; }
 function manualOverlap(view, from, to) {
   for (const s of view.segments) {
     if (from < (s.open || s.endMs === null ? Infinity : s.endMs) && to > s.startMs) return s;
@@ -2590,144 +2869,101 @@ function manualError(view, mw) {
   if (mw.to > nowMs()) return "Конец простоя в будущем. Укажите, когда стан уже заработал.";
   if (mw.from < view.shift.startMs) return "Здесь можно добавить простой этой смены. О более раннем простое сообщите мастеру.";
   const overlap = manualOverlap(view, mw.from, mw.to);
-  if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в итоге смены.`;
-  if (!reasonRef(mw.reason)) return "Выберите причину простоя.";
-  if (needsNote(mw.reason) && !validAction(mw.note)) return "Опишите своими словами, что случилось.";
-  if (reasonNeedsBillet(mw.reason) && !validBillet(mw.billet)) return "Укажите от 0 до 1000 тн.";
+  if (overlap) return `В это время уже есть простой с ${fmtClock(overlap.startMs)}. Исправьте время или дополните запись в разборе простоев.`;
   return "";
 }
 
 function renderManual(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
+  if (mw.step > 2) mw.step = 2; // черновик старой версии: причину теперь указывают в разборе
+  const start = mw.step === 1;
   const back = () => {
-    if (mw.step > 1) { mw.step = mw.step === 5 && !tileMulti(mw) ? 3 : mw.step - 1; render(); }
+    if (mw.step > 1) { mw.step--; render(); }
     else { ui.resume = "manual"; go(mw.origin === "shift" ? "shift" : "auto"); }
   };
-  const backLabel = mw.step === 4 ? "К выбору причины" : mw.step === 5 && tileMulti(mw) ? "К выбору пункта" : "К предыдущему вопросу";
-  const top = () => [backBtn(mw.step > 1 ? backLabel : mw.origin === "shift" ? "К итогу смены" : "На главный экран", back), mw.step >= 4 && !tileMulti(mw) ? stepLine(mw.step - 1, 6) : stepLine(mw.step, 7)];
-  const next = () => { mw.step++; mw.error = ""; render(); };
-  if (mw.step <= 2) {
-    const start = mw.step === 1;
-    const field = start ? "from" : "to";
-    const input = h("input", { type: "datetime-local", "aria-label": start ? "Начало простоя, Москва" : "Конец простоя, Москва" });
-    input.value = localTimeValue(mw[field]);
-    const error = h("p", { class: "error-text" });
-    const submit = h("button", { class: "btn primary", onclick: next }, "Далее");
-    // Одна проверка и при открытии шага, и при вводе; мешающий простой называем по времени
-    const timeError = () => {
-      const busy = !Number.isFinite(mw.from) ? null
-        : start ? manualOverlap(view, mw.from, mw.from + 1)
-        : Number.isFinite(mw.to) && mw.to > mw.from ? manualOverlap(view, mw.from, mw.to) : null;
-      return !Number.isFinite(mw[field]) ? "Укажите дату и время."
-        : mw[field] > nowMs() ? "Это время ещё не наступило."
-        : mw.from < view.shift.startMs ? "Укажите время в пределах этой смены."
-        : !start && mw.to <= mw.from ? "Конец должен быть позже начала."
-        : busy ? `В это время уже записан простой ${fmtClock(busy.startMs)}–${busy.endMs ? fmtClock(busy.endMs) : "сейчас"}. Выберите другое время.` : "";
-    };
-    const update = () => {
-      mw[field] = parseLocalTime(input.value);
-      const msg = timeError();
-      error.textContent = msg;
-      error.hidden = !msg;
-      submit.disabled = !!msg;
-    };
-    input.addEventListener("input", update);
-    // Не округляем сохранённое время при перерисовке; только проверяем.
-    const msg0 = timeError();
-    submit.disabled = !!msg0;
-    error.textContent = msg0;
-    error.hidden = !msg0;
-    const choices = start ? [[10, "10 мин назад"], [30, "30 мин назад"], [60, "Час назад"]]
-      : [[5, "Стоял 5 мин"], [15, "Стоял 15 мин"], [30, "Стоял 30 мин"]];
-    fill(main, ...top(), question(start ? "Когда стан встал?" : "Когда стан снова пошёл?"),
-      h("p", { class: "muted", text: "Дата и время по Москве. Добавляем уже закончившийся простой этой смены." }),
-      input,
-      h("div", { class: "tiles" }, choices.map(([min, label]) => h("button", { class: "tile", onclick: () => {
+  const backLabel = mw.step > 1 ? "К началу простоя" : mw.origin === "shift" ? "К разбору простоев" : "Назад";
+  const field = start ? "from" : "to";
+  const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": start ? "Начало простоя, Москва" : "Конец простоя, Москва" });
+  input.value = localTimeValue(mw[field]);
+  const error = fieldError();
+  const submit = psButton("primary", "Далее", () => { if (start) { mw.step = 2; render(); } else { mw.error = ""; go("manualCheck"); } });
+  // Одна проверка и при открытии шага, и при вводе; мешающий простой называем по времени
+  const timeError = () => {
+    const busy = !Number.isFinite(mw.from) ? null
+      : start ? manualOverlap(view, mw.from, mw.from + 1)
+      : Number.isFinite(mw.to) && mw.to > mw.from ? manualOverlap(view, mw.from, mw.to) : null;
+    return !Number.isFinite(mw[field]) ? "Укажите дату и время."
+      : mw[field] > nowMs() ? "Это время ещё не наступило."
+      : mw.from < view.shift.startMs ? "Укажите время в пределах этой смены."
+      : !start && mw.to <= mw.from ? "Конец должен быть позже начала."
+      : busy ? `В это время уже записан простой ${fmtClock(busy.startMs)}–${busy.endMs ? fmtClock(busy.endMs) : "сейчас"}. Выберите другое время.` : "";
+  };
+  const update = () => {
+    mw[field] = parseLocalTime(input.value);
+    const msg = timeError();
+    error.textContent = msg;
+    error.hidden = !msg;
+    submit.disabled = !!msg;
+  };
+  input.addEventListener("input", update);
+  // Не округляем сохранённое время при перерисовке; только проверяем.
+  const msg0 = timeError();
+  submit.disabled = !!msg0;
+  error.textContent = msg0;
+  error.hidden = !msg0;
+  const choices = start ? [[10, "10 мин назад"], [30, "30 мин назад"], [60, "Час назад"]]
+    : [[5, "Стоял 5 мин"], [15, "Стоял 15 мин"], [30, "Стоял 30 мин"]];
+  const stepper = timeStepper(start ? "Начало простоя" : "Конец простоя", mw[field], (dir) => {
+    mw[field] = (Number.isFinite(mw[field]) ? mw[field] : minuteNow()) + dir * 60000;
+    render();
+  });
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, backBtn(backLabel, back), stepLine(mw.step, 3),
+    question(start ? "Когда стан встал?" : "Когда стан снова пошёл?"),
+    h("section", { class: "ps-card" },
+      h("p", { class: "ps-field__hint", text: "Дата и время по Москве. Добавляем уже закончившийся простой этой смены. Причину укажете в разборе простоев." }),
+      h("div", { class: "ps-form-row" }, h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: "Время по Москве" }), stepper), psField("Или дата и время", input)),
+      h("div", { class: "ps-chips", role: "group", "aria-label": "Быстрый выбор" }, choices.map(([min, label]) => h("button", { type: "button", class: "ps-chip", onclick: () => {
         mw[field] = start ? mw.openedAt - min * 60000 : mw.from + min * 60000;
         render();
       } }, label))),
-      start ? null : h("p", { class: "hint", text: `Начало: ${fmtDate(mw.from)} в ${fmtClock(mw.from)}. Выбранный конец не меняется, пока вы заполняете запись.` }),
-      error, submit);
-    return;
-  }
-  if (mw.reason) mw.reason = core.reasonKey(mw.reason);
-  if (mw.step >= 5 && mw.step <= 6 && !reasonRef(mw.reason)) mw.step = 3;
-  if (mw.step === 4 && !(refs.tiles || []).some((t) => t.id === mw.group)) mw.step = 3;
-  if (mw.step === 3) {
-    fill(main, ...top(), question("Почему стоял?"), reasonGroups(mw, (single) => { mw.step = single ? 5 : 4; mw.error = ""; render(); }));
-    return;
-  }
-  if (mw.step === 4) {
-    fill(main, ...top(), question("Что именно?"), reasonChoices(mw, () => { mw.step = 5; mw.error = ""; render(); }));
-    return;
-  }
-  const action = mw.step === 6;
-  const billet = action && reasonNeedsBillet(mw.reason) ? h("input", { id: "manual-billet", type: "text", inputmode: "decimal", "aria-label": "Брак, тн" }) : null;
-  const billetError = h("p", { class: "error-text", hidden: true, text: "Укажите от 0 до 1000 тн. Если брака нет — 0." });
-  if (billet) { billet.value = mw.billet ?? ""; billet.addEventListener("input", () => { mw.billet = billet.value; billetError.hidden = true; }); }
-
-  const field = action ? "action" : "note";
-  const must = !action && needsNote(mw.reason);
-  const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
-    placeholder: action ? actionHint(mw.reason) : noteHint(mw.reason), "aria-label": action ? "Что сделали" : "Что случилось" });
-  ta.value = mw[field] || "";
-  const error = h("p", { class: "error-text", text: action ? "Напишите, что сделали." : "Опишите своими словами, что случилось." });
-  const submit = h("button", { class: "btn primary", onclick: () => {
-    if (must && !validAction(ta.value)) return;
-    mw[field] = ta.value;
-    if (action && reasonNeedsBillet(mw.reason) && !validBillet(mw.billet)) {
-      billetError.hidden = false; return;
-    }
-    if (action) go("manualCheck"); else next();
-  } }, "Далее");
-  const update = () => {
-    mw[field] = ta.value;
-    submit.disabled = must && !validAction(ta.value);
-    error.hidden = !submit.disabled || !touched;
-  };
-  let touched = !!ta.value;
-  ta.addEventListener("input", () => { touched = true; if (!action) mw.noteEdited = true; update(); });
-  update();
-  fill(main, ...top(), question(action ? "Что сделали, чтобы запустить стан?" : "Расскажите своими словами"),
-    action ? null : h("p", { class: "muted", text: reasonLabel(mw.reason) }), ta, error,
-    billet ? h("label", { for: "manual-billet", text: "Брак, тн (0 — если нет)" }) : null, billet, billetError,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), submit,
-    !must && !action ? h("button", { class: "btn", onclick: () => { mw.note = ""; mw.noteEdited = true; next(); } }, "Без описания") : null);
-  if (!action) focusReasonNote(ta);
+      start ? null : h("p", { class: "ps-field__hint", text: `Начало: ${fmtDate(mw.from)} в ${fmtClock(mw.from)}. Выбранный конец не меняется, пока вы заполняете запись.` })),
+    error, submit));
 }
 
 function renderManualCheck(main, view) {
   const mw = ui.mw;
   if (!mw) return go("auto");
   const error = manualError(view, mw);
-  fill(main,
-    backBtn("К выполненным работам", () => { mw.step = 6; go("manual"); }),
-    stepLine(7, 7), question("Всё верно?"),
-    h("div", { class: "card" },
-      h("div", { class: "card-title", text: `${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}` }),
-      h("div", { class: "card-line", text: reasonLabel(mw.reason) }),
-      h("div", { class: "card-note", text: `Что случилось: ${mw.note || "не указано"}` }),
-      h("div", { class: "card-note", text: `Что сделали: ${mw.action || "не указано"}` })),
-    error || mw.error ? h("p", { class: "error-text", text: error || mw.error }) : null,
-    h("button", { class: "btn", onclick: () => { mw.step = 1; go("manual"); } }, "Исправить время"),
-    h("button", { class: "btn primary", disabled: !!error || mw.saving, onclick: async () => {
-      mw.saving = true;
-      render();
-      // Проверяем ещё раз после свежего состояния, если связь доступна.
-      if (online) await loadState();
-      if (ui.mw !== mw || ui.screen !== "manualCheck") { mw.saving = false; return; }
-      mw.saving = false;
-      mw.error = manualError(buildView(), mw);
-      if (mw.error) { render(); return; }
-      const downtimeId = crypto.randomUUID();
-      ui.rec = { downtimeId };
-      ui.screen = "recorded";
-      ui.mw = null;
-      send("manual", { downtimeId, from: new Date(mw.from).toISOString(), to: new Date(mw.to).toISOString(),
-        reason: mw.reason, note: mw.note.trim(), action: mw.action.trim(),
-        ...(reasonNeedsBillet(mw.reason) ? { billet: Number(String(mw.billet).replace(",", ".")) } : {}) });
-    } }, mw.saving ? "Проверяем время…" : "Сохранить простой"));
+  // Сохранение: после свежего состояния, если есть связь; thenReason — сразу открыть разбор этого простоя
+  const save = async (thenReason) => {
+    mw.saving = true;
+    render();
+    // Проверяем ещё раз после свежего состояния, если связь доступна.
+    if (online) await loadState();
+    if (ui.mw !== mw || ui.screen !== "manualCheck") { mw.saving = false; return; }
+    mw.saving = false;
+    mw.error = manualError(buildView(), mw);
+    if (mw.error) { render(); return; }
+    const downtimeId = newId();
+    ui.mw = null;
+    if (thenReason) { ui.card = { downtimeId, index: 0 }; ui.screen = "detail"; }
+    else { ui.rec = { downtimeId }; ui.screen = "recorded"; }
+    send("manual", { downtimeId, from: new Date(mw.from).toISOString(), to: new Date(mw.to).toISOString() });
+    if (thenReason) window.scrollTo(0, 0);
+  };
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("К времени конца", () => { mw.step = 2; go("manual"); }),
+    stepLine(3, 3), question("Проверьте"),
+    summaryCard(`${fmtDate(mw.from)} · ${fmtClock(mw.from)}–${fmtClock(mw.to)} · ${fmtDurMin((mw.to - mw.from) / 60000)}`, [
+      ["Стан встал", `${fmtDate(mw.from)} ${fmtClock(mw.from)}`],
+      ["Стан пошёл", `${fmtDate(mw.to)} ${fmtClock(mw.to)}`],
+      ["Причина", "не указана, укажете в разборе простоев"]]),
+    error || mw.error ? fieldError(error || mw.error) : null,
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", mw.saving ? "Проверяем время…" : "Сохранить простой", () => save(false), { disabled: !!error || mw.saving }),
+      psButton("secondary", "Указать причину сейчас", () => save(true), { disabled: !!error || mw.saving }),
+      psButton("ghost", "Исправить время", () => { mw.step = 1; go("manual"); }))));
 }
 
 // Результат сохраняется вместе с событиями и не исчезает по таймеру.
@@ -2741,25 +2977,30 @@ function renderRecorded(main, view) {
   const note = d ? d.note : original.findLast((e) => e.note !== undefined)?.note;
   // Простой начался до этой смены — показываем его целиком и отдельно часть этой смены
   const longRec = Number.isFinite(ui.rec.sinceMs) && Number.isFinite(ui.rec.endMs) && ui.rec.sinceMs < view.shift.startMs;
-  fill(main, question(status),
-    h("p", { class: "muted", text: status === "Принято сервером" ? "Запись простоя принята."
-      : status === "Нужно исправить" ? "Сервер не принял часть записи. Ответы сохранены ниже."
-      : status === "На планшете не сохранено" ? "Не закрывайте страницу. Повторите сохранение."
-      : "Запись уйдёт сама, когда появится связь. Можно продолжать работу." }),
-    h("div", { class: "card" },
-      d && longRec ? h("div", { class: "card-title", text: `${fmtDate(ui.rec.sinceMs)} ${fmtClock(ui.rec.sinceMs)} – ${fmtDate(ui.rec.endMs)} ${fmtClock(ui.rec.endMs)} · ${fmtDurLong((ui.rec.endMs - ui.rec.sinceMs) / 60000)}` }) : null,
-      d && longRec ? h("div", { class: "card-line", text: `В эту смену: ${fmtDurMin(d.minutes)}` }) : null,
-      d && !longRec ? h("div", { class: "card-title", text: `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }) : null,
-      h("div", { class: "card-line", text: reasonLabel(d?.reason || original.findLast((e) => e.reason)?.reason) }),
-      h("div", { class: "card-note", text: `Что случилось: ${note || "не указано"}` }),
-      h("div", { class: "card-note", text: `Что сделали: ${action || "не указано"}` }),
-      billetLine(d, original)),
-    h("button", { class: "btn primary", onclick: () => go("auto") }, "На главный экран"));
+  const tone = status === "Принято сервером" ? "ok" : status === "Нужно исправить" || status === "На планшете не сохранено" ? "stop" : "info";
+  const lastReason = d?.reason || original.findLast((e) => e.reason)?.reason;
+  const title = d && longRec ? `${fmtDate(ui.rec.sinceMs)} ${fmtClock(ui.rec.sinceMs)} – ${fmtDate(ui.rec.endMs)} ${fmtClock(ui.rec.endMs)} · ${fmtDurLong((ui.rec.endMs - ui.rec.sinceMs) / 60000)}`
+    : d ? `${fmtClock(d.startMs)}–${d.endMs === null ? "идёт" : fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` : "Простой";
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, question(status),
+    h("div", { class: "ps-notice", "data-tone": tone }, icon(tone === "ok" ? "tick" : tone === "stop" ? "alert" : "info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: status === "Принято сервером" ? "Запись простоя принята."
+        : status === "Нужно исправить" ? "Сервер не принял часть записи. Ответы сохранены ниже."
+        : status === "На планшете не сохранено" ? "Не закрывайте страницу. Повторите сохранение."
+        : "Запись уйдёт сама, когда появится связь. Можно продолжать работу." })),
+    summaryCard(title, [
+      d && longRec ? ["В эту смену", fmtDurMin(d.minutes)] : null,
+      ["Причина", reasonLabel(lastReason) || "не указана, укажете в разборе"],
+      ["Что случилось", note || "не указано"],
+      ["Что сделали", action || "не указано"],
+      billetLine(d, original)]),
+    h("div", { class: "ps-actions ps-actions--col" },
+      psButton("primary", "Готово", () => go("auto")),
+      d && !reasonRef(lastReason) ? psButton("secondary", "Указать причину сейчас", () => openDetail(d.downtimeId)) : null)));
 }
 // Брак в карточке «Запись принята»: из учтённого простоя, а пока он не пришёл с сервера — из отправленного fix
 function billetLine(d, original) {
   const b = d && d.billet != null ? d.billet : original.findLast((e) => e.type === "fix" && e.billet != null)?.billet;
-  return b != null ? h("div", { class: "card-note", text: `Испорчено заготовки: ${fmtTons(b)}` }) : null;
+  return b != null ? ["Испорчено заготовки", fmtTons(b)] : null;
 }
 
 function missingFields(segment) {
@@ -2781,40 +3022,31 @@ function handoverGaps(view) {
 function openDetail(downtimeId, index = null) {
   ui.card = { downtimeId, index };
   go("detail");
+  // Редактор простоя показываем целиком, с его верха
+  $("main").querySelector(".ps-editor")?.scrollIntoView({ block: "start" });
 }
 
-// Сводка перед сдачей. Здесь же исправляют записи в течение смены.
-function renderShift(main, view) {
-  const sum = shiftSummary(view);
-  const downMin = sum.downMinutes;
-  const workMin = shiftWorkMin(view, downMin);
-  const dts = shiftDowntimes(view);
-  const gaps = handoverGaps(view);
-  fill(main, backBtn("На главный экран", () => go("auto")), question("Итог смены"),
-    h("p", { class: "muted", text: `${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}` }),
-    h("div", { class: "stats" },
-      h("div", { class: "stat good" }, "Работа", h("span", { class: "v", text: fmtDurMin(workMin) })),
-      h("div", { class: "stat bad" }, "Простой", h("span", { class: "v", text: fmtDurMin(downMin) }))),
-    view.open ? h("p", { class: "handover-note", text: "Стан стоит. После закрытия смены простой продолжится у следующей смены. Пуск отмечать не нужно." }) : null,
-    gaps.length ? h("p", { class: "handover-note", text: `Нужно дополнить записи: ${gaps.length}. Откройте их ниже или закройте смену с пометкой.` }) : null,
-    h("h2", { text: "Простои смены" }),
-    dts.length ? h("div", { class: "segs" }, dts.map((d) => downtimeRow(d, view.shift))) : h("p", { class: "muted", text: "Простоев не было." }),
-    h("button", { class: "btn", onclick: () => startManualWizard("shift") }, "Забыл отметить простой"),
-    h("button", { class: "btn primary", disabled: view.closed || !view.crew, onclick: () => { ui.closeReceipt = null; go("closeCheck"); } }, "Перейти к закрытию смены"));
-}
+// Разбор простоев: слева список, справа редактор записи (от 1024 px); на узких экранах
+// список и редактор — два экрана по ui.screen: «shift» (список) и «detail» (запись)
+function renderShift(main, view) { renderDowntimes(main, view, false); }
+function renderDetail(main, view) { renderDowntimes(main, view, true); }
 
-function downtimeRow(d, shift) {
+// Строка простоя: интервал, причина с зоной, что сделали, длительность
+function downtimeRow(d, shift, selected) {
   const missing = d.open ? [] : [...new Set(d.segs.flatMap(missingFields))];
-  return h("button", { class: "seg" + (d.open ? " open" : ""), onclick: () => openDetail(d.downtimeId) },
-    h("span", { class: "when", text: `${fmtSince(d.startMs, shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
-    h("span", null,
-      h("span", { class: "why", text: reasonLabel(d.reason) || "Причина не указана" }),
-      d.segs.length > 1 ? h("span", { class: "manual-tag", text: `Причина менялась · частей: ${d.segs.length}` }) : null,
-      d.continued ? h("span", { class: "manual-tag", text: "Начался в прошлую смену" }) : null,
-      d.open ? h("span", { class: "manual-tag", text: "Простой продолжается · передаётся следующей смене" }) : null,
-      missing.length ? h("span", { class: "badge-need", text: "Дополнить: " + missing.join(", ") }) : null,
-      h("span", { class: "manual-tag", text: "Открыть запись" })),
-    h("span", { class: "dur", text: d.open ? "идёт" : fmtDurMin(d.minutes) }));
+  const what = d.open ? "Идёт сейчас"
+    : missing.includes("что сделали") ? "Не указано, что сделали"
+    : missing.length ? `Дополнить: ${missing.join(", ")}`
+    : String(d.action || "").trim() || "—";
+  const note = [d.continued ? "Начался в прошлую смену" : "", d.segs.length > 1 ? `Причина менялась · частей: ${d.segs.length}` : ""].filter(Boolean).join(" · ");
+  return h("button", { type: "button", class: "ps-row", "aria-current": selected ? "true" : null, onclick: () => openDetail(d.downtimeId) },
+    h("span", { class: "ps-row__time", text: `${fmtSince(d.startMs, shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
+    h("span", { class: "ps-row__main" },
+      h("span", null, h("span", { class: "ps-tag", "data-zone": reasonRef(d.reason) ? zoneOf(core.reasonKey(d.reason), refs) : "pending",
+        text: reasonLabel(d.reason) || "Причина не указана" })),
+      h("span", { class: "ps-row__what", "data-missing": missing.length ? "" : null, text: what }),
+      note ? h("span", { class: "ps-row__note", text: note }) : null),
+    h("span", { class: "ps-row__dur", text: d.open ? "идёт" : fmtDurMin(d.minutes) }));
 }
 
 function cardData(view) {
@@ -2823,140 +3055,368 @@ function cardData(view) {
   const s = d.segs.find((x) => x.index === ui.card.index) || d.segs.at(-1);
   return { d, s };
 }
-function renderDetail(main, view) {
-  const data = cardData(view);
-  if (!data) {
-    fill(main, backBtn("К итогу смены", () => go("shift")), question("Записи нет в этой смене"),
-      h("p", { text: "Возможно, смена уже закончилась или запись изменили. Проверьте итог текущей смены." }));
-    return;
+
+// Черновик правки записи: поля, которые мастер не менял, подтягивают свежие данные
+function editorDraft(s) {
+  const now = { note: s.note || "", action: s.action || "", billet: s.billet == null ? "" : String(s.billet).replace(".", ",") };
+  let e = ui.edit;
+  if (!e || e.downtimeId !== s.downtimeId || e.index !== s.index) {
+    e = ui.edit = { downtimeId: s.downtimeId, index: s.index, base: { ...now }, ...now, billetOther: false };
+  } else if (!e.base) {
+    // Черновик перенесён из старой версии: исходные значения берём из записи, правки мастера остаются
+    const mine = e.migrated || [];
+    for (const f of ["note", "action", "billet"]) if (!mine.includes(f)) e[f] = now[f];
+    e.base = { ...now };
+    delete e.migrated;
+  } else {
+    for (const f of ["note", "action", "billet"]) if (e[f] === e.base[f]) e[f] = e.base[f] = now[f];
   }
+  return e;
+}
+// Тонны: чипы 0 … 2, «Другое» открывает поле; значение хранится в черновике записи
+function billetPicker(draft, onChange) {
+  const input = h("input", { id: "edit-billet", class: "ps-input", type: "text", maxlength: "8", inputmode: "decimal", autocomplete: "off",
+    placeholder: "Своё значение, тонн", "aria-label": "Брак в тоннах" });
+  input.value = draft.billet;
+  let other = draft.billetOther || (String(draft.billet).trim() !== "" && !BILLET_CHIPS.some((v) => sameTons(draft.billet, v)));
+  const otherChip = h("button", { type: "button", class: "ps-chip", "aria-pressed": "false" }, "Другое");
+  const chips = BILLET_CHIPS.map((v) => h("button", { type: "button", class: "ps-chip", "aria-pressed": "false",
+    onclick: () => { other = false; draft.billetOther = false; input.value = ""; draft.billet = v; sync(); onChange(); } }, v));
+  const sync = () => {
+    chips.forEach((chip, i) => chip.setAttribute("aria-pressed", String(!other && sameTons(draft.billet, BILLET_CHIPS[i]))));
+    otherChip.setAttribute("aria-pressed", String(other));
+    input.hidden = !other;
+  };
+  otherChip.addEventListener("click", () => { other = true; draft.billetOther = true; draft.billet = input.value; sync(); onChange(); input.focus(); });
+  input.addEventListener("input", () => { draft.billet = input.value; onChange(); });
+  sync();
+  return h("div", { class: "ps-chips" }, chips, otherChip, input);
+}
+
+// Другие простои для проверки наложения: сутки с сервера, части смены и идущий простой
+function otherSegments(view, id) {
+  const list = [...(serverState?.day?.segments || []), ...view.segments];
+  if (view.open) list.push({ downtimeId: view.open.downtimeId, startMs: view.open.since ?? view.open.startMs, endMs: null, open: true });
+  return list.filter((s) => s.downtimeId !== id);
+}
+// Проверка правки времени до отправки; ядро на сервере проверит то же самое ещё раз.
+// ch: {from?, to?} — только изменённые поля (число мс или NaN)
+function timeFixError(view, d, ch) {
+  const now = nowMs();
+  const hasFrom = ch.from !== undefined, hasTo = ch.to !== undefined;
+  if ((hasFrom && !Number.isFinite(ch.from)) || (hasTo && !Number.isFinite(ch.to))) return "Укажите дату и время.";
+  const from = hasFrom ? ch.from : d.startMs;
+  const to = d.open ? null : hasTo ? ch.to : d.endMs;
+  if (hasFrom && from < now - 40 * 86400000) return "Время старше 40 суток: так давно простой править нельзя.";
+  if ((hasFrom && from > now) || (hasTo && to > now) || (d.open && from >= now)) return "Время в будущем.";
+  if (to !== null && to <= from) return "Пуск раньше остановки.";
+  if (d.segs.length > 1) {
+    if (hasFrom && from >= d.segs[0].endMs) return `Остановка не может быть позже смены причины в ${fmtClock(d.segs[0].endMs)}.`;
+    if (hasTo && to <= d.segs.at(-1).startMs) return `Пуск не может быть раньше смены причины в ${fmtClock(d.segs.at(-1).startMs)}.`;
+  }
+  const end = to ?? now;
+  const clash = otherSegments(view, d.downtimeId).find((o) => from < (o.open || o.endMs == null ? now : o.endMs) && end > o.startMs);
+  if (clash) return `Пересекается с другим простоем ${fmtClock(clash.startMs)}–${clash.open || clash.endMs == null ? "сейчас" : fmtClock(clash.endMs)}.`;
+  return "";
+}
+// Блок «Время»: когда стан встал и когда пошёл. Начало правится у первой части простоя, конец — у последней закрытой
+function renderTimeFix(view, d) {
+  const canFrom = !d.continued && (d.segs[0].index || 0) === 0;
+  const canTo = !d.open;
+  const base = { from: d.startMs, to: d.endMs };
+  let t = ui.timeEdit;
+  if (!t || t.downtimeId !== d.downtimeId) t = ui.timeEdit = { downtimeId: d.downtimeId, base: { ...base }, from: base.from, to: base.to };
+  else for (const f of ["from", "to"]) if (t[f] === t.base[f]) t[f] = t.base[f] = base[f];
+  const changes = () => {
+    const ch = {};
+    if (canFrom && t.from !== t.base.from) ch.from = t.from;
+    if (canTo && t.to !== t.base.to) ch.to = t.to;
+    return ch;
+  };
+  const error = fieldError("", true);
+  const save = psButton("secondary", "Сохранить время", () => {
+    const fresh = cardData(buildView());
+    if (!fresh || fresh.d.downtimeId !== d.downtimeId) {
+      error.textContent = "Запись изменилась. Вернитесь к списку и проверьте её."; error.hidden = false; return;
+    }
+    const ch = changes();
+    const msg = timeFixError(buildView(), fresh.d, ch);
+    if (msg) { error.textContent = msg; error.hidden = false; return; }
+    const id = d.downtimeId;
+    const last = fresh.d.indexLast;
+    const iso = (ms) => new Date(ms).toISOString();
+    const events = [];
+    if (ch.from !== undefined && ch.to !== undefined && last === 0) {
+      events.push({ type: "fix", fields: { downtimeId: id, index: 0, from: iso(ch.from), to: iso(ch.to) } });
+    } else {
+      const f = ch.from !== undefined ? { type: "fix", fields: { downtimeId: id, index: 0, from: iso(ch.from) } } : null;
+      const e = ch.to !== undefined ? { type: "fix", fields: { downtimeId: id, index: last, to: iso(ch.to) } } : null;
+      // Сдвиг позже — сначала конец, раньше — сначала начало: промежуточное состояние остаётся верным
+      events.push(...(ch.from !== undefined && ch.from > fresh.d.startMs ? [e, f] : [f, e]).filter(Boolean));
+    }
+    ui.timeEdit = null;
+    sendBatch(events);
+    showToast("Время сохранено");
+  }, { lg: false });
+  const update = () => {
+    const ch = changes();
+    const touched = ch.from !== undefined || ch.to !== undefined;
+    const msg = touched ? timeFixError(view, d, ch) : "";
+    error.textContent = msg;
+    error.hidden = !msg;
+    save.disabled = !touched || !!msg;
+  };
+  const row = (field, label, enabled, readout) => {
+    if (!enabled) {
+      return h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: label }), h("output", { class: "ps-readout", text: readout }));
+    }
+    const input = h("input", { type: "datetime-local", class: "ps-input", "aria-label": `${label}, Москва` });
+    input.value = localTimeValue(t[field]);
+    input.addEventListener("input", () => { t[field] = parseLocalTime(input.value); update(); });
+    const stepper = timeStepper(label, t[field], (dir) => {
+      t[field] = (Number.isFinite(t[field]) ? t[field] : minuteNow()) + dir * 60000;
+      render();
+    });
+    return h("div", { class: "ps-field" }, h("span", { class: "ps-field__label", text: label }), stepper, input);
+  };
+  update();
+  return h("div", { class: "ps-field ps-timefix", role: "group", "aria-labelledby": "edit-time-label" },
+    h("span", { class: "ps-field__label", id: "edit-time-label", text: "Время" }),
+    h("div", { class: "ps-form-row" },
+      row("from", "Стан встал", canFrom, d.continued ? `${fmtSince(d.startMs, view.shift)} · начался в прошлую смену` : fmtSince(d.startMs, view.shift)),
+      row("to", "Стан пошёл", canTo, "ещё стоит")),
+    error, save);
+}
+
+// Редактор записи простоя: время, причина, что случилось, что сделали, брак
+function renderEditor(view, data) {
   const { d, s } = data;
   ui.card.index = s.index;
-  const editText = (field) => {
-    ui.af = { downtimeId: s.downtimeId, index: s.index, reason: s.reason, field, value: s[field] || "" };
-    go("actionFix");
+  const draft = editorDraft(s);
+  const tile = (refs.tiles || []).find((t) => t.id === reasonGroup(s.reason)) || null;
+  // Смена причины идёт теми же шагами мастера, что и у пульта: плитка → «Что именно?» → описание
+  const openWizard = (t, item) => {
+    ui.wz = { mode: "shiftfix", downtimeId: s.downtimeId, index: s.index, step: 1, group: reasonGroup(s.reason), reason: s.reason, note: s.note || "" };
+    ui.wz.group = t.id;
+    const items = reasonItems(t);
+    if (item) { chooseReasonItem(ui.wz, t, item); ui.wz.step = 3; }
+    else if (items.length === 1) { chooseReasonItem(ui.wz, t, items[0]); ui.wz.step = 3; }
+    else ui.wz.step = 2;
+    go("reason");
   };
-  const choice = (title, value, onclick) => h("button", { class: "btn shift-action", onclick },
-    h("span", { text: title }), h("span", { class: "action-help", text: value }));
-  fill(main, backBtn("К итогу смены", () => go("shift")),
-    question(`Простой с ${fmtClock(d.startMs)}`),
-    h("p", { class: "muted", text: d.open ? "Ещё идёт. Заполнение карточки не отмечает пуск." : `До ${fmtClock(d.endMs)} · ${fmtDurMin(d.minutes)}` }),
-    d.segs.length > 1 ? h("div", { class: "tiles" }, d.segs.map((part) => h("button", {
-      class: "tile" + (part.index === s.index ? " sel" : ""), onclick: () => { ui.card.index = part.index; render(); },
-    }, `${fmtClock(part.startMs)}–${part.open ? "сейчас" : fmtClock(part.endMs)}`, h("span", { class: "t-code", text: reasonLabel(part.reason) || "Без причины" })))) : null,
-    question("Что изменить?"),
-    choice("Причина", reasonLabel(s.reason) || "Не указана", () => {
-      ui.wz = { mode: "shiftfix", downtimeId: s.downtimeId, index: s.index, step: 1,
-        group: reasonGroup(s.reason), reason: s.reason, note: s.note || "" };
-      go("reason");
-    }),
-    choice("Что случилось", s.note || "Не указано", () => editText("note")),
-    choice("Что сделали", s.action || (d.open ? "Можно записать уже выполненную работу" : "Не указано"), () => editText("action")),
-    choice("Брак", s.billet == null ? "Не указан" : fmtTons(s.billet), () => {
-      ui.bl = { downtimeId: s.downtimeId, index: s.index, value: s.billet == null ? "" : String(s.billet), custom: false };
-      go("billet");
-    }),
-    h("p", { class: "hint", text: receiptFor(d.downtimeId).length ? receiptStatus(receiptFor(d.downtimeId)) : "Запись из данных сервера" }));
-}
-
-function renderActionFix(main, view) {
-  const af = ui.af;
-  if (!af) return go("detail");
-  const field = af.field || "action";
-  const note = field === "note";
-  const must = !note || needsNote(af.reason);
-  const ta = h("textarea", { class: "note-input", rows: "4", maxlength: String(NOTE_MAX),
-    placeholder: note ? noteHint(af.reason) : actionHint(af.reason), "aria-label": note ? "Что случилось" : "Что сделали" });
-  ta.value = af.value || "";
-  const error = h("p", { class: "error-text", text: note ? "Опишите своими словами, что случилось." : "Напишите, что сделали." });
-  const save = h("button", { class: "btn primary", onclick: () => {
-    if (must && !validAction(ta.value)) return;
-    const data = cardData(buildView());
-    if (!data || data.s.downtimeId !== af.downtimeId || data.s.index !== af.index) {
-      error.hidden = false; error.textContent = "Запись изменилась. Вернитесь к карточке и проверьте её."; return;
-    }
-    ui.af = null;
-    ui.screen = "detail";
-    send("fix", { downtimeId: af.downtimeId, index: af.index, [field]: ta.value.trim() });
-  } }, "Сохранить");
+  const noteMust = needsNote(s.reason);
+  const note = h("textarea", { class: "ps-input", id: "edit-note", rows: "3", maxlength: String(NOTE_MAX), placeholder: noteHint(s.reason), "aria-label": "Что случилось" });
+  note.value = draft.note;
+  const action = h("textarea", { class: "ps-input", id: "edit-action", rows: "3", maxlength: String(NOTE_MAX), placeholder: actionHint(s.reason), "aria-label": "Что сделали" });
+  action.value = draft.action;
+  const error = h("p", { class: "ps-field__error" });
+  error.hidden = true;
+  const save = h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg" }, "Сохранить");
+  const cancel = h("button", { type: "button", class: "ps-btn ps-btn--ghost ps-btn--lg" }, "Отмена");
+  // Пустое поле не отправляем, кроме необязательного «Что случилось»: его можно стереть (сервер принимает note: "").
+  // Если описание обязательно («иная причина»), очищенное считается неизменённым, как и у остальных полей
+  const changed = () => ["note", "action", "billet"].filter((f) => {
+    const now = String(draft[f]).trim();
+    if (now === String(draft.base[f]).trim()) return false;
+    return now !== "" || (f === "note" && !noteMust);
+  });
+  // Что мешает сохранить: пустое поле не отправляем, непустое проверяем так же, как раньше
+  const problem = () => {
+    const list = changed();
+    if (list.includes("note") && noteMust && !validAction(draft.note)) return "Опишите своими словами, что случилось.";
+    if (list.includes("action") && !validAction(draft.action)) return "Напишите, что сделали.";
+    if (list.includes("billet") && !validBillet(draft.billet)) return "Укажите от 0 до 1000 тн.";
+    return "";
+  };
+  let touched = false;
   const update = () => {
-    af.value = ta.value;
-    save.disabled = must && !validAction(ta.value);
-    error.hidden = !save.disabled || !touched;
+    const list = changed();
+    save.disabled = !list.length;
+    cancel.hidden = !list.length;
+    const msg = touched ? problem() : "";
+    error.textContent = msg;
+    error.hidden = !msg;
   };
-  let touched = !!ta.value;
-  ta.addEventListener("input", () => { touched = true; update(); });
+  note.addEventListener("input", () => { draft.note = note.value; touched = true; update(); });
+  action.addEventListener("input", () => { draft.action = action.value; touched = true; update(); });
+  cancel.addEventListener("click", () => { ui.edit = null; render(); });
+  save.addEventListener("click", () => {
+    if (problem()) { touched = true; update(); showToast(problem()); return; }
+    const fresh = cardData(buildView());
+    if (!fresh || fresh.s.downtimeId !== s.downtimeId || fresh.s.index !== s.index) {
+      error.textContent = "Запись изменилась. Вернитесь к списку и проверьте её."; error.hidden = false; return;
+    }
+    const fields = {};
+    for (const f of changed()) {
+      const raw = String(draft[f]).trim();
+      fields[f] = f === "billet" ? Number(raw.replace(",", ".")) : raw;
+    }
+    ui.edit = null;
+    ui.screen = "detail";
+    // Каждое поле — отдельное событие fix, как и раньше: сервер сверяет их поэтому по одному
+    for (const [field, value] of Object.entries(fields)) send("fix", { downtimeId: s.downtimeId, index: s.index, [field]: value });
+  });
   update();
-  fill(main, backBtn("К записи простоя", () => go("detail")), question(note ? "Что случилось?" : "Что сделали?"),
-    note ? h("p", { class: "muted", text: reasonLabel(af.reason) }) : null, ta,
-    h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }), error, save);
+  const parts = d.segs.length > 1 ? h("div", { class: "ps-chips", role: "group", "aria-label": "Часть простоя" }, d.segs.map((part) =>
+    h("button", { type: "button", class: "ps-chip", "aria-pressed": String(part.index === s.index),
+      onclick: () => { ui.card.index = part.index; ui.edit = null; render(); } },
+    `${fmtClock(part.startMs)}–${part.open ? "сейчас" : fmtClock(part.endMs)} · ${reasonLabel(part.reason) || "Без причины"}`))) : null;
+  const items = tile ? reasonItems(tile) : [];
+  const receipt = receiptFor(d.downtimeId);
+  // Причина у этого простоя есть, а у других нет — следующий по времени
+  const rest = reasonRef(s.reason) ? noReasonList(view).filter((x) => x.downtimeId !== d.downtimeId) : [];
+  const nextBox = rest.length ? h("div", { class: "ps-notice", "data-tone": "ok" }, icon("tick", "ps-ico"),
+    h("span", { class: "ps-notice__body", text: `Ещё без причины: ${rest.length}` }),
+    psButton("primary", "Следующий без причины →", () => openDetail(rest[0].downtimeId, rest[0].segs.find((x) => !reasonRef(x.reason))?.index ?? null), { lg: false })) : null;
+  return h("section", { class: "ps-card ps-editor", "aria-label": "Запись простоя" },
+    h("div", { class: "ps-card__head" },
+      h("h2", { class: "ps-card__title", text: `Простой ${fmtSince(d.startMs, view.shift)}–${d.endMs === null ? "сейчас" : fmtClock(d.endMs)}` }),
+      h("span", { class: "ps-card__aside", text: d.open ? "идёт" : fmtDurMin(d.minutes) })),
+    d.open ? h("p", { class: "ps-field__hint", text: "Ещё идёт. Заполнение записи не отмечает пуск." }) : null,
+    nextBox,
+    parts,
+    renderTimeFix(view, d),
+    h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-reason-label" },
+      h("span", { class: "ps-field__label", id: "edit-reason-label", text: "Причина" }),
+      h("div", { class: "ps-chips" }, (refs.tiles || []).map((t) =>
+        h("button", { type: "button", class: "ps-chip", "aria-pressed": String(!!tile && tile.id === t.id), onclick: () => openWizard(t) }, t.title))),
+      h("span", { class: "ps-field__hint", text: reasonRef(s.reason) ? reasonLabel(s.reason) : "Причина не указана" })),
+    items.length > 1 ? h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-item-label" },
+      h("span", { class: "ps-field__label", id: "edit-item-label", text: "Уточнение" }),
+      h("div", { class: "ps-chips" }, items.map((item) =>
+        h("button", { type: "button", class: "ps-chip", "aria-pressed": String(core.reasonKey(item.code) === core.reasonKey(s.reason)), onclick: () => openWizard(tile, item) }, item.label)))) : null,
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "edit-note", text: noteMust ? "Что случилось" : "Что случилось (по желанию)" }), note),
+    h("div", { class: "ps-field" },
+      h("label", { class: "ps-field__label", for: "edit-action", text: "Что сделали" }), action,
+      h("span", { class: "ps-field__hint", text: d.open ? "Можно записать уже выполненную работу" : "Нужно заполнить до сдачи смены" })),
+    h("div", { class: "ps-field", role: "group", "aria-labelledby": "edit-billet-label" },
+      h("span", { class: "ps-field__label", id: "edit-billet-label", text: "Брак, тн" }),
+      billetPicker(draft, update),
+      h("span", { class: "ps-field__hint", text: "Если брака нет — 0" })),
+    error,
+    h("div", { class: "ps-actions" }, save, cancel),
+    h("p", { class: "ps-field__hint", text: receipt.length ? receiptStatus(receipt) : "Запись из данных сервера" }));
 }
 
-// Брак — самостоятельный вопрос карточки, не скрытый шаг после причины.
-function renderBillet(main, view) {
-  const bl = ui.bl;
-  if (!bl) return go("detail");
-  const save = (value) => {
-    if (!validBillet(value)) return showToast("Укажите от 0 до 1000 тн.");
-    ui.bl = null;
-    ui.screen = "detail";
-    send("fix", { downtimeId: bl.downtimeId, index: bl.index, billet: value });
-  };
-  const input = h("input", { type: "text", maxlength: "8", inputmode: "decimal", "aria-label": "Брак в тоннах", placeholder: "Тонны" });
-  input.value = bl.value;
-  input.addEventListener("input", () => { bl.value = input.value; });
-  fill(main, backBtn("К записи простоя", () => go("detail")), question("Сколько заготовки ушло в брак?"),
-    h("p", { class: "muted", text: bl.value !== "" ? `В записи: ${fmtTons(bl.value)}` : "Если брака не было, выберите 0 тн." }),
-    h("div", { class: "tiles" }, [0, 0.5, 1, 2, 5].map((v) => h("button", { class: "tile", onclick: () => save(v) }, fmtTons(v)))),
-    h("label", { for: "billet-value", text: "Другое количество, тн" }),
-    Object.assign(input, { id: "billet-value" }),
-    h("button", { class: "btn primary", onclick: () => {
-      if (validBillet(input.value)) save(Number(input.value.trim().replace(",", ".")));
-      else showToast("Укажите от 0 до 1000 тн.");
-    } }, "Сохранить"));
+function renderDowntimes(main, view, editing) {
+  const sum = shiftSummary(view);
+  const downMin = sum.downMinutes;
+  const workMin = shiftWorkMin(view, downMin);
+  const dts = shiftDowntimes(view);
+  const gaps = handoverGaps(view);
+  const data = editing ? cardData(view) : null;
+  if (editing && !data) {
+    return fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+      backBtn("К разбору простоев", () => go("shift")), question("Записи нет в этой смене"),
+      h("p", { text: "Возможно, смена уже закончилась или запись изменили. Проверьте итог текущей смены." })));
+  }
+  const head = screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Разбор простоев",
+    h("button", { type: "button", class: "ps-btn ps-btn--secondary", onclick: () => startManualWizard("shift") }, icon("plus", "ps-ico"), "Забыли отметить простой"),
+    editing ? "ps-head--list" : "");
+  const kpis = h("div", { class: "ps-kpis" },
+    h("div", { class: "ps-kpi", "data-kind": "work", "data-zero": workMin ? null : "" },
+      h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "work", "aria-hidden": "true" }), "Работа"),
+      h("span", { class: "ps-kpi__value", text: fmtHM(workMin) })),
+    h("div", { class: "ps-kpi", "data-kind": "down", "data-zero": downMin ? null : "" },
+      h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "unplanned", "aria-hidden": "true" }), "Простой"),
+      h("span", { class: "ps-kpi__value", text: fmtHM(downMin) })));
+  const noReason = noReasonList(view);
+  const review = h("section", { class: "ps-card ps-review", "aria-label": "Разбор без причины" },
+    noReason.length
+      ? [h("div", { class: "ps-review__count", role: "status", text: `Без причины: ${noReason.length}` }),
+        psButton("primary", "Начать разбор", () => {
+          const first = noReason[0];
+          openDetail(first.downtimeId, first.segs.find((s) => !reasonRef(s.reason))?.index ?? null);
+        }, { lg: false })]
+      : h("div", { class: "ps-notice", "data-tone": "ok", role: "status" }, icon("tick", "ps-ico"), h("span", { class: "ps-notice__body", text: "Все простои разобраны" })));
+  const list = h("div", { class: "ps-stack ps-dt-list" },
+    review,
+    view.open ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "Стан стоит. После сдачи смены простой продолжится у следующей смены. Пуск отмечать не нужно." })) : null,
+    gaps.length ? h("div", { class: "ps-notice" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: `Нужно дополнить записи: ${gaps.length}. Откройте их ниже или сдайте смену с пометкой.` })) : null,
+    kpis,
+    psCard(dts.length ? `${dts.length} ${plural(dts.length, "простой", "простоя", "простоев")}` : "Простои", dts.length ? "нажмите, чтобы исправить" : "",
+      dts.length ? h("div", { class: "ps-rows" }, dts.map((d) => downtimeRow(d, view.shift, !!data && data.d.downtimeId === d.downtimeId)))
+        : h("p", { class: "ps-field__hint", text: "Простоев не было." })));
+  const side = data ? renderEditor(view, data)
+    : h("section", { class: "ps-card ps-editor-empty" }, h("p", { class: "ps-field__hint", text: "Выберите простой в списке: здесь можно указать время, причину, что сделали и брак." }));
+  fill(main, h("div", { class: "ps-flow" },
+    editing ? backBtn("К разбору простоев", () => go("shift"), "ps-back-narrow") : null,
+    head,
+    h("div", { class: "ps-cols ps-cols--list", "data-editing": editing ? "" : null }, list, h("div", { class: "ps-stack ps-dt-editor" }, side)),
+    h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block ps-close-link", disabled: view.closed || !view.crew,
+      onclick: () => { ui.closeReceipt = null; go("closeCheck"); } }, icon("clip", "ps-ico"), "Сдать смену")));
 }
 
 // Черновик «что сделали по ремонту» относится к своему простою и своей смене
 function closeActionDraft(view) {
   const d = ui.closeAction;
-  return view.open && d && d.key === stopShiftKey(view) && typeof d.text === "string" ? d.text : "";
+  return d && d.key === stopShiftKey(view) && typeof d.text === "string" ? d.text : "";
 }
 function renderCloseConfirm(main, view) {
   const gaps = handoverGaps(view);
   const trouble = rejectionGroups(records).length;
   const receipt = records.filter((r) => ui.closeReceipt?.includes(r.event.id));
-  let repairWorkField = null;
-  if (view.open) {
+  // Пункты проверки: по одной записи на простой, переход — к первой незаполненной
+  const byDowntime = (name) => [...new Map(gaps.filter((s) => s.missing.includes(name)).map((s) => [s.downtimeId, s])).values()];
+  const noReason = byDowntime("причина");
+  const noAction = byDowntime("что сделали");
+  const noBillet = byDowntime("брак");
+  const noOther = byDowntime("описание иной причины");
+  const fix = (list) => ({ label: "Заполнить", onclick: () => openDetail(list[0].downtimeId, list[0].index) });
+  const count = (list, what) => `${list.length} ${plural(list.length, "простой", "простоя", "простоев")} ${what}`;
+  const extra = [...noBillet, ...noOther];
+  const since = runningSince(view);
+  // Открытый простой без причины тоже считается: причину можно выбрать, не дожидаясь пуска
+  const openNoReason = !!view.open && !reasonRef(view.open.reason);
+  const noReasonCount = noReason.length + (openNoReason ? 1 : 0);
+  const fixReason = { label: "Разобрать", onclick: () => go("shift") };
+  const checks = h("ul", { class: "ps-checklist" },
+    view.open ? checkItem(false, `Стан стоит с ${fmtSince(view.open.since ?? view.open.startMs, view.shift)}: простой перейдёт следующей смене, пуск отмечать не нужно`)
+      : checkItem(true, Number.isFinite(since) ? `Все остановки закрыты — стан работает с ${fmtSince(since, view.shift)}` : "Все остановки закрыты"),
+    checkItem(!noReasonCount, noReasonCount ? count({ length: noReasonCount }, "без причины") : "У каждого простоя есть причина", noReasonCount ? fixReason : null),
+    checkItem(!noAction.length, noAction.length ? count(noAction, "без «что сделали»") : view.open ? "У завершённых простоев указано, что сделали (идущий простой не проверяется)" : "Везде указано, что сделали", noAction.length ? fix(noAction) : null),
+    checkItem(!extra.length, extra.length
+      ? `Дополнить: ${[noBillet.length ? `брак (${noBillet.length})` : "", noOther.length ? `описание иной причины (${noOther.length})` : ""].filter(Boolean).join(", ")}`
+      : "Брак и описания указаны", extra.length ? fix(extra) : null),
+    checkItem(!trouble && !queue.length, trouble ? `Сервер не принял записей: ${trouble}. Они останутся на планшете для исправления`
+      : queue.length ? `Ждут отправки: ${queue.length}` : "Все записи приняты сервером",
+    trouble ? { label: "Показать", onclick: () => { ui.rejectsOpen = true; renderRejects(); renderTopbar(); } } : null));
+  // Записка следующей смене — при любом состоянии стана
+  let repairWork = null;
+  {
     const ta = h("textarea", {
-      class: "note-input",
+      class: "ps-input",
       id: "close-action",
       rows: "4",
       maxlength: String(NOTE_MAX),
       placeholder: "Например: сняли редуктор, ждём подшипник со склада",
+      "aria-label": "Что сделали по ремонту за смену и что осталось",
     });
     ta.value = closeActionDraft(view);
     ta.addEventListener("input", () => { ui.closeAction = { key: stopShiftKey(view), text: ta.value }; });
-    repairWorkField = [
-      h("label", { for: "close-action", text: "Что сделали по ремонту за смену и что осталось?" }),
-      ta,
-      h("p", { class: "hint", text: "Можно надиктовать — кнопка микрофона на клавиатуре" }),
-    ];
+    repairWork = psCard("Что сделали по ремонту за смену и что осталось?", "увидит следующая смена", ta,
+      h("span", { class: "ps-field__hint", text: (view.open ? "Стан стоит, простой перейдёт следующей смене. " : "Необязательно. ") + "Можно надиктовать — кнопка микрофона на клавиатуре." }));
   }
-  fill(main, backBtn("К проверке состояния стана", () => go("closeCheck")), question("Закрыть смену?"),
-    h("p", { class: "receipt", text: "Закрытие смены ещё не отправлено" }),
-    receipt.length ? h("p", { class: "receipt", text: receiptStatus(receipt) }) : null,
-    receipt.length && receiptStatus(receipt) === "Сохранено на планшете"
-      ? h("p", { class: "muted", text: "Запись уйдёт на сервер, когда появится связь." }) : null,
-    h("p", { text: view.open ? "Стан стоит. Простой перейдёт следующей смене, пуск отмечать не нужно. Напишите, что успели сделать по ремонту, — следующей смене будет проще."
-      : "Стан работает. Закроем смену с записанными итогами." }),
-    gaps.length ? h("div", { class: "handover-note" },
-      h("p", { text: `Без причины: ${gaps.filter((s) => s.missing.includes("причина")).length}. Без «что сделали»: ${gaps.filter((s) => s.missing.includes("что сделали")).length}. Без брака: ${gaps.filter((s) => s.missing.includes("брак")).length}. Дополните записи или закройте смену с пометкой.` }),
-      gaps.map((s) => h("button", { class: "btn", onclick: () => openDetail(s.downtimeId, s.index) },
-        `${fmtClock(s.startMs)} · дополнить: ${s.missing.join(", ")}`))) : h("p", { class: "muted", text: "У закрытых простоев заполнены причины, выполненные работы и необходимый брак." }),
-    trouble ? h("p", { class: "error-text", text: `Есть записи, которые сервер не принял: ${trouble}. Они останутся на планшете для исправления.` }) : null,
-    repairWorkField,
-    h("button", { class: "btn primary", disabled: !view.crew || view.closed, onclick: () => doCloseShift(gaps.length > 0 || trouble > 0) },
-      gaps.length || trouble ? "Закрыть смену с пометкой" : "Закрыть смену"));
+  const status = receipt.length ? receiptStatus(receipt) : null;
+  const { endMs } = view.shift;
+  fill(main, h("div", { class: "ps-flow" },
+    backBtn("К проверке состояния стана", () => go("closeCheck")),
+    screenHead(`${periodLabel(view.shift)} · ${crewTitle(view.crew?.crewId)}`, "Сдача смены"),
+    h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body" },
+        h("span", { text: "Закрытие смены ещё не отправлено" }),
+        status ? h("span", { class: "ps-notice__line", text: status }) : null,
+        status === "Сохранено на планшете" ? h("span", { class: "ps-notice__line", text: "Запись уйдёт на сервер, когда появится связь." }) : null)),
+    h("div", { class: "ps-cols" },
+      h("div", { class: "ps-stack" }, psCard("Проверка перед сдачей", null, checks), repairWork),
+      h("div", { class: "ps-stack" },
+        psCard("Итоги смены", `до конца ${fmtDurMin((endMs - nowMs()) / 60000)}`, shiftKpis(view)),
+        h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg ps-btn--block", disabled: !view.crew || view.closed,
+          onclick: () => doCloseShift(gaps.length > 0 || trouble > 0) }, icon("clip", "ps-ico"), "Сдать смену"),
+        h("p", { class: "ps-field__hint", text: "Сдать можно и с незаполненным пунктом — следующая смена увидит его в списке." })))));
 }
 
 // Контракт: передача смены — только shift_close. Открытый простой не закрываем.
@@ -2968,8 +3428,8 @@ function shiftCloseEvents(view, withGaps) {
     gaps.map((s) => `${fmtClock(s.startMs)}: ${s.missing.join(", ")}`).join("; "));
   const rejected = rejectionGroups(records).length;
   if (rejected) lines.push(`Не приняты сервером записи: ${rejected}. Требуется исправление на планшете.`);
-  // Что сделали по ремонту: необязательно; пустое не отправляем
-  const action = view.open ? closeActionDraft(view).trim().slice(0, NOTE_MAX) : "";
+  // Что сделали по ремонту: необязательно, при любом состоянии стана; пустое не отправляем
+  const action = closeActionDraft(view).trim().slice(0, NOTE_MAX);
   return [{ type: "shift_close", fields: { note: lines.join(" ").slice(0, NOTE_MAX), ...(action ? { action } : {}) } }];
 }
 function doCloseShift(withGaps = false) {
@@ -2995,18 +3455,25 @@ function renderClosed(main, view) {
   const info = ui.closedInfo;
   const list = records.filter((r) => info?.eventIds?.includes(r.event.id));
   const rejected = list.some((r) => r.status === "rejected");
-  fill(main, question(rejected ? "Закрытие смены нужно исправить" : "Смена закрыта"),
-    h("p", { class: "receipt", text: receiptStatus(list) }),
-    receiptStatus(list) === "Сохранено на планшете" ? h("p", { class: "muted", text: "Запись уйдёт на сервер, когда появится связь." }) : null,
-    info ? h("div", { class: "stats" },
-      h("div", { class: "stat good" }, "Работа", h("span", { class: "v", text: fmtDurMin(info.workMin) })),
-      h("div", { class: "stat bad" }, "Простои", h("span", { class: "v", text: `${info.stops} · ${fmtDurMin(info.downMin)}` }))) : null,
-    info?.note ? h("p", { class: "handover-note", text: info.note }) : null,
-    info?.action ? h("div", { class: "card" },
-      h("div", { class: "card-title", text: "Передали по ремонту" }),
-      h("div", { class: "card-note", text: `«${info.action}»` })) : null,
-    info?.open ? h("p", { class: "muted", text: "Следующий работник примет смену со стоящим станом. Простой продолжается." }) : null,
-    h("button", { class: "btn primary", onclick: () => { ui.crewId = null; ui.crewBack = false; go("crew"); } }, "Принять смену"));
+  const status = receiptStatus(list);
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    question(rejected ? "Закрытие смены нужно исправить" : "Смена закрыта"),
+    h("div", { class: "ps-notice", "data-tone": rejected ? "stop" : status === "Принято сервером" ? "ok" : "info" }, icon(rejected ? "alert" : "tick", "ps-ico"),
+      h("span", { class: "ps-notice__body" },
+        h("span", { text: status }),
+        status === "Сохранено на планшете" ? h("span", { class: "ps-notice__line", text: "Запись уйдёт на сервер, когда появится связь." }) : null)),
+    info ? h("div", { class: "ps-kpis" },
+      h("div", { class: "ps-kpi", "data-kind": "work", "data-zero": info.workMin ? null : "" },
+        h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "work", "aria-hidden": "true" }), "Работа"),
+        h("span", { class: "ps-kpi__value", text: fmtHM(info.workMin) })),
+      h("div", { class: "ps-kpi", "data-kind": "down", "data-zero": info.downMin ? null : "" },
+        h("span", { class: "ps-kpi__label" }, h("span", { class: "ps-swatch", "data-zone": "unplanned", "aria-hidden": "true" }), `Простои · ${info.stops}`),
+        h("span", { class: "ps-kpi__value", text: fmtHM(info.downMin) }))) : null,
+    info?.note ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"), h("span", { class: "ps-notice__body", text: info.note })) : null,
+    info?.action ? psCard("Передали по ремонту", "", h("div", { class: "ps-notice", "data-tone": "info" }, icon("wrench", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: `«${info.action}»` }))) : null,
+    info?.open ? h("p", { class: "ps-field__hint", text: "Следующий работник примет смену со стоящим станом. Простой продолжается." }) : null,
+    h("button", { type: "button", class: "ps-btn ps-btn--primary ps-btn--lg", onclick: () => { ui.crewId = null; ui.crewBack = false; go("crew"); } }, "Принять смену")));
 }
 
 // Отклонённое событие хранится целиком, пока исправление не примет сервер.
@@ -3016,30 +3483,46 @@ function renderRepair(main, view) {
   const e = repair.event;
   const record = records.find((r) => r.event.id === repair.id);
   const group = groupFor(repair.id);
-  const choice = (field, label, value) => h("button", { class: "btn shift-action", onclick: () => {
-    repair.field = field; go("repairField");
-  } }, h("span", { text: label }), h("span", { class: "action-help", text: value || "Не указано" }));
+  // Строка «что исправить»: подпись и текущее значение, нажатие открывает поле
+  const row = (label, value, onclick) => h("button", { type: "button", class: "ps-edit", onclick },
+    h("span", { class: "ps-edit__label", text: label }), h("span", { class: "ps-edit__value", text: value || "Не указано" }));
+  const choice = (field, label, value) => row(label, value, () => { repair.field = field; go("repairField"); });
   const replacement = records.findLast((r) => r.replaces === repair.id && r.status === "pending");
-  fill(main, backBtn("Вернуться, не исправляя", () => go(repair.back === "repair" ? "auto" : repair.back || "auto")),
-    question("Исправить запись"),
-    h("p", { text: group ? conflictMessage(group) : humanError(record?.error) }),
-    group ? savedAnswers(group) : null, group ? transferButton(group) : null,
-    h("p", { class: "muted", text: eventTitle(e) }),
-    choice("at", e.type === "stop" ? "Исправить время остановки" : "Когда отметили", `${fmtDate(core.toMs(e.at))} ${fmtClock(core.toMs(e.at))} · МСК`),
-    e.type === "manual" ? choice("from", "Когда стан встал", `${fmtDate(core.toMs(e.from))} ${fmtClock(core.toMs(e.from))}`) : null,
-    e.type === "manual" ? choice("to", "Когда стан пошёл", `${fmtDate(core.toMs(e.to))} ${fmtClock(core.toMs(e.to))}`) : null,
-    !["shift_open", "shift_close"].includes(e.type) ? h("button", { class: "btn shift-action", onclick: () => {
-      ui.wz = { mode: "repair", downtimeId: e.downtimeId, index: e.index, step: 1,
-        reason: e.reason, group: reasonGroup(e.reason), note: e.note || "" };
-      go("reason");
-    } }, "Причина", h("span", { class: "action-help", text: reasonLabel(e.reason ?? group?.fields.reason) || "Не указана" })) : null,
-    choice("note", e.type === "shift_close" ? "Пометка при закрытии смены" : "Что случилось", e.note ?? group?.fields.note),
-    ["start", "manual", "fix"].includes(e.type) ? choice("action", "Что сделали", e.action) : null,
-    ["manual", "fix"].includes(e.type) ? choice("billet", "Брак", e.billet == null ? "Не указан" : fmtTons(e.billet)) : null,
-    e.type === "shift_open" ? h("button", { class: "btn", onclick: () => { ui.crewId = null; ui.crewBack = true; go("crew"); } }, "Выбрать работника") : null,
-    repair.error ? h("p", { class: "error-text", text: repair.error }) : null,
-    replacement ? h("p", { text: "Исправление сохранено на планшете и ждёт ответа сервера." }) : null,
-    h("button", { class: "btn primary", disabled: !!replacement, onclick: submitRepair }, "Отправить исправление"));
+  const taken = group && takenFields(group);
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" },
+    backBtn("Вернуться, не исправляя", () => go(repair.back === "repair" ? "auto" : repair.back || "auto")),
+    screenHead(eventTitle(e), "Исправить запись"),
+    h("div", { class: "ps-notice", "data-tone": "stop" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: group ? conflictMessage(group) : humanError(record?.error, record?.event) })),
+    group ? conflictAnswers(group) : null, group ? transferButton(group) : null,
+    h("section", { class: "ps-card" },
+      h("h2", { class: "ps-card__title", text: "Что исправить" }),
+      h("div", { class: "ps-rows" },
+        choice("at", e.type === "stop" ? "Исправить время остановки" : "Когда отметили", `${fmtDate(core.toMs(e.at))} ${fmtClock(core.toMs(e.at))} · МСК`),
+        e.type === "manual" || (e.type === "fix" && e.from != null) ? choice("from", "Когда стан встал", `${fmtDate(core.toMs(e.from))} ${fmtClock(core.toMs(e.from))}`) : null,
+        e.type === "manual" || (e.type === "fix" && e.to != null) ? choice("to", "Когда стан пошёл", `${fmtDate(core.toMs(e.to))} ${fmtClock(core.toMs(e.to))}`) : null,
+        // У пуска причины нет: её указывают в разборе простоев (строка нужна, только если причина уже записана)
+        !["shift_open", "shift_close"].includes(e.type) && !(e.type === "start" && !e.reason) ? row("Причина", reasonLabel(e.reason ?? group?.fields.reason) || "Не указана", () => {
+          ui.wz = { mode: "repair", downtimeId: e.downtimeId, index: e.index, step: 1,
+            reason: e.reason, group: reasonGroup(e.reason), note: e.note || "" };
+          go("reason");
+        }) : null,
+        choice("note", e.type === "shift_close" ? "Пометка при закрытии смены" : "Что случилось", e.note ?? group?.fields.note),
+        ["start", "manual", "fix"].includes(e.type) ? choice("action", "Что сделали", e.action) : null,
+        ["manual", "fix"].includes(e.type) ? choice("billet", "Брак", e.billet == null ? "Не указан" : fmtTons(e.billet)) : null),
+      e.type === "shift_open" ? psButton("secondary", "Выбрать работника", () => { ui.crewId = null; ui.crewBack = true; go("crew"); }, { lg: false }) : null),
+    repair.error ? fieldError(repair.error) : null,
+    replacement ? h("div", { class: "ps-notice", "data-tone": "info" }, icon("info", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: "Исправление сохранено на планшете и ждёт ответа сервера." })) : null,
+    taken ? h("div", { class: "ps-notice", "data-tone": "stop" }, icon("alert", "ps-ico"),
+      h("span", { class: "ps-notice__body", text: repair.confirmReplace
+        ? "Ответы другого устройства будут стёрты и заменены вашими. Это нельзя отменить."
+        : "Если отправить свои ответы, ответы другого устройства пропадут." })) : null,
+    taken ? psButton("secondary", repair.confirmReplace ? "Да, заменить ответы устройства" : "Заменить ответы устройства",
+      () => { if (repair.confirmReplace) { repair.confirmReplace = false; submitRepair(); } else { repair.confirmReplace = true; render(); } },
+      { disabled: !!replacement })
+      : psButton("primary", "Отправить исправление", submitRepair, { disabled: !!replacement }),
+    taken ? psButton("ghost", "Убрать мою запись", () => dismissRejected([repair.id]), { lg: false }) : null));
 }
 function renderRepairField(main) {
   const repair = ui.repair;
@@ -3048,10 +3531,10 @@ function renderRepairField(main) {
   const time = ["at", "from", "to"].includes(field);
   const labels = { at: "Когда отметили?", from: "Когда стан встал?", to: "Когда стан пошёл?", note: e.type === "shift_close" ? "Пометка при закрытии смены" : "Что случилось?", action: "Что сделали?", billet: "Сколько брака, в тоннах?" };
   const input = time || field === "billet"
-    ? h("input", { type: time ? "datetime-local" : "number", min: field === "billet" ? "0" : null, max: field === "billet" ? "1000" : null, step: field === "billet" ? "0.1" : null, "aria-label": labels[field] })
-    : h("textarea", { class: "note-input", maxlength: String(NOTE_MAX), "aria-label": labels[field], placeholder: field === "action" ? actionHint(e.reason) : noteHint(e.reason) });
+    ? h("input", { class: "ps-input", type: time ? "datetime-local" : "number", min: field === "billet" ? "0" : null, max: field === "billet" ? "1000" : null, step: field === "billet" ? "0.1" : null })
+    : h("textarea", { class: "ps-input", rows: "4", maxlength: String(NOTE_MAX), placeholder: field === "action" ? actionHint(e.reason) : noteHint(e.reason) });
   input.value = time ? localTimeValue(core.toMs(e[field])) : e[field] ?? "";
-  const error = h("p", { class: "error-text", hidden: true });
+  const error = fieldError();
   repair.values ||= {};
   repair.invalid ||= {};
   if (Object.hasOwn(repair.values, field)) input.value = repair.values[field];
@@ -3063,9 +3546,11 @@ function renderRepairField(main) {
       (field === "billet" && (!Number.isFinite(value) || value < 0 || value > 1000));
     if (!repair.invalid[field]) e[field] = time ? new Date(value).toISOString() : value;
   });
-  fill(main, backBtn("К сохранённой записи", () => go("repair")),
-    question(labels[field]), time ? h("p", { class: "muted", text: "Дата и время по Москве. Меняйте время только если оно было указано неверно." }) : null,
-    input, error, h("button", { class: "btn primary", onclick: () => {
+  fill(main, h("div", { class: "ps-flow ps-flow--narrow" }, backBtn("К сохранённой записи", () => go("repair")),
+    question(labels[field]),
+    h("section", { class: "ps-card" },
+      psField(labels[field], input, time ? "Дата и время по Москве. Меняйте время только если оно было указано неверно." : null)),
+    error, psButton("primary", "Готово", () => {
       const value = time ? parseLocalTime(input.value) : field === "billet" ? (input.value.trim() ? Number(input.value) : NaN) : input.value;
       if ((time && (!Number.isFinite(value) || value > nowMs())) || (field === "billet" && (!Number.isFinite(value) || value < 0 || value > 1000))) {
         error.textContent = time ? "Укажите прошедшее время." : "Укажите вес от 0 до 1000 тн."; error.hidden = false; return;
@@ -3073,7 +3558,7 @@ function renderRepairField(main) {
       e[field] = time ? new Date(value).toISOString() : value;
       repair.invalid[field] = false;
       go("repair");
-    } }, "Готово"));
+    })));
 }
 function submitRepair() {
   const repair = ui.repair;
@@ -3090,10 +3575,15 @@ function submitRepair() {
   if (e.type === "fix" && e.action !== undefined && !validAction(e.action)) repair.error = "Напишите, что сделали.";
   if (e.type === "manual") repair.error = manualError({ ...view, shift: core.shiftOf(core.toMs(records.find((r) => r.event.id === repair.id)?.event.from || e.from), refs.settings.schedule) }, { ...e, from: core.toMs(e.from), to: core.toMs(e.to) });
   if (e.type === "start") {
-    const reason = e.reason || view.open?.reason;
-    if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в итоге смены; сохранённые ответы остаются здесь.";
-    else if (!reasonRef(reason)) repair.error = "Укажите причину.";
+    // Причина при пуске не нужна: её указывают в разборе простоев
+    if (!view.open || view.open.downtimeId !== e.downtimeId) repair.error = "Этот простой уже изменился. Проверьте его в разборе простоев; сохранённые ответы остаются здесь.";
     else if (core.toMs(e.at) < view.open.startMs) repair.error = "Пуск не может быть раньше остановки.";
+  }
+  if (e.type === "fix" && (e.from != null || e.to != null)) {
+    const f = e.from != null ? core.toMs(e.from) : null;
+    const t = e.to != null ? core.toMs(e.to) : null;
+    if (t !== null && t > nowMs()) repair.error = "Время в будущем. Исправьте его.";
+    else if (f !== null && t !== null && t <= f) repair.error = "Пуск раньше остановки. Исправьте время.";
   }
   if (["reason", "split"].includes(e.type) && (!reasonRef(e.reason) || (needsNote(e.reason) && !validAction(e.note)))) repair.error = "Выберите причину. Для иной причины нужно описание.";
   if (core.toMs(e.at) > nowMs()) repair.error = "Время записи в будущем. Исправьте его.";
@@ -3134,6 +3624,10 @@ function tick() {
   for (const el of document.querySelectorAll("[data-msk]")) el.textContent = fmtClock(now) + " МСК";
   for (const el of document.querySelectorAll("[data-until]")) el.textContent = fmtDurMin((Number(el.dataset.until) - now) / 60000);
   for (const el of document.querySelectorAll(".board-clock")) el.textContent = fmtClock(now);
+  for (const el of document.querySelectorAll(".ps-progress__fill[data-from]")) {
+    const from = Number(el.dataset.from);
+    el.style.width = `${Math.max(0, Math.min(100, ((now - from) / (Number(el.dataset.to) - from)) * 100)).toFixed(1)}%`;
+  }
   for (const el of document.querySelectorAll("[data-since]")) {
     const since = Number(el.dataset.since);
     el.textContent = el.dataset.fmt === "durs" ? fmtDurSec((now - since) / 1000)
@@ -3161,7 +3655,7 @@ window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer
 window.addEventListener("online", () => { flush(); loadState(); });
 document.addEventListener("click", (event) => {
   if (taps.blocked()) { event.preventDefault(); event.stopImmediatePropagation(); return; }
-  const button = event.target.closest?.("button.primary, button.mill-btn, button.tile");
+  const button = event.target.closest?.("button.primary, button.mill-btn, button.tile, button.ps-reason, button.ps-btn--primary, button.ps-btn--run");
   if (button && !button.disabled) {
     button.disabled = true;
     setTimeout(() => { if (button.isConnected) button.disabled = false; }, 400);
@@ -3184,7 +3678,7 @@ window.addEventListener("pagehide", persistClient);
 // --- Запуск ---
 async function boot() {
   if (!key) { render(); return; }
-  render();
+  if (refs) render(); // без справочника экран перерисует сама загрузка: «Загружаем…», а не «Нет данных»
   // Справочник берём с сервера при каждом открытии, если есть связь: кэш на устройстве —
   // только на случай без сети. Иначе после выкладки страница могла работать со старыми причинами
   const ok = await loadRefs();
@@ -3226,7 +3720,24 @@ if (DEMO) {
 if (ui.mw) ui.mw.saving = false;
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => { /* офлайн-установка недоступна */ });
+  // Новый service worker забирает страницу сам (skipWaiting + clients.claim): перезагружаемся один раз,
+  // чтобы не остаться со старым app.js; черновики лежат в localStorage и перезагрузку переживают
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    try {
+      // защита от цикла: после перезагрузки новая не раньше чем через минуту
+      if (Date.now() - Number(sessionStorage.getItem("stan.swReload") || 0) < 60000) return;
+      sessionStorage.setItem("stan.swReload", String(Date.now()));
+    } catch { /* без sessionStorage защищает флаг reloaded */ }
+    persistClient();
+    location.reload();
+  });
+  navigator.serviceWorker.register("./sw.js")
+    .then((reg) => reg.update())
+    .catch(() => { /* офлайн-установка недоступна */ });
 }
 
 requestWake();

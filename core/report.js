@@ -7,7 +7,7 @@
 // сменам методом наибольшего остатка, поэтому столбцы дают ровно итоги сводки, а в строке учтённое время
 // равно работе плюс простоям. Часть простоя в журнале округляется сама, как на экране: сумма журнала
 // может отличаться от «Простоя» на минуту-две — сводка говорит об этом в пояснении.
-import { buildDowntimes, shiftOf, splitByShifts, toMs } from "./core.js";
+import { billetSegments, buildDowntimes, shiftOf, splitByShifts, toMs } from "./core.js";
 import { computeStats } from "./stats.js";
 import { zoneOf } from "./zones.js";
 import { buildXlsx } from "./xlsx.js";
@@ -147,13 +147,13 @@ function handoverRows(events, refs, schedule, fromMs, toMsEff) {
     if (t < fromMs || t > toMsEff) continue;
     const name = personName(event, refs);
     if (event.type === "shift_open") {
-      // Повторный приём тем же человеком без сдачи между ними — та же запись
-      if (open && !open.close && (open.open.name === name || !name)) continue;
       const sh = shiftOf(t, schedule);
+      // Повторный приём тем же человеком без сдачи между ними в той же смене — та же запись
+      if (open && !open.close && open.day === sh.day && open.shiftNo === sh.shiftNo && (open.open.name === name || !name)) continue;
       open = { day: sh.day, shiftNo: sh.shiftNo, open: { name, t }, close: null };
       rows.push(open);
     } else {
-      const close = { name, t, note: clean(event.note) };
+      const close = { name, t, note: clean(event.note), action: clean(event.action) };
       if (open && !open.close && t <= shiftOf(open.open.t, schedule).endMs + 2 * 3_600_000) {
         open.close = { ...close, name: close.name ?? open.open.name };
       } else {
@@ -182,14 +182,20 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
     stops.set(seg.downtimeId, stop);
   }
 
+  // Брак отрезков периода — по общему правилу (core.billetSegments), как в «Показателях»
+  const billetOf = new Map(billetSegments(built.segments, fromMs, toEff, schedule).map((r) => [r.segment, r.billet]));
+
   // Части: отрезок простоя в границах одной смены и периода
   const parts = [];
   for (const seg of built.segments) {
     const startMs = Math.max(seg.startMs, fromMs);
     const endMsClip = Math.min(seg.endMs, toEff);
-    if (endMsClip <= startMs) continue;
-    for (const piece of splitByShifts({ startMs, endMs: endMsClip }, schedule)) {
-      const shift = shiftOf(piece.startMs, schedule);
+    // Отрезок нулевой длительности без брака в журнал не попадает; с браком — остаётся, чтобы брак не терялся
+    const zero = endMsClip <= startMs;
+    if (zero && !(endMsClip === seg.endMs && startMs === seg.endMs && billetOf.get(seg) > 0)) continue;
+    for (const piece of zero ? [{ startMs: endMsClip, endMs: endMsClip }] : splitByShifts({ startMs, endMs: endMsClip }, schedule)) {
+      // Смена нулевого отрезка — как в core.billetSegments: та, где он завершился
+      const shift = shiftOf(zero ? piece.startMs - 1 : piece.startMs, schedule);
       const stop = stops.get(seg.downtimeId);
       const ongoing = seg.open === true && piece.endMs >= nowMs;
       const marks = [];
@@ -198,7 +204,7 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
       if (ongoing) marks.push("ещё идёт");
       if (seg.manual) marks.push("записан вручную");
       if (!hasText(seg.reason)) marks.push("причина не указана");
-      const billet = seg.open !== true && Number.isFinite(seg.billet) && seg.billet > 0 && piece.endMs === seg.endMs ? seg.billet : 0;
+      const billet = piece.endMs === seg.endMs ? (billetOf.get(seg) ?? 0) : 0;
       parts.push({
         downtimeId: seg.downtimeId, index: seg.index ?? 0, startMs: piece.startMs, endMs: piece.endMs,
         ms: piece.endMs - piece.startMs, day: shift.day, shiftNo: shift.shiftNo, shiftStartMs: shift.startMs,
@@ -209,8 +215,12 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
   }
   parts.sort((a, b) => a.startMs - b.startMs || compareText(String(a.downtimeId), String(b.downtimeId)) || a.index - b.index);
 
-  // Минуты части — как в списке простоев на экране: каждая часть округляется сама
-  for (const p of parts) p.minutes = Math.round(p.ms / MINUTE);
+  // Минуты частей журнала: сначала сутки (сумма равна «Простою» за период), внутри суток — части (сумма равна суткам; у однодневного отчёта это и есть «Простой»).
+  // Остаток округления раздаётся методом наибольших остатков, поэтому у части минуты могут отличаться на 1 от её точной длительности
+  const dayKeys = [...new Set(parts.map((p) => p.day))];
+  const dayParts = dayKeys.map((day) => parts.filter((p) => p.day === day));
+  const dayMin = apportionMs(dayParts.map((own) => own.reduce((sum, p) => sum + p.ms, 0)), stats.downMin);
+  dayParts.forEach((own, i) => apportionMs(own.map((p) => p.ms), dayMin[i]).forEach((m, j) => { own[j].minutes = m; }));
 
   // Смены периода по расписанию и учтённое время в каждой
   const slots = [];
@@ -230,7 +240,7 @@ function collect(events, { fromMs, endMs, nowMs, refs }) {
     return [zone, apportionMs(msList, target)];
   }));
   const firstShift = new Map(); // остановка → ключ смены, где она появилась в периоде первой
-  for (const p of parts) if (!firstShift.has(p.downtimeId)) firstShift.set(p.downtimeId, `${p.day}|${p.shiftNo}`);
+  for (const p of parts) if (p.ms > 0 && !firstShift.has(p.downtimeId)) firstShift.set(p.downtimeId, `${p.day}|${p.shiftNo}`);
   const shiftRows = [];
   slots.forEach((slot, i) => {
     if (accounted[i] <= 0) return;
@@ -355,9 +365,10 @@ function summarySheet(data, ctx) {
     const key = r.reason ?? "";
     merged.set(key, { reason: r.reason ?? null, minutes: (merged.get(key)?.minutes ?? 0) + r.minutes });
   }
+  // Нулевая часть (она в журнале ради брака) остановкой не считается — как в stats.js
   const reasons = [...merged.values()].map((r) => ({
-    ...r, stops: new Set(parts.filter((p) => p.reason === r.reason).map((p) => p.downtimeId)).size,
-  })).sort((a, b) => b.minutes - a.minutes || compareText(reasonTitle(a.reason, refs), reasonTitle(b.reason, refs)));
+    ...r, stops: new Set(parts.filter((p) => p.ms > 0 && p.reason === r.reason).map((p) => p.downtimeId)).size,
+  })).filter((r) => r.minutes > 0 || r.stops > 0).sort((a, b) => b.minutes - a.minutes || compareText(reasonTitle(a.reason, refs), reasonTitle(b.reason, refs)));
   let sumMin = 0;
   let sumStops = 0;
   for (const r of reasons) {
@@ -378,9 +389,8 @@ function summarySheet(data, ctx) {
   rows.push([]);
   const notes = [];
   if (reasons.length && sumMin !== stats.downMin) notes.push("Время по причинам округлено по каждой строке, поэтому сумма строк может отличаться от итога на 1–2 минуты.");
-  const journalMin = parts.reduce((sum, p) => sum + p.minutes, 0);
-  if (journalMin !== stats.downMin) {
-    notes.push(`Длительность каждой части простоя в журнале округлена до минуты, как на экране, поэтому сумма журнала (${hm(journalMin)}) может немного отличаться от «Простоя» в сводке (${hm(stats.downMin)}), посчитанного по точному времени.`);
+  if (parts.some((p) => p.minutes !== Math.round(p.ms / MINUTE))) {
+    notes.push("Минуты в журнале простоев подогнаны так, чтобы их сумма равнялась «Простою» за период в сводке: у отдельной части они могут отличаться от точной длительности на 1 минуту.");
   }
   if (sumStops > stats.stops) notes.push("Остановка, у которой менялась причина, учтена в каждой своей причине, поэтому сумма остановок по строкам больше итога.");
   notes.push("Тип простоя определяется причиной: плановый, внеплановый или авария. Остановка без причины считается внеплановой, как на экране «Показатели стана».");
@@ -464,6 +474,11 @@ function journalSheet(data, ctx, masters) {
   };
 }
 
+/** Замечание при сдаче: автоматическая пометка и текст мастера «что сделали» — в одной ячейке, с переносом строки. */
+function closeText(close) {
+  return [close.note, close.action ? `Что сделали: ${close.action}` : ""].filter((part) => part).join("\n");
+}
+
 function handoverSheet(handovers, ctx) {
   const { refs } = ctx;
   const tz = refs.settings.schedule.tzOffsetMinutes || 0;
@@ -475,7 +490,7 @@ function handoverSheet(handovers, ctx) {
     rows.push([
       dayCell(h.day), text(`Смена ${h.shiftNo}`, { h: "center" }),
       text(h.open ? h.open.name || "Не указан" : ""), dateTime(h.open?.t ?? null, tz),
-      text(h.close ? h.close.name || "Не указан" : ""), dateTime(h.close?.t ?? null, tz), text(h.close ? h.close.note : ""),
+      text(h.close ? h.close.name || "Не указан" : ""), dateTime(h.close?.t ?? null, tz), text(h.close ? closeText(h.close) : ""),
     ]);
   }
   if (!handovers.length) {

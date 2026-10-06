@@ -55,9 +55,9 @@
 .ds-row__label {
   position: relative;
   padding-right: 6px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 12px;
+  line-height: 13px;
   color: var(--text-soft);
   text-align: right;
   white-space: nowrap;
@@ -105,9 +105,7 @@
 .z-plan { background: var(--z-plan); }           /* плановый простой: синий в обеих темах */
 .z-unplanned { background: var(--z-unplanned); } /* внеплановый — жёлтый */
 .z-failure { background: var(--z-failure); }     /* авария — красный */
-.z-nodata { background: transparent; }           /* нет данных — без заливки */
-
-/* Рамка перевалки на шкале (внутрь, размер части не меняется); в тёмной теме прозрачная */
+.z-nodata { background: transparent; }           /* Рамка перевалки на шкале (внутрь, размер части не меняется); в тёмной теме прозрачная */
 .ds-seg.z-plan {
   box-shadow: inset 0 0 0 1px var(--z-plan-edge);
 }
@@ -144,7 +142,7 @@
   z-index: 3;
   pointer-events: none;
   padding: 2px 4px;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1;
   color: var(--ds-now-text);
@@ -194,7 +192,7 @@
 .day-scale__details {
   margin-top: 8px;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   color: var(--text);
   background: var(--ds-details-bg);
@@ -212,7 +210,7 @@
 
 .day-scale__legend-title {
   grid-column: 1 / -1;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-soft);
 }
@@ -293,8 +291,8 @@
     flex: 0 0 auto;
     min-height: 16px;
     padding: 2px 0 0;
-    font-size: 12px;
-    line-height: 14px;
+    font-size: 13px;
+    line-height: 15px;
     text-align: left;
     overflow: visible;
     visibility: hidden;
@@ -350,7 +348,7 @@
     position: absolute;
     top: -33px;
     left: 3px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text-soft);
     white-space: nowrap;
@@ -385,7 +383,6 @@
 /* Главный экран — во всю ширину окна на мониторе, планшете и телефоне (владелец, 01.10.2026); отступы — --screen-gutter */
 .topbar, main:has(.with-scale), main:has(.with-scale .stop-grid) { max-width: none; padding-inline: var(--screen-gutter); }
 
-
 /* Узкий экран: шкала полосой под главными кнопками, чтобы не отодвигать их вниз */
 @media all {
   .with-scale { grid-template-columns: minmax(0, 1fr); }
@@ -405,11 +402,11 @@
 }
 @media (max-width: 480px) {
   :root { --screen-gutter: 12px; }
-  .ds-legend__item { font-size: 11px; }
+  .ds-legend__item { font-size: 13px; }
 }
 @media not all {
   .ds-row { height: 10px; }
-  .ds-row__label { font-size: 11px; line-height: 10px; }
+  .ds-row__label { font-size: 13px; line-height: 10px; }
 }
 
 /* --- Монитор: главный экран целиком в высоту окна, без прокрутки (владелец, 01.10.2026) ---
@@ -434,73 +431,22 @@
 
   /* Правая колонка: состояние, пульт (растягивается), смена */
   .with-scale__main { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
-  .with-scale__main > .mill-console, .with-scale__main > div:has(> .mill-console) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .with-scale__main > .stop-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 260px;
     gap: 14px; align-items: stretch; }
   .stop-grid > :first-child { display: flex; flex-direction: column; min-height: 0; }
-  .stop-grid > :first-child > .mill-console { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .stop-grid > :last-child { min-height: 0; overflow: auto; }
-  .mill-status { flex: none; min-height: 0; padding-block: 12px; margin-bottom: 12px; }
-  .mill-panel { flex: 1 1 auto; min-height: 0; container-type: size; grid-template-rows: minmax(0, 1fr) auto;
-    padding: 18px 18px 12px; gap: 10px 0; }
+  
   /* Табличка сбоку от клавиши: так клавиша получает почти всю высоту пульта */
-  .mill-btn { min-height: 0; height: 100%; flex-direction: row; justify-content: center; align-items: center; gap: 14px; padding: 0 10px; }
   /* Клавиша 4:3 по высоте пульта (минус подсказка и отступы ~70 px), но не шире 58% своей половины */
-  .mill-lamp { width: min(58%, 560px, max(96px, calc((100cqh - 70px) * 4 / 3))); max-width: none; flex: none; }
-  .mill-label { width: auto; max-width: 42%; flex: 0 1 auto; padding: 8px 12px; text-align: left; font-size: clamp(12px, 1.9cqi, 28px); letter-spacing: .02em; }
+  
 
-  /* Смена: карточка мастера во всю ширину, кнопки — в ряд */
-  /* Кнопки смены делят ширину поровну: три, а с «Продолжить заполнение» — четыре */
-  .shift-block { flex: none; margin-top: 0; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .shift-block:has(> .shift-action:nth-child(5)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .shift-block > .shift-card { grid-column: 1 / -1; padding: 12px 18px 10px; }
-  .shift-person { grid-template-columns: 56px minmax(0, 1fr); gap: 14px; }
-  .shift-avatar { width: 56px; height: 60px; }
-  .shift-avatar .ico { width: 36px; height: 36px; }
-  .shift-person h2 { font-size: 20px; }
-  .shift-person p { margin: 1px 0; }
-  .shift-block .shift-time { margin-top: 8px; padding-block: 7px; }
-  .btn.shift-action { min-height: 0; padding: 10px 14px; gap: 12px; grid-template-columns: 40px minmax(0, 1fr) 18px; font-size: 17px; }
-  .action-ico { width: 40px; height: 40px; }
-  .action-ico .ico { width: 22px; height: 22px; }
-  .shift-action .action-help { font-size: 12.5px; margin-top: 2px; }
+  
 }
-/* Низкий монитор (ноутбук 1366×768 и т.п.): убираем второстепенные строки, чтобы клавиши не мельчали */
-@media not all {
-  .mill-status { padding-block: 8px; margin-bottom: 8px; }
-  .mill-status .mill-subtitle, .mill-state > .ico, .mill-clock > .ico { display: none; }
-  .shift-avatar, .shift-person p.muted, .shift-action .action-help { display: none; }
-  .shift-person { grid-template-columns: minmax(0, 1fr); }
-  .shift-person h2 { font-size: 18px; margin: 0; }
-  .shift-block .shift-time { margin-top: 6px; padding-block: 5px; }
-  .btn.shift-action { padding-block: 8px; }
-  .action-ico { width: 32px; height: 32px; }
-  .btn.shift-action { grid-template-columns: 32px minmax(0, 1fr) 16px; font-size: 16px; }
-  .mill-panel { padding: 12px 14px 8px; }
-}
-/* Монитор: клавиша заполняет всю половину пульта по ширине и высоте, табличка — под ней */
-@media not all {
-  .mill-panel { padding: 16px 16px 10px; gap: 10px 0; }
-  .mill-btn { flex-direction: column; align-items: stretch; justify-content: stretch; gap: 10px; padding: 0 12px; }
-  .mill-lamp { flex: 1 1 auto; width: 100%; height: auto; min-height: 0; max-width: none; aspect-ratio: auto; }
-  .mill-label { flex: none; width: 100%; max-width: none; text-align: center; padding: 6px 10px; font-size: clamp(16px, 2.4cqi, 32px); }
-}
-/* Вертикальный монитор: клавиша не вытягивается в колонну — высота не больше 0,8 ширины половины пульта */
-@media not all {
-  .mill-btn { justify-content: center; }
-  .mill-lamp { flex: 0 1 auto; height: 100%; max-height: calc((50cqi - 40px) * 0.8); }
-}
-
 /* Шапка сжимается вместе с окном, табличка использует ширину своей клавиши. */
 .topbar { width: 100%; box-sizing: border-box; min-width: 0; }
 .brand { flex: 0 1 auto; min-width: 0; }
 .brand strong, .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mill-btn { min-width: 0; container-type: inline-size; }
-.mill-label { box-sizing: border-box; max-width: 100%; font-size: clamp(10px, 7cqi, 32px); overflow-wrap: anywhere; }
-.current-shift { outline: 2px solid var(--focus); outline-offset: -2px; }
-@media not all {
-  .mill-lamp { max-height: 80cqi; }
-}
+
 @media (max-width: 820px) { .brand { display: none; } }
 @media (max-width: 380px) {
   .topbar .pill .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -514,33 +460,29 @@
   background: var(--bg); border: 2px solid var(--text-attn); border-radius: 14px; box-shadow: var(--shadow-toast); }
 #rejects:not(.is-open) { display: none; }
 .rejects-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.rejects-heading .btn { width: auto; font-size: 15px; margin: 0; }
-.saved-answers p { margin: 4px 0; }
-.saved-answers, .transfer, .card-note, .card-line, .handover-note, h2, .action-help, .seg, .earlier-text { overflow-wrap: anywhere; }
-.note-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.handover-preview[open] .note-preview { -webkit-line-clamp: 1; }
-.handover-preview summary { cursor: pointer; }
+
+.transfer, h2 { overflow-wrap: anywhere; }
+
 .topbar { background: var(--metal-page); background-attachment: fixed; }
 .topbar::before { display: none; }
-.topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 1 auto; justify-content: flex-start;
+.topbar .save-status { flex: 0 1 auto; justify-content: flex-start;
   min-height: 44px; padding: 6px; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; text-align: left; }
-.save-status .save-status-text, .save-status:not(.attention) .save-status-text {
+.save-status .save-status-text {
   position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: normal; }
 .save-status-count { display: none; font-weight: 800; }
 .save-status.online::before { background: #22863a; box-shadow: none; }
 .save-status.waiting::before { background: #bd7600; box-shadow: none; }
 .save-status.offline::before { background: #cf222e; box-shadow: none; }
 .topbar .pill, .theme-toggle { min-width: 44px; min-height: 44px; box-sizing: border-box; }
-.tile-off { opacity: 1; color: var(--text-muted); }
 .ds-legend__item--zero { opacity: 1; }
 .toast { pointer-events: none; }
 .toast.warning { color: var(--text); background: var(--bg); border: 2px solid var(--text-attn); }
-.m-track { display: flex; }
+
 .chart .nodata, .chart-legend .nodata::before { fill: none; background: transparent; stroke-dasharray: 4 3; }
 @media (max-width: 600px) {
   .topbar .pill .pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .topbar .save-status, .topbar .save-status:not(.attention) { flex: 0 0 auto; min-width: 44px; min-height: 44px; justify-content: center; margin-left: auto; }
-  .save-status .save-status-text, .save-status:not(.attention) .save-status-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .topbar .save-status { flex: 0 0 auto; min-width: 44px; min-height: 44px; justify-content: center; margin-left: auto; }
+  .save-status .save-status-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .save-status-count { display: inline; }
   .toast { position: sticky; top: 68px; bottom: auto; left: auto; right: auto; transform: none; width: 100%; max-width: none;
     margin: 0; padding: 10px 12px; box-sizing: border-box; border-radius: 0; font-size: 14px; }
@@ -553,6 +495,3 @@
   .ds-row--tick .ds-row__label { transform: translateY(-1px); }
 }
 
-.stop-grid > :last-child .card > .btn { min-height: 44px; padding: 8px; font-size: 16px; }
-.stop-grid > :last-child .card-title { font-size: 20px; }
-.stop-grid > :last-child .card-note { font-size: 16px; }

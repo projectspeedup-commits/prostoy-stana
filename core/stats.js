@@ -1,5 +1,5 @@
 // Метрики простоев за производственный период. Работает и в браузере, и в Node.
-import { apportionMinutes, buildDowntimes, classify, shiftOf, summarizeParts, toMs, withDowntimeDuration } from "./core.js";
+import { apportionMinutes, billetSegments, buildDowntimes, classify, shiftOf, sumBillet, summarizeParts, toMs, withDowntimeDuration } from "./core.js";
 import { zoneOf } from "./zones.js";
 
 const MINUTE = 60_000;
@@ -172,7 +172,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     const reasonKey = JSON.stringify([reason, segment.group, segment.mode]);
     let reasonRow = reasonRows.get(reasonKey);
     if (!reasonRow) {
-      reasonRow = { reason, title: reason === null ? NO_REASON_TITLE : ref?.title || reason, group: segment.group, mode: segment.mode, ms: 0, ids: new Set() };
+      reasonRow = { reason, title: reason === null ? NO_REASON_TITLE : ref?.title || reason, group: segment.group, mode: segment.mode, ms: 0, billet: 0, ids: new Set() };
       reasonRows.set(reasonKey, reasonRow);
     }
     reasonRow.ms += segment.endMs - segment.startMs;
@@ -193,7 +193,7 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
   const crewRow = (crewId) => {
     let row = crewRows.get(crewId);
     if (!row) {
-      row = { crewId, ms: 0, stops: 0, carried: 0, zones: { plan: 0, unplanned: 0, failure: 0 } };
+      row = { crewId, ms: 0, stops: 0, carried: 0, billet: 0, zones: { plan: 0, unplanned: 0, failure: 0 } };
       crewRows.set(crewId, row);
     }
     return row;
@@ -234,6 +234,42 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
       days.push({ day: localDate(start, refs.settings.schedule), workMin: dayTotal.workMinutes, downMin: dayTotal.downMinutes, stops: dayTotal.stops });
     }
   }
+
+  // Брак — по общему правилу core.billetSegments (то же, что в отчёте Excel): к смене, где отрезок завершился.
+  // Бригада — та, что была на дежурстве в момент завершения отрезка, иначе остановившая стан
+  const billetRows = billetSegments(built.segments, from, to, refs.settings.schedule);
+  const billetByDowntime = new Map();
+  for (const row of billetRows) {
+    const list = billetByDowntime.get(row.segment.downtimeId) || [];
+    list.push(row);
+    billetByDowntime.set(row.segment.downtimeId, list);
+    if (!(row.billet > 0)) continue;
+    const endAt = row.segment.endMs - 1;
+    const stopper = allByDowntime.get(row.segment.downtimeId)?.crewId ?? null;
+    crewRow(duties.find((d) => d.startMs <= endAt && endAt < d.endMs)?.crewId ?? stopper).billet += row.billet;
+    const cls = classify(row.segment, refs, refs.settings);
+    const reason = hasText(row.segment.reason) ? row.segment.reason : null;
+    const key = JSON.stringify([reason, cls.group, cls.mode]);
+    let reasonRow = reasonRows.get(key);
+    if (!reasonRow) {
+      // Простой нулевой длительности: видимых отрезков нет, но брак принадлежит его причине (0 мин, 0 остановок)
+      const ref = reason ? refs.reasons[reason] : null;
+      reasonRow = { reason, title: reason === null ? NO_REASON_TITLE : ref?.title || reason, group: cls.group, mode: cls.mode, ms: 0, billet: 0, ids: new Set() };
+      reasonRows.set(key, reasonRow);
+    }
+    reasonRow.billet += row.billet;
+  }
+  let billetStops = 0;
+  let noBillet = 0;
+  for (const [id, rows] of billetByDowntime) {
+    const whole = allByDowntime.get(id);
+    if (rows.reduce((sum, r) => sum + (r.billet ?? 0), 0) > 0) billetStops += 1;
+    // «Не указан» — только там, где брак спрашивают (причина с askBillet), простой закончен и ни в одной его части брака нет
+    if (!whole || whole.segments.some((s) => s.open)) continue;
+    if (!whole.segments.some((s) => refs.reasons[s.reason]?.askBillet)) continue;
+    if (!whole.segments.some((s) => Number.isFinite(s.billet) && s.billet >= 0)) noBillet += 1;
+  }
+  const billetTn = sumBillet(billetRows.map((r) => r.billet));
 
   const otherMs = visible.reduce((sum, segment) => sum + (refs.reasons[segment.reason]?.other ? segment.endMs - segment.startMs : 0), 0);
   let noReason = 0;
@@ -289,17 +325,24 @@ export function computeStats(events, { fromMs, toMs, nowMs, refs }) {
     mtbfMin: unplannedIds.size ? rounded(workMs / unplannedIds.size) : null,
     mttrMin: unplannedIds.size ? rounded(modeMs.unplanned / unplannedIds.size) : null,
     longest: longest && { downtimeId: longest.downtimeId, minutes: rounded(longest.ms), reason: longest.reason, startMs: longest.startMs },
-    byReason: reasonList.map((row, i) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: reasonMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "reason")),
+    byReason: reasonList.map((row, i) => ({ reason: row.reason, title: row.title, group: row.group, mode: row.mode, minutes: reasonMinutes[i], stops: row.ids.size, billetTn: round3(row.billet) })).sort((a, b) => compareRows(a, b, "reason")),
     byGroup: groupList.map((row, i) => ({ group: row.group, minutes: groupMinutes[i], stops: row.ids.size })).sort((a, b) => compareRows(a, b, "group")),
     byCrew: crewList.map((row, i) => {
       const zones = Object.keys(row.zones);
       const parts = apportionMinutes(Object.values(row.zones), crewMinutes[i]);
-      return { crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried,
+      return { crewId: row.crewId, minutes: crewMinutes[i], stops: row.stops, carried: row.carried, billetTn: round3(row.billet),
         byZone: zones.map((zone, j) => ({ zone, minutes: parts[j] })) };
     }).sort((a, b) => compareRows(a, b, "crewId")),
     byDay: days,
-    quality: { noReason, noAction, otherShare: downMs ? otherMs / downMs : 0 },
+    // Брак, тн: всего за период (null — ни разу не указан), число простоев с браком, простои, где брак спрашивают, но не указан
+    billetTn,
+    billetStops,
+    quality: { noReason, noAction, noBillet, otherShare: downMs ? otherMs / downMs : 0 },
   };
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function toMsValue(value) {

@@ -35,11 +35,11 @@ let REFS_VERSION = refsVersion();
 
 const events = []; // журнал событий, как в базе сервера
 
-// Начало учёта: самое раннее время среди событий (у ручного простоя — его начало)
+// Начало учёта: самое раннее время среди событий (у ручного простоя и правки времени — их начало)
 function firstEventMs() {
   let first = Infinity;
   for (const e of events) {
-    for (const v of [e.at, e.type === "manual" ? e.from : undefined]) {
+    for (const v of [e.at, e.type === "manual" || e.type === "fix" ? e.from : undefined]) {
       if (v === undefined || v === null) continue;
       try { first = Math.min(first, core.toMs(v)); } catch { /* битое время пропускаем */ }
     }
@@ -81,6 +81,8 @@ function computeState() {
         handovers: core.handoversSince(events, openStartMs),
       }
       : null,
+    // Записки сдачи смены, пока стан работает, как у сервера
+    handovers: built.open ? [] : core.recentHandovers(events, now),
     shift,
     crew,
     segments,

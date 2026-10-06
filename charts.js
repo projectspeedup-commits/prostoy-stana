@@ -37,10 +37,20 @@ export function dayChart(days) {
     svg.append(el("line", { x1: L, x2: W - R, y1: y(hh), y2: y(hh), class: hh === 0 ? "ax" : "grid" }));
     svg.append(text(L - 6, y(hh) + 4, `${hh}`, { class: "tick", "text-anchor": "end" }));
   }
-  svg.append(text(4, T + 4, "ч", { class: "tick" }));
+  // Единица «ч» стоит над подписями оси, а не в строке верхней отметки «24». Её высота зависит от масштаба шрифта,
+  // поэтому положение и запас сверху уточняются в fitFonts, когда известен реальный размер подписей
+  const unit = text(L - 6, T + 4 - 1.6 * MIN_CHART_FONT, "ч", { class: "tick unit", "text-anchor": "end" });
+  svg.append(unit);
+  const unitFit = (fs) => {
+    const y0 = T + 4 - 1.6 * fs;
+    unit.setAttribute("y", y0);
+    const extra = Math.max(0, Math.ceil(fs - y0));
+    svg.setAttribute("viewBox", `0 ${-extra} ${W} ${H + extra}`);
+  };
+  unitFit(MIN_CHART_FONT);
 
   // Подписи по X: не чаще, чем помещается
-  const every = Math.ceil(n / Math.max(1, Math.floor(plotW / 38)));
+  const every = Math.ceil(n / Math.max(1, Math.floor(plotW / 46)));
   days.forEach((d, i) => {
     const cx = L + slot * i + slot / 2;
     const x = cx - bw / 2;
@@ -60,6 +70,7 @@ export function dayChart(days) {
     }
   });
   svg.append(text(L + plotW / 2, H - 6, "сутки", { class: "tick", "text-anchor": "middle" }));
+  fitFonts(svg, W, unitFit);
   return svg;
 }
 
@@ -67,12 +78,20 @@ export function dayChart(days) {
  * Круговая диаграмма (кольцо) по группам причин с подписями долей.
  * rows: [{ name, minutes }]
  */
+let hatchSeq = 0;
 export function donut(rows, centerTitle) {
   const narrow = (globalThis.innerWidth || 800) <= 480;
-  const W = narrow ? 280 : 480, H = narrow ? 330 : 200, cx = narrow ? 140 : 100, cy = 100, r = 80, w = 28;
+  const W = narrow ? 280 : 480, H = narrow ? 330 : 200, cx = narrow ? 140 : 100, cy = 100, r = 80, w = 24;
   const total = rows.reduce((s, r2) => s + r2.minutes, 0);
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart donut", role: "img", "aria-label": rows.map((r2) => r2.name).join(", ") });
   if (!total) return svg;
+  // Штриховка аварии, как на шкале суток: белые диагональные полосы поверх красного
+  const hatchId = `donut-hatch-${++hatchSeq}`;
+  if (rows.some((r2) => r2.cls === "z-failure")) {
+    svg.append(el("defs", {}, el("pattern", { id: hatchId, width: 5, height: 5, patternUnits: "userSpaceOnUse", patternTransform: "rotate(-45)" },
+      el("rect", { width: 2, height: 5, class: "hatch-stripe" }))));
+  }
+  const hatched = (cls) => cls === "z-failure";
   let a0 = -Math.PI / 2;
   rows.forEach((row, i) => {
     const frac = row.minutes / total;
@@ -81,6 +100,7 @@ export function donut(rows, centerTitle) {
     const cls = row.cls || `seg-${i % 7}`;
     if (frac >= 0.999) {
       svg.append(el("circle", { cx, cy, r: r - w / 2, class: `ring ${cls}`, "stroke-width": w, fill: "none" }));
+      if (hatched(cls)) svg.append(el("circle", { cx, cy, r: r - w / 2, class: "ring hatch", "stroke-width": w, fill: "none", stroke: `url(#${hatchId})` }));
     } else {
       const large = a1 - a0 > Math.PI ? 1 : 0;
       const p = (a, rr) => `${cx + rr * Math.cos(a)} ${cy + rr * Math.sin(a)}`;
@@ -89,23 +109,54 @@ export function donut(rows, centerTitle) {
         d: `M ${p(a0, ro)} A ${ro} ${ro} 0 ${large} 1 ${p(a1, ro)} L ${p(a1, ri)} A ${ri} ${ri} 0 ${large} 0 ${p(a0, ri)} Z`,
         class: cls,
       }));
+      if (hatched(cls)) {
+        svg.append(el("path", {
+          d: `M ${p(a0, ro)} A ${ro} ${ro} 0 ${large} 1 ${p(a1, ro)} L ${p(a1, ri)} A ${ri} ${ri} 0 ${large} 0 ${p(a0, ri)} Z`,
+          class: "hatch", fill: `url(#${hatchId})`, stroke: "none",
+        }));
+      }
     }
     // Легенда справа
     const ly = (narrow ? 220 : 24) + i * 24;
     if (ly < H - 8) {
       svg.append(el("rect", { x: narrow ? 18 : 200, y: ly - 11, width: 14, height: 14, rx: 3, class: cls }));
+      if (hatched(cls)) svg.append(el("rect", { x: narrow ? 18 : 200, y: ly - 11, width: 14, height: 14, rx: 3, class: "hatch", fill: `url(#${hatchId})`, stroke: "none" }));
       svg.append(text(narrow ? 40 : 220, ly, `${row.name} ${Math.round(frac * 100)}%`, { class: "legend" }));
     }
     a0 = a1;
   });
-  svg.append(text(cx, cy - 2, hm(total), { class: "center", "text-anchor": "middle" }));
+  svg.append(text(cx, cy - 2, hmCenter(total), { class: "center", "text-anchor": "middle" }));
   svg.append(text(cx, cy + 16, centerTitle, { class: "tick", "text-anchor": "middle" }));
+  fitFonts(svg, W);
   return svg;
 }
 
+// Подписи графика не должны быть мельче 13 экранных px: SVG растягивается по ширине карточки,
+// поэтому размер шрифта в единицах viewBox считаем по фактическому масштабу (--chart-fs читает app.css)
+export const MIN_CHART_FONT = 13;
+function fitFonts(svg, viewW, onFit = null) {
+  const fit = () => {
+    if (!svg.isConnected) return;
+    const w = svg.getBoundingClientRect().width;
+    if (w > 0) {
+      const fs = Math.max(MIN_CHART_FONT, Math.ceil((MIN_CHART_FONT * viewW / w) * 10) / 10);
+      svg.style.setProperty("--chart-fs", `${fs}px`);
+      if (onFit) onFit(fs);
+    }
+  };
+  if (typeof ResizeObserver === "function") new ResizeObserver(fit).observe(svg);
+  else if (typeof requestAnimationFrame === "function") requestAnimationFrame(fit);
+}
+
+// Центр кольца: от 100 часов — только часы, чтобы число помещалось в отверстие крупным шрифтом
+function hmCenter(min) {
+  return min >= 6000 ? `${Math.round(min / 60)} ч` : hm(min);
+}
 function label(day) { return `${day.slice(8, 10)}.${day.slice(5, 7)}`; }
 function hm(min) {
   min = Math.max(0, Math.round(min || 0));
   const h = Math.floor(min / 60);
-  return h ? `${h} ч ${min % 60} м` : `${min} м`;
+  const m = min % 60;
+  if (!h) return `${m} мин`;
+  return m ? `${h} ч ${m} мин` : `${h} ч`;
 }

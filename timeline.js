@@ -41,7 +41,11 @@ function detailsText(cell, fmtClock) {
   return range + ": " + parts.join(", ");
 }
 
-export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon }) {
+// Память шкалы между перерисовками: интервалы по началу ячейки (мс)
+const memo = { stop: null, sel: null };
+
+// onCell(cell) — необязательный узел для панели подробностей (кнопки «Разобрать», «Отметить простой здесь»)
+export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtClock, fmtDate, icon, onCell }) {
   const shiftLen = Math.max(1, shiftToMs - shiftFromMs);
 
   const root = document.createElement("section");
@@ -65,6 +69,14 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
   details.hidden = true;
 
   let selected = null;
+  const cellOf = new Map();
+  // Текст ячейки и, если задан onCell, строки простоев с кнопками под ним
+  const paintDetails = (cell, text) => {
+    details.textContent = text;
+    const extra = onCell ? onCell(cell) : null;
+    if (extra) details.append(extra);
+    details.hidden = false;
+  };
 
   cells.forEach((cell) => {
     const clock = fmtClock(cell.startMs);
@@ -111,6 +123,11 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
 
     const text = detailsText(cell, fmtClock);
     row.title = text;
+    // Имя ячейки для экранного диктора и клавиатуры: время и статус (подпись внутри — только часы)
+    row.setAttribute("aria-label", text);
+    row.tabIndex = -1;
+    row.dataset.start = String(cell.startMs);
+    cellOf.set(row, cell);
 
     const label = document.createElement("span");
     label.className = "ds-row__label";
@@ -153,18 +170,44 @@ export function dayScale({ cells, nowMs, shiftFromMs, shiftToMs, shifts, fmtCloc
       if (selected === row) {
         row.classList.remove("ds-row--sel");
         selected = null;
+        memo.sel = null;
         details.hidden = true;
         details.textContent = "";
         return;
       }
       if (selected) selected.classList.remove("ds-row--sel");
       selected = row;
+      memo.sel = row.dataset.start;
       row.classList.add("ds-row--sel");
-      details.textContent = text;
-      details.hidden = false;
+      paintDetails(cell, text);
     });
 
     rows.appendChild(row);
+  });
+
+  // Шкала — одна точка табуляции (roving tabindex): Tab входит один раз, ←/→/↑/↓, Home, End двигают по ячейкам.
+  const rowList = [...rows.querySelectorAll(".ds-row")];
+  const setStop = (row) => { for (const r of rowList) r.tabIndex = r === row ? 0 : -1; };
+  // Шкала перерисовывается по таймеру: точка табуляции и открытая ячейка остаются на прежнем интервале
+  const byStart = (start) => (start ? rowList.find((r) => r.dataset.start === start) : null);
+  setStop(byStart(memo.stop) || rowList.find((r) => r.classList.contains("ds-row--now")) || rowList[0]);
+  const keep = byStart(memo.sel);
+  if (keep) {
+    selected = keep;
+    keep.classList.add("ds-row--sel");
+    paintDetails(cellOf.get(keep), keep.title);
+  } else memo.sel = null;
+  rows.addEventListener("focusin", (e) => { if (rowList.includes(e.target)) { setStop(e.target); memo.stop = e.target.dataset.start; } });
+  rows.addEventListener("keydown", (e) => {
+    const at = rowList.indexOf(document.activeElement);
+    if (at < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+    const to = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: rowList.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    const next = rowList[Math.min(rowList.length - 1, Math.max(0, to))];
+    setStop(next);
+    memo.stop = next.dataset.start;
+    next.focus();
   });
 
   root.appendChild(rows);

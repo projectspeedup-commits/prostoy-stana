@@ -65,7 +65,7 @@ export function settleRecords(records, state) {
   for (const r of records) {
     r.rootId = roots.get(r.event.id);
     if (savedRoots.has(r.rootId)) r.rootAccepted = true;
-    if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && known.has(r.event.downtimeId ?? r.event.id)))) {
+    if (r.status === 'rejected' && (superseded.has(r.event.id) || r.rootAccepted || (r.event.type === 'stop' && r.error !== 'duplicate_downtime' && known.has(r.event.downtimeId ?? r.event.id)))) {
       r.status = 'replaced';
       r.confirmedAt ||= records.findLast((next) => next.replaces === r.event.id)?.event.at || r.event.at;
       count++;
@@ -129,6 +129,10 @@ export function rejectionGroups(records) {
       if (e.type === "stop") fields.from = e.at;
       if (e.type === "start") fields.to = e.at;
       if (e.type === "manual") { fields.from = e.from; fields.to = e.to; }
+      if (e.type === "fix") {
+        if (e.from != null) fields.from = e.from;
+        if (e.to != null) fields.to = e.to;
+      }
     }
     return { ...g, record, fields };
   });
@@ -184,4 +188,41 @@ export function fullNameError(parts) {
     return "Используйте буквы кириллицы или латиницы, пробел, дефис или апостроф. Каждое слово — полностью, не меньше двух букв, без точек и цифр.";
   }
   return "";
+}
+
+// Миграция черновика старой версии. Раньше несохранённые правки «Что случилось/Что сделали» лежали в af
+// ({downtimeId, index, field, value}, экран actionFix), а «Брак» — в bl ({downtimeId, index, value, custom}, экран billet).
+// Теперь это один черновик редактора простоя `edit`. Возвращает новый черновик; без старых полей отдаёт тот же объект.
+export function migrateLegacyDraft(draft) {
+  if (!draft || typeof draft !== "object") return draft;
+  const legacyScreen = draft.screen === "actionFix" || draft.screen === "billet";
+  if (!legacyScreen && !draft.af && !draft.bl) return draft;
+  const target = (x) => x && typeof x === "object" && typeof x.downtimeId === "string" && x.downtimeId ? x : null;
+  const af = target(draft.af);
+  const bl = target(draft.bl);
+  const out = { ...draft };
+  delete out.af;
+  delete out.bl;
+  const first = draft.screen === "billet" ? (bl || af) : (af || bl);
+  if (first && !out.edit) {
+    const edit = { downtimeId: first.downtimeId, index: first.index ?? null, base: null, migrated: [],
+      note: "", action: "", billet: "", billetOther: false };
+    const same = (x) => x && x.downtimeId === edit.downtimeId && (x.index ?? null) === edit.index;
+    if (same(af)) {
+      const field = af.field === "note" ? "note" : "action";
+      edit[field] = String(af.value ?? "");
+      edit.migrated.push(field);
+    }
+    if (same(bl)) {
+      edit.billet = String(bl.value ?? "").replace(".", ",");
+      edit.billetOther = bl.custom === true;
+      edit.migrated.push("billet");
+    }
+    out.edit = edit;
+    out.card = { downtimeId: edit.downtimeId, index: edit.index };
+    out.screen = "detail";
+  } else if (legacyScreen) {
+    out.screen = out.card && typeof out.card === "object" ? "detail" : "auto";
+  }
+  return out;
 }

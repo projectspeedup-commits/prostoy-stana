@@ -109,6 +109,39 @@ export function splitByShifts(segment, schedule) {
   return parts;
 }
 
+/**
+ * Брак (испорченная заготовка, тн) отрезка простоя: число >= 0 или null («не указан»).
+ * У открытого отрезка брака нет — его вводят при пуске.
+ */
+export function segmentBillet(segment) {
+  if (!segment || segment.open === true || segment.endMs === null || segment.endMs === undefined) return null;
+  const v = segment.billet;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/**
+ * Единое правило привязки брака — его используют отчёт Excel (report.js), «Показатели» (stats.js)
+ * и экран смены (shiftBillet в app.js). Брак отрезка относится к смене, в которой отрезок ЗАВЕРШИЛСЯ;
+ * в период попадают отрезки, завершившиеся в (fromMs, toMs]; открытый отрезок брака не имеет.
+ * Возвращает [{segment, billet (число или null), day, shiftNo}] по закрытым отрезкам периода.
+ */
+export function billetSegments(segments, fromMs, toMs, schedule) {
+  const rows = [];
+  for (const segment of segments) {
+    if (segment.open === true || segment.endMs === null || segment.endMs === undefined) continue;
+    if (!(segment.endMs > fromMs && segment.endMs <= toMs)) continue;
+    const shift = shiftOf(segment.endMs - 1, schedule);
+    rows.push({ segment, billet: segmentBillet(segment), day: shift.day, shiftNo: shift.shiftNo });
+  }
+  return rows;
+}
+
+/** Сумма брака, тн, до тысячных (убирает хвосты плавающей запятой); null — ни одного указанного значения. */
+export function sumBillet(values) {
+  const list = values.filter((v) => typeof v === "number" && Number.isFinite(v));
+  return list.length ? Math.round(list.reduce((a, b) => a + b, 0) * 1000) / 1000 : null;
+}
+
 // Проверка времени запоздалой остановки и пуска — одна для сервера и демо.
 export function eventTimeError(events, event, nowMs) {
   if (!["stop", "start", "manual", "reason", "split", "fix"].includes(event.type)) return "";
@@ -121,7 +154,25 @@ export function eventTimeError(events, event, nowMs) {
     if (!target) return "not_found";
     if (event.type === "split" && (!built.open || built.open.downtimeId !== id || target.index !== built.open.index)) return "not_open";
     if (at < target.startMs) return "bad_time";
-    if (buildDowntimes([...events, event], nowMs).ignored.includes(event.id)) return "bad_time";
+    const after = buildDowntimes([...events, event], nowMs);
+    if (event.type === "fix" && (event.from != null || event.to != null)) {
+      // Конец раньше начала (или конец у идущего простоя) — неверное время, а не наложение
+      const parts = built.segments.filter((s) => s.downtimeId === id);
+      const running = parts.some((s) => s.open);
+      const newFrom = event.from != null ? toMs(event.from) : Math.min(...parts.map((s) => s.startMs));
+      const newTo = running ? null : event.to != null ? toMs(event.to) : Math.max(...parts.map((s) => s.endMs));
+      if ((event.to != null && running) || (newTo !== null && newTo <= newFrom)) return "bad_time";
+      // Не раньше 40 суток назад и не позже «сейчас» (+2 минуты допуска, как у остальных событий)
+      if (event.from != null && (newFrom < nowMs - 40 * DAY_MS || newFrom > nowMs + 2 * MIN)) return "bad_time";
+      if (event.to != null && newTo > nowMs + 2 * MIN) return "bad_time";
+      // Правка не должна «потерять» уже принятые события: остановка, попавшая внутрь чужого простоя, — наложение;
+      // потерянный пуск или причина этого же простоя — неверное время
+      const gone = [...events, event].filter((e) => after.ignored.includes(e.id) && !built.ignored.includes(e.id));
+      if (gone.some((e) => e.type === "stop")) return "overlap";
+      if (gone.length) return "bad_time";
+      return fixTimeError(after, id, nowMs);
+    }
+    if (after.ignored.includes(event.id)) return "bad_time";
     return "";
   }
   if (event.type === "stop") {
@@ -133,15 +184,35 @@ export function eventTimeError(events, event, nowMs) {
       if (at <= start) return "overlap";
       return "already_stopped";
     }
-    if (built.segments.some((s) => !s.open && s.endMs > at) ||
-        events.some((e) => e.type === "start" && toMs(e.at) > at)) return "overlap";
+    // Повторное использование идентификатора закрытого простоя слило бы две остановки в одну
+    if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
+    // Конец закрытых отрезков уже учитывает пуски и правки времени
+    if (built.segments.some((s) => !s.open && s.endMs > at)) return "overlap";
   } else if (event.type === "start") {
     const id = event.downtimeId ?? built.open?.downtimeId;
     if (!built.open || id !== built.open.downtimeId) return "not_open";
     const last = built.segments.filter((s) => s.downtimeId === id).at(-1);
     if (last && at < last.startMs) return "bad_time";
-  } else if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) {
-    return "overlap";
+  } else {
+    // Ручной простой с занятым номером (в том числе номером открытого простоя) слил бы две записи в одну
+    if (built.segments.some((s) => s.downtimeId === (event.downtimeId ?? event.id))) return "duplicate_downtime";
+    if (built.segments.some((s) => toMs(event.from) < (s.open ? Infinity : s.endMs) && toMs(event.to) > s.startMs)) return "overlap";
+  }
+  return "";
+}
+
+// Правка времени простоя: каждый отрезок имеет положительную длину, не выходит за «сейчас»
+// и за 40 дней назад и не налезает на другие простои.
+function fixTimeError(after, id, nowMs) {
+  const own = after.segments.filter((s) => s.downtimeId === id);
+  const others = after.segments.filter((s) => s.downtimeId !== id);
+  for (const s of own) {
+    if (!(s.startMs < s.endMs)) return "bad_time";
+    if (s.startMs < nowMs - 40 * DAY_MS) return "bad_time";
+    if (!s.open && s.endMs > nowMs + 2 * MIN) return "bad_time";
+  }
+  for (const s of own) {
+    if (others.some((o) => s.startMs < o.endMs && s.endMs > o.startMs)) return "overlap";
   }
   return "";
 }
@@ -200,8 +271,7 @@ export function periodParts(segments, fromMs, toMs, refs, nowMs = Infinity) {
 // Граница для забытой остановки, включая пуски и простои прошлых смен.
 export function lastRunningMs(events, nowMs) {
   const ends = buildDowntimes(events, nowMs).segments.filter((s) => !s.open).map((s) => s.endMs);
-  const starts = events.filter((e) => e.type === "start").map((e) => toMs(e.at));
-  return ends.length || starts.length ? Math.max(...ends, ...starts) : null;
+  return ends.length ? Math.max(...ends) : null;
 }
 
 // Записи, сделанные до 30.09.2026, хранят старые коды классификатора. Читаем их как три
@@ -215,8 +285,34 @@ export function reasonKey(reason) {
   return reason;
 }
 
-/** Собирает отрезки простоя из событий. */
+/**
+ * Собирает отрезки простоя из событий.
+ *
+ * Правка времени (fix с from/to) двигает не готовый отрезок, а сами события: начало — время остановки
+ * (stop) или начало ручного простоя, конец — время пуска (start) или конец ручного простоя. Поэтому такие
+ * события сначала находим обычным проходом, затем собираем заново с исправленным временем: иначе остановка,
+ * внесённая в освободившийся промежуток, считалась бы внутри «длинного» прежнего простоя и пропадала.
+ */
 export function buildDowntimes(events, nowMs) {
+  const first = runBuild(events, nowMs, false);
+  if (!first.patches.size) return first.out;
+  const patched = events.map((e, i) => (first.patches.has(i) ? { ...e, ...first.patches.get(i) } : e));
+  // Остановка сдвинута позже: причины, записанные в промежутке, переносим к новому началу
+  for (const [i, patch] of first.patches) {
+    const old = events[i];
+    if (old.type !== "stop" || patch.at === undefined) continue;
+    const from = toMs(old.at), to = toMs(patch.at);
+    for (let j = 0; j < patched.length; j++) {
+      const r = patched[j];
+      if (r.type === "reason" && r.downtimeId === (old.downtimeId ?? old.id) && toMs(r.at) >= from && toMs(r.at) < to) {
+        patched[j] = { ...r, at: patch.at };
+      }
+    }
+  }
+  return runBuild(patched, nowMs, true).out;
+}
+
+function runBuild(events, nowMs, timeApplied) {
   const now = toMs(nowMs);
   const sorted = events
     .map((e) => (typeof e.reason === "string" && e.reason !== reasonKey(e.reason) ? { ...e, reason: reasonKey(e.reason) } : e))
@@ -224,36 +320,44 @@ export function buildDowntimes(events, nowMs) {
     .sort((a, b) => a.t - b.t || a.i - b.i);
   const segments = [];
   const ignored = [];
+  const patches = new Map(); // номер события → новое время (при правке времени)
+  const meta = new Map(); // отрезок → номера событий, которые его открыли и закрыли
   let cur = null; // единственный открытый отрезок (стан один)
 
   const val = (v, prev) => (v !== undefined ? v : prev !== undefined ? prev : null);
   const matches = (e) => e.downtimeId === undefined || e.downtimeId === null || e.downtimeId === cur.downtimeId;
-  const open = (e, t, downtimeId, index, prev) => ({
-    downtimeId,
-    index,
-    startMs: t,
-    endMs: null,
-    reason: e.reason !== undefined ? e.reason : null,
-    node: val(e.node, prev && prev.node),
-    billet: val(e.billet),
-    note: val(e.note),
-    action: val(e.action),
-    crewId: val(e.crewId, prev && prev.crewId),
-    personId: val(e.personId, prev && prev.personId),
-    manual: false,
-    open: false,
-  });
-  const close = (t) => {
+  const open = (e, t, downtimeId, index, prev, i, kind) => {
+    const seg = {
+      downtimeId,
+      index,
+      startMs: t,
+      endMs: null,
+      reason: e.reason !== undefined ? e.reason : null,
+      node: val(e.node, prev && prev.node),
+      billet: val(e.billet),
+      note: val(e.note),
+      action: val(e.action),
+      crewId: val(e.crewId, prev && prev.crewId),
+      personId: val(e.personId, prev && prev.personId),
+      manual: false,
+      open: false,
+    };
+    meta.set(seg, { openIdx: i, openKind: kind });
+    return seg;
+  };
+  const close = (t, i, kind) => {
     cur.endMs = t;
+    Object.assign(meta.get(cur), { closeIdx: i, closeKind: kind });
     segments.push(cur);
     cur = null;
   };
+  const patch = (i, fields) => patches.set(i, { ...patches.get(i), ...fields });
 
-  for (const { e, t } of sorted) {
+  for (const { e, i, t } of sorted) {
     switch (e.type) {
       case "stop":
         if (cur) ignored.push(e.id);
-        else cur = open(e, t, e.downtimeId ?? e.id, 0, null);
+        else cur = open(e, t, e.downtimeId ?? e.id, 0, null, i, "stop");
         break;
       case "reason": {
         const target = [cur, ...segments.slice().reverse()].find((s) => s &&
@@ -270,8 +374,23 @@ export function buildDowntimes(events, nowMs) {
         const target = [cur, ...segments].find((s) => s &&
           s.downtimeId === e.downtimeId && s.index === e.index);
         if (!target) ignored.push(e.id);
-        else for (const field of ["reason", "node", "billet", "note", "action"]) {
-          if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
+        else {
+          for (const field of ["reason", "node", "billet", "note", "action"]) {
+            if (e[field] !== undefined && (!e.onlyEmpty || emptyField(target[field]))) target[field] = e[field];
+          }
+          const m = meta.get(target);
+          // Начало — только у первого отрезка простоя
+          if (e.from != null) {
+            if (target.index !== 0) ignored.push(e.id);
+            else if (!timeApplied) patch(m.openIdx, m.openKind === "manual" ? { from: e.from } : { at: e.from });
+          }
+          // Конец — только у последнего закрытого отрезка
+          if (e.to != null) {
+            const lastClosed = target !== cur && !(cur && cur.downtimeId === target.downtimeId) &&
+              !segments.some((s) => s.downtimeId === target.downtimeId && s.index > target.index);
+            if (!lastClosed || (m.closeKind !== "start" && m.closeKind !== "manual")) ignored.push(e.id);
+            else if (!timeApplied) patch(m.closeIdx, m.closeKind === "manual" ? { to: e.to } : { at: e.to });
+          }
         }
         break;
       }
@@ -279,8 +398,8 @@ export function buildDowntimes(events, nowMs) {
         if (!cur || !matches(e)) ignored.push(e.id);
         else {
           const prev = cur;
-          close(t);
-          cur = open(e, t, prev.downtimeId, prev.index + 1, prev);
+          close(t, i, "split");
+          cur = open(e, t, prev.downtimeId, prev.index + 1, prev, i, "split");
         }
         break;
       case "start":
@@ -288,7 +407,7 @@ export function buildDowntimes(events, nowMs) {
         else {
           // Что сделали, чтобы запустить стан: обязательный текст при пуске
           if (e.action !== undefined) cur.action = e.action;
-          close(t);
+          close(t, i, "start");
         }
         break;
       case "manual": {
@@ -298,7 +417,7 @@ export function buildDowntimes(events, nowMs) {
           ignored.push(e.id);
           break;
         }
-        segments.push({
+        const seg = {
           downtimeId: e.downtimeId ?? e.id,
           index: 0,
           startMs: from,
@@ -312,7 +431,9 @@ export function buildDowntimes(events, nowMs) {
           personId: val(e.personId),
           manual: true,
           open: false,
-        });
+        };
+        meta.set(seg, { openIdx: i, openKind: "manual", closeIdx: i, closeKind: "manual" });
+        segments.push(seg);
         break;
       }
       default:
@@ -327,7 +448,7 @@ export function buildDowntimes(events, nowMs) {
     segments.push(cur);
   }
   segments.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
-  return { segments, ignored, open: openSeg };
+  return { out: { segments, ignored, open: openSeg }, patches };
 }
 
 /**
@@ -340,6 +461,19 @@ export function handoversSince(events, sinceMs) {
     .filter((e) => e.type === "shift_close" && toMs(e.at) >= sinceMs)
     .sort((a, b) => toMs(a.at) - toMs(b.at))
     .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action ?? null, note: e.note ?? null }));
+}
+
+/**
+ * Записки сдачи смены при работающем стане: последние три сдачи с текстом «что сделали по ремонту
+ * и что осталось» за последние 36 часов, по возрастанию времени. Формат события тот же (shift_close с action).
+ */
+export function recentHandovers(events, nowMs) {
+  const from = nowMs - 36 * 3600000;
+  return events
+    .filter((e) => e.type === "shift_close" && typeof e.action === "string" && e.action.trim() && toMs(e.at) >= from && toMs(e.at) <= nowMs)
+    .sort((a, b) => toMs(a.at) - toMs(b.at))
+    .slice(-3)
+    .map((e) => ({ at: e.at, crewId: e.crewId ?? null, personId: e.personId ?? null, personName: e.personName ?? null, action: e.action, note: e.note ?? null }));
 }
 
 /** Режим и группа отрезка. */
@@ -452,9 +586,12 @@ export function eventInputError(event) {
     for (const field of ["reason", "node", "note", "action", "downtimeId"]) {
       if (event[field] != null && typeof event[field] !== "string") throw new Error();
     }
+    // Пустой номер простоя — не «нет номера»: простой с таким ID нельзя исправить через fix
+    if (typeof event.downtimeId === "string" && !event.downtimeId.trim()) throw new Error();
     for (const field of ["crewId", "personId"]) {
       if (event[field] != null && typeof event[field] !== "string" && !Number.isSafeInteger(event[field])) throw new Error();
     }
+    for (const field of ["reason", "downtimeId"]) if (typeof event[field] === "string" && event[field].length > 120) throw new Error();
     if (typeof event.note === "string" && event.note.length > 500) throw new Error();
     if (typeof event.action === "string" && event.action.length > 500) throw new Error();
     if (event.onlyEmpty !== undefined && typeof event.onlyEmpty !== "boolean") throw new Error();
@@ -468,6 +605,17 @@ export function eventInputError(event) {
       const from = toMs(event.from);
       const to = toMs(event.to);
       if (to <= from) throw new Error();
+    }
+    if (event.type === "fix") {
+      // Правка времени: начало — только у первого отрезка простоя
+      // Время правки — строка с датой (как у ручного простоя в запросе клиента)
+      if ((event.from != null && typeof event.from !== "string") || (event.to != null && typeof event.to !== "string")) throw new Error();
+      if (event.from != null) {
+        toMs(event.from);
+        if (event.index !== 0) throw new Error();
+      }
+      if (event.to != null) toMs(event.to);
+      if (event.from != null && event.to != null && toMs(event.to) <= toMs(event.from)) throw new Error();
     }
   } catch {
     return "bad_request";
