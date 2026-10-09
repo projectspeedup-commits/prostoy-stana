@@ -19,6 +19,7 @@ import { createMailSettingsStore, versionOf } from "./mail-store.js";
 import { validateMailSettings } from "../core/mail-settings.js";
 import { createAi, aiConfigFromEnv } from "./ai.js";
 import { createAiTools } from "./ai-tools.js";
+import { checkViewPeriod, createGatewayStore, GATEWAY_TYPES, matchGatewayKey, parseGatewayKeys, validateBatch } from "./gateway.js";
 
 export { aiConfigFromEnv };
 
@@ -29,6 +30,7 @@ const DRAIN_LIMIT = 8 * 1024 * 1024; // сколько лишнего дочит
 const DRAIN_MS = 5000;
 const RATE_LIMIT = 60; // запросов в минуту с одного ключа (по умолчанию; боевой запуск задаёт свой)
 const RATE_LIMIT_SHARED = 600; // боевой: общей ссылкой с одним ключом пользуются многие устройства
+const GATEWAY_RATE_LIMIT = 120; // запросов в минуту с одного ключа шлюза
 const ALIVE_GAP_MINUTES = 3; // разрыв живости больше этого — простой сервера
 
 const MIME = {
@@ -74,7 +76,7 @@ function median(values) {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
 
-export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, rateLimit = RATE_LIMIT, mailConfig, mailTransportFactory, aiConfig, aiFetch } = {}) {
+export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date(), peopleFile = process.env.STAN_PEOPLE_FILE, adminDevices, gatewayKeys, rateLimit = RATE_LIMIT, mailConfig, mailTransportFactory, aiConfig, aiFetch } = {}) {
   const clock = () => new Date(now());
   // Раздел «Администратор» — только перечисленным устройствам; без списка — всем (тесты, старый запуск)
   const canAdmin = (device) => !Array.isArray(adminDevices) || adminDevices.includes(device.name);
@@ -94,6 +96,8 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     settingsWrites = update.catch(() => {});
     return update;
   }
+  // Ключи шлюза завода: список строк или строка через запятую; без ключей приём событий шлюза закрыт (401)
+  const gwKeys = Array.isArray(gatewayKeys) ? gatewayKeys.map(String).filter(Boolean) : parseGatewayKeys(gatewayKeys);
   const keys = Array.isArray(deviceKeys) ? deviceKeys : parseDeviceKeys(deviceKeys);
   if (!keys.length) {
     throw new Error("Не заданы ключи устройств (STAN_DEVICE_KEYS): сервер без ключей не запускается.");
@@ -119,6 +123,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     CREATE TABLE IF NOT EXISTS alive (at TEXT PRIMARY KEY);
   `);
   const eventStore = createEventStore(db);
+  const gatewayStore = createGatewayStore(db);
   const reportHandler = createReportHandler({ db, readRefs, clock });
   // Рассылка сводки смены: по умолчанию выключена (в тестах), боевой запуск передаёт mailConfig из окружения
   const mailCfg = mailConfig ?? { enabled: false, to: [] };
@@ -154,7 +159,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
 
   const failures = new Map();
   const windows = new Map(); // имя устройства -> { minute, count }
-  function allowed(name) {
+  function allowed(name, limit = rateLimit) {
     const minute = Math.floor(clock().getTime() / 60_000);
     const w = windows.get(name);
     if (!w || w.minute !== minute) {
@@ -162,7 +167,17 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
       return true;
     }
     w.count += 1;
-    return w.count <= rateLimit;
+    return w.count <= limit;
+  }
+
+  // Учёт неверных ключей по адресу; true — адрес уже заблокирован, нужен ответ 429
+  function noteBadKey(address, ms) {
+    const failed = failures.get(address);
+    if (failed?.count >= 10) return true;
+    // При заполнении карты новые адреса получают 429, действующие окна не вытесняются.
+    if (!failed && failures.size >= 4096) return true;
+    failures.set(address, { count: (failed?.count || 0) + 1, until: failed?.until ?? ms + 10 * 60_000 });
+    return false;
   }
 
   function identify(req) {
@@ -246,7 +261,7 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
 
   async function handleApi(req, res, pathname, searchParams) {
     if (pathname === "/api/health" && req.method === "GET") {
-      return send(res, 200, { ok: true, settings: readRefs.status() });
+      return send(res, 200, { ok: true, settings: readRefs.status(), gateway: { lastSeen: gatewayStore.lastSeen() } });
     }
     const isPing = pathname === "/api/ping" && req.method === "POST";
     const isSummary = pathname === "/api/probe-summary" && req.method === "GET";
@@ -261,6 +276,8 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     const isMailPut = pathname === "/api/admin/mail" && req.method === "PUT";
     const isAiStatus = pathname === "/api/admin/ai/status" && req.method === "GET";
     const isAiAsk = pathname === "/api/admin/ai/ask" && req.method === "POST";
+    const isGatewayPost = pathname === "/api/gateway/events" && req.method === "POST";
+    const isGatewayView = pathname === "/api/admin/gateway" && req.method === "GET";
 
     const address = clientAddress(req);
     const ms = clock().getTime();
@@ -269,13 +286,28 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     // и телефоны выходят через один общий адрес (NAT), и один браузер со старым ключом не должен
     // запирать остальных. Действующий ключ проходит всегда (его держит лимит allowed ниже);
     // ключи длинные и случайные, так что подбор через «ключ подошёл во время блокировки» нереален.
+    // Приём событий шлюза: свой ключ X-Gateway-Key, он не открывает ни один другой маршрут,
+    // а ключ устройства не открывает этот. Проверяется до ключей устройств.
+    if (isGatewayPost) {
+      const gw = matchGatewayKey(req.headers["x-gateway-key"], gwKeys);
+      if (gw < 0) {
+        if (noteBadKey(address, ms)) return send(res, 429, { message: "Слишком много запросов с неверным ключом. Повторите позже." });
+        return send(res, 401, { message: "Нет ключа шлюза или он неверный." });
+      }
+      if (!allowed(` gateway:${gw}`, GATEWAY_RATE_LIMIT)) return send(res, 429, { message: "Слишком много запросов от шлюза. Повторите через минуту." });
+      let body;
+      try { body = JSON.parse(await readBody(req)); }
+      catch (e) {
+        if (e && e.code === "too_large") return send(res, 413, { message: "Тело запроса не должно превышать 64 КБ." });
+        return send(res, 400, { message: "Некорректный JSON в теле запроса." });
+      }
+      const batch = validateBatch(body, ms);
+      if (!batch.ok) return send(res, 400, { message: batch.message });
+      return send(res, 200, gatewayStore.save(batch, clock().toISOString()));
+    }
     const device = identify(req);
     if (!device) {
-      const failed = failures.get(address);
-      if (failed?.count >= 10) return send(res, 429, { ok: false, error: "busy" });
-      // При заполнении карты новые адреса получают 429, действующие окна не вытесняются.
-      if (!failed && failures.size >= 4096) return send(res, 429, { ok: false, error: "busy" });
-      failures.set(address, { count: (failed?.count || 0) + 1, until: failed?.until ?? ms + 10 * 60_000 });
+      if (noteBadKey(address, ms)) return send(res, 429, { ok: false, error: "busy" });
       return send(res, 401, { ok: false, error: "bad_key" });
     }
     if (!allowed(device.name)) return send(res, 429, { ok: false, error: "busy" });
@@ -285,6 +317,17 @@ export function createApp({ dataDir = "./data", deviceKeys, now = () => new Date
     }
     if ((isAiStatus || isAiAsk) && !canAdmin(device)) {
       return send(res, 403, { ok: false, error: "forbidden", message: "ИИ-консультант открывается только ключом владельца." });
+    }
+    if (isGatewayView) {
+      if (!canAdmin(device)) return send(res, 403, { ok: false, error: "forbidden", message: "События шлюза открываются только ключом владельца." });
+      const bad = (message) => send(res, 400, { ok: false, error: "bad_request", message });
+      const period = checkViewPeriod({ from: searchParams.get("from"), to: searchParams.get("to") });
+      if (!period.ok) return bad(period.message);
+      const type = searchParams.get("type") || undefined;
+      if (type && !GATEWAY_TYPES.includes(type)) return bad(`Неизвестный тип события «${type}». Допустимы: ${GATEWAY_TYPES.join(", ")}.`);
+      const gatewayId = searchParams.get("gatewayId") || undefined;
+      if (gatewayId && !/^[a-z0-9_-]{1,32}$/.test(gatewayId)) return bad("Идентификатор шлюза указан неверно.");
+      return send(res, 200, gatewayStore.list({ fromMs: period.fromMs, endMs: period.endMs, type, gatewayId }));
     }
     if (isAiStatus) return send(res, 200, { ok: true, ...ai.status() });
     if (isAiAsk) {
@@ -500,6 +543,7 @@ function main() {
       dataDir: process.env.STAN_DATA_DIR || "./data",
       deviceKeys: parseDeviceKeys(process.env.STAN_DEVICE_KEYS),
       adminDevices: adminDevicesFrom(process.env.STAN_ADMIN_DEVICES, parseDeviceKeys(process.env.STAN_DEVICE_KEYS)),
+      gatewayKeys: parseGatewayKeys(process.env.STAN_GATEWAY_KEYS),
       rateLimit: Number(process.env.STAN_RATE_LIMIT) || RATE_LIMIT_SHARED,
       mailConfig: mailConfigFromEnv(process.env),
       aiConfig: aiConfigFromEnv(process.env),
