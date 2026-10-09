@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.db*
+data/
+.tmp/
+.cache/
+.wheelcheck/
+.test-tmp/
+config.toml
+*.key
+*.pem
+*.pfx

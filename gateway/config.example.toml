@@ -1,0 +1,65 @@
+# Python 3.13, Windows 10. Все пути относительно этого TOML, не текущей папки.
+# Имитатор по умолчанию: check работает без сети и без ключа сервера.
+source = "simulator" # opcua | s7 | simulator
+data_dir = "data"
+log_level = "INFO"
+
+[server]
+# Полный адрес POST /api/gateway/events. Замените на адрес из согласованного контракта.
+# HTTP допустим только на localhost; для настоящего сервера обязателен HTTPS.
+url = "http://127.0.0.1:8080/api/gateway/events"
+gateway_id = "pc00248"
+# Сначала STAN_GATEWAY_KEY в окружении, затем отдельный файл (одна строка).
+# Никаких ключей в основном конфиге. Не добавляйте файл ключа в Git.
+# key_file = 'C:\Stan Gateway\secrets\gateway.key'
+
+[opcua]
+url = "opc.tcp://127.0.0.1:4862"
+node_id_template = "ns=1;s=t|{tag}"
+security = "None" # либо Basic256Sha256; тогда всегда SignAndEncrypt
+# certificate = 'C:\Stan Gateway\certs\client.der'
+# private_key = 'C:\Stan Gateway\secrets\client.pem'
+# server_certificate = 'C:\Stan Gateway\certs\wincc.der' # Необязателен.
+# username = "gateway_reader"
+password_env = "STAN_OPCUA_PASSWORD"
+# password_file = 'C:\Stan Gateway\secrets\opcua.key'
+# Пароль читается из окружения или файла; поле password запрещено.
+
+[s7]
+# Для реального CPU завод выдаёт IP, rack и slot. Только чтение по TCP 102.
+ip = "127.0.0.1"
+rack = 0
+slot = 2
+
+[simulator]
+seed = 21 # Повторяемая последовательность для локальной проверки.
+
+[billet]
+sensor_tag = "1_50_01BFZI01"
+status_tag = "ROLG_1040101_Status"
+status_value = 4
+# Новый уровень условия должен удерживаться столько мс; дребезг короче игнорируется.
+# При опросе раз в секунду фронт обычно подтверждается следующей выборкой.
+debounce_ms = 200
+
+[mill_state]
+rule = "no_billet"
+minutes = 8 # no_billet_8min: нет выдачи 8 минут достоверного наблюдения → stopped.
+
+[[tags]]
+name = "1_50_01BFZI01"
+address = "M500.6" # Используется только s7; OPC UA берёт name.
+type = "bool"
+watch = true
+deadband = 0
+
+[[tags]]
+name = "ROLG_1040101_Status"
+address = "DB404,DBW124"
+type = "int" # DBW — знаковое 16-битное, DBD/int — знаковое 32-битное, DBD/real — REAL.
+watch = true
+deadband = 0
+
+# Примеры других адресов: DB1012,DBX10.3; I85.1; Q1046.4; DB1012,DBD20.
+# Для DBD выберите type=int или type=real; булевы адреса требуют type=bool.
+# watch=false оставляет тег для правила, но не создаёт signal.
